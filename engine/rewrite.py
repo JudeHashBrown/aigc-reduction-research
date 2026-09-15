@@ -99,6 +99,58 @@ class ParaResult:
     candidates: List[Dict] = field(default_factory=list)
 
 
+
+# 模型常见的输出污染：套代码块、加前言后记、复述指令、包标签。
+# 这些绝不能进正文，但也不能误删作者的真实内容——所以只认明确的元话语关键词。
+_META_ZH = ("以下是", "如下所示", "如下：", "改写后", "改写方向", "修改说明", "已按要求",
+            "如需调整", "请告知", "希望对", "好的，", "当然，", "注：", "说明：",
+            "以上为", "本次改写")
+_META_EN = ("here is", "here's", "here are", "rewritten version", "i've rewritten",
+            "let me know", "hope this", "as requested", "note:", "revised version")
+_WRAP_TAGS = re.compile(r'^\s*<(output|text|result|rewritten|answer)>(.*)</\1>\s*$',
+                        re.S | re.I)
+
+
+def _is_meta(line: str) -> bool:
+    low = line.strip().lower()
+    if not low or len(line) > 80:
+        return False
+    return (any(k in line for k in _META_ZH) or any(k in low for k in _META_EN))
+
+
+def _clean_output(raw: str) -> str:
+    """剥掉模型输出的包装层，只留正文。"""
+    t = raw.strip()
+
+    # 1. markdown 代码围栏
+    fence = re.match(r'^\s*```[a-zA-Z0-9_-]*\s*\n(.*?)\n?\s*```\s*$', t, re.S)
+    if fence:
+        t = fence.group(1).strip()
+    t = re.sub(r'(?m)^\s*```[a-zA-Z0-9_-]*\s*$', '', t).strip()
+
+    # 2. <output>…</output> 之类的包装标签
+    m = _WRAP_TAGS.match(t)
+    if m:
+        t = m.group(2).strip()
+
+    # 3. 掐头去尾的元话语行（只删明确带元话语关键词的短行）
+    lines = t.split("\n")
+    while len(lines) > 1 and _is_meta(lines[0]):
+        lines.pop(0)
+    while len(lines) > 1 and _is_meta(lines[-1]):
+        lines.pop()
+    # 括号包住的整行说明
+    while len(lines) > 1 and re.fullmatch(r'\s*[（(].{0,80}[）)]\s*', lines[-1] or " "):
+        lines.pop()
+    t = "\n".join(lines).strip()
+
+    # 4. 整段被引号包裹
+    if len(t) > 2 and t[0] in '「“"\'' and t[-1] in '」”"\'':
+        t = t[1:-1].strip()
+
+    return t
+
+
 def _semantic_findings(rep: Dict, pi: int, lang: str) -> List[Dict]:
     want = SEMANTIC[lang]
     return [f for f in rep["findings"]
@@ -131,7 +183,7 @@ def _build_user(para: str, findings: List[Dict], lang: str) -> str:
 def _score_candidate(orig: str, cand: str, lang: str,
                      base_rep: Dict, weights_path: Optional[str]) -> Dict:
     """给候选打分。硬性不合格直接作废，其余按加权分排序。"""
-    cand = cand.strip()
+    cand = _clean_output(cand)
     res = {"text": cand, "ok": False, "reason": "", "score": -1e9}
 
     if not cand:

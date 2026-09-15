@@ -4,6 +4,7 @@
     python3 web/server.py 9000     # 指定端口
 """
 import json
+import re
 import sys
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -67,10 +68,21 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self.rfile.read(n) or b"{}")
         except json.JSONDecodeError:
-            return self._send(400, json.dumps({"error": "bad json"}))
-        text = (payload.get("text") or "")[:MAX_CHARS]
+            return self._send(400, json.dumps({"error": "请求体不是合法 JSON"},
+                                              ensure_ascii=False))
+        # 类型必须校验：传 [] 或 {"text": 123} 都会在下面炸成 500，
+        # 而那是客户端错误，应该回 400。
+        if not isinstance(payload, dict):
+            return self._send(400, json.dumps({"error": "请求体必须是 JSON 对象"},
+                                              ensure_ascii=False))
+        raw = payload.get("text")
+        if raw is not None and not isinstance(raw, str):
+            return self._send(400, json.dumps({"error": "text 字段必须是字符串"},
+                                              ensure_ascii=False))
+        # 去掉控制字符：Word/PDF 粘贴常带 \x00 之类，会污染偏移与输出
+        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw or "")[:MAX_CHARS]
         if not text.strip():
-            return self._send(400, json.dumps({"error": "empty text"}))
+            return self._send(400, json.dumps({"error": "文本为空"}, ensure_ascii=False))
 
         wp = str(WEIGHTS) if WEIGHTS.exists() else None
         if self.path == "/api/diagnose":

@@ -128,8 +128,13 @@ def _vocab_findings(sent: Span, pi: int, si: int, lang: str = "zh") -> List[Find
                 severity="high" if tier == "T1" else "medium",
                 weight=L.WEIGHTS[tier], para_index=pi, sent_index=si,
                 start=sent.start + m.start(), end=sent.start + m.end(),
-                matched=term,
-                explain=f"「{term}」是中文 AI 学术写作的高频标记。{hint}"))
+                # 必须存原文实际命中的文字，不能存词表里的形式——
+                # 英文匹配大小写不敏感，存 term 会让界面高亮与展示不一致，
+                # 而「用户能自己核对」是本引擎的信任基础。
+                matched=m.group(0),
+                explain=(f"「{term}」是中文 AI 学术写作的高频标记。{hint}"
+                         if lang == "zh"
+                         else f"“{term}” is an overused AI academic marker. {hint}")))
     # 去重：丢弃被更长命中完全覆盖的短命中
     out.sort(key=lambda f: (f.start, -(f.end - f.start)))
     kept: List[Finding] = []
