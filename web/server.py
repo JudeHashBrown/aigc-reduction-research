@@ -14,53 +14,12 @@ sys.path.insert(0, str(ROOT.parent / "engine"))
 sys.path.insert(0, str(ROOT.parent / "probe"))
 
 from diagnose import diagnose          # noqa: E402
-from ablations import ABLATIONS           # noqa: E402
-from ablations_en import ABLATIONS_EN     # noqa: E402
-from diagnose import detect_lang          # noqa: E402
+from codefix import codefix as autofix     # noqa: E402
+from rewrite import pipeline as llm_pipeline  # noqa: E402
+from llm import Client, LLMError           # noqa: E402
 
 WEIGHTS = ROOT.parent / "engine" / "weights.json"
 MAX_CHARS = 20000
-
-
-def autofix(text):
-    """确定性修复：只跑不需要语义理解的变换，逐条记录改了什么。
-
-    按段落识别语言，中英各用各的变换集——中文论文配英文摘要是常见形态，
-    只修中文等于放着一半不管。
-
-    这是「代码优先」架构的体现：毫秒级、可复现、不经过任何模型，
-    因此不会反向注入 AI 统计特征。
-    """
-    import re
-    SAFE_ZH = ["V-T1", "V-T2", "S05", "S07", "S08", "S04", "S03", "S01", "F01", "F02"]
-    SAFE_EN = ["V-T1", "V-T2", "S05", "S07", "S08", "S04", "S03", "P02", "F01"]
-    tally, out_paras = {}, []
-
-    for para in text.split("\n"):
-        if not para.strip():
-            out_paras.append(para)
-            continue
-        lang = detect_lang(para)
-        table = ABLATIONS_EN if lang == "en" else ABLATIONS
-        safe = SAFE_EN if lang == "en" else SAFE_ZH
-        cur = para
-        for rid in safe:
-            if rid not in table:
-                continue
-            name, fn = table[rid]
-            new, n = fn(cur)
-            if n and new.strip() != cur.strip():
-                key = (rid, name, lang)
-                tally[key] = tally.get(key, 0) + n
-                cur = new
-        out_paras.append(cur)
-
-    fixed = "\n".join(out_paras)
-    fixed = re.sub(r'[ \t]+\n', '\n', fixed)
-    fixed = re.sub(r'\n{3,}', '\n\n', fixed).strip()
-    log = [{"rule_id": k[0], "name": k[1], "lang": k[2], "count": v}
-           for k, v in sorted(tally.items(), key=lambda kv: -kv[1])]
-    return fixed, log
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -79,6 +38,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, (ROOT / "index.html").read_bytes(), "text/html; charset=utf-8")
         elif self.path == "/health":
             self._send(200, json.dumps({"ok": True}))
+        elif self.path == "/api/config":
+            c = Client()
+            self._send(200, json.dumps({
+                "llm_configured": c.configured,
+                "llm_model": c.model if c.configured else None,
+                "calibrated": WEIGHTS.exists(),
+            }, ensure_ascii=False))
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
@@ -123,6 +89,19 @@ class Handler(BaseHTTPRequestHandler):
                 "after_full": after, "text": fixed,
             }, ensure_ascii=False))
 
+        if self.path == "/api/rewrite":
+            client = Client()
+            if not client.configured:
+                return self._send(400, json.dumps({
+                    "error": "未配置 LLM。请设置环境变量 LLM_BASE_URL 和 LLM_API_KEY 后重启服务。"
+                }, ensure_ascii=False))
+            n = int(payload.get("n") or 3)
+            mx = payload.get("max_paragraphs")
+            r = llm_pipeline(text, client, n_candidates=max(1, min(n, 5)),
+                             weights_path=wp,
+                             max_paragraphs=int(mx) if mx else None)
+            return self._send(200, json.dumps(r, ensure_ascii=False))
+
         self._send(404, json.dumps({"error": "not found"}))
 
     def log_message(self, *a):
@@ -140,6 +119,9 @@ if __name__ == "__main__":
         sys.exit(1)
     print(f"诊断服务已启动 → {url}")
     print(f"权重：{'已标定 weights.json' if WEIGHTS.exists() else '临时权重（未经探测标定）'}")
+    _c = Client()
+    print(f"LLM ：{_c.model + ' 已就绪' if _c.configured else '未配置（只有规则层可用）'}"
+          + ("" if _c.configured else "\n      设置 LLM_BASE_URL 与 LLM_API_KEY 后重启即可启用改写层"))
     import os
     if any(os.environ.get(k) for k in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY")):
         print("提示：检测到系统代理。若浏览器打不开或诊断报错，")

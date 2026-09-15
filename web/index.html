@@ -101,10 +101,12 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
     <div class="row">
       <button class="primary" id="btn">诊断</button>
       <button id="fix" disabled>确定性修复</button>
+      <button id="rw" disabled title="需配置 LLM">两层改写</button>
       <button id="demo">示例</button>
       <span class="hint" id="cnt">0 字</span>
     </div>
     <div class="note">
+      <b>两层改写</b> = 代码修复 + LLM 重写结构（需配置 LLM）。
       <b>确定性修复</b>只做不需要语义理解的改动（删套话、换词表内高频词、去格式残留），
       纯代码、毫秒级、结果可复现。<b>不经过任何模型</b>，因此不会反向注入 AI 统计特征。
       需要理解语义的改写（拆编号排比、补主语、空泛句具体化）不在此列。
@@ -126,11 +128,20 @@ Abstract: This paper delves into the application of graph neural networks for tr
 
 我们在 PeMS04 上训练，输入 12 个时间步，batch size 64。MAE 从基线的 21.3 降到 19.8，提升幅度不大。按传感器重新划分后掉到 20.6，这个数才可信。`;
 
-(async()=>{ try{ const r=await fetch('/health'); if(!r.ok) throw 0; await r.json(); }
+let CFG={llm_configured:false};
+(async()=>{ try{ const r=await fetch('/health'); if(!r.ok) throw 0; await r.json();
+    CFG=await (await fetch('/api/config')).json();
+    $('#rw').disabled=!CFG.llm_configured;
+    $('#rw').title=CFG.llm_configured?('模型：'+CFG.llm_model)
+      :'未配置 LLM：设置 LLM_BASE_URL 与 LLM_API_KEY 后重启服务';
+    $('#cal').textContent=(CFG.calibrated?'权重已标定':'权重未标定')
+      +' · '+(CFG.llm_configured?('LLM '+CFG.llm_model):'LLM 未配置');
+  }
   catch(e){ showErr(new Error('NET|页面加载了，但调不通后端接口。'
     +'若你开着代理软件，请把 127.0.0.1 和 localhost 加入绕过列表。')); } })();
 
 inp.oninput=()=>{$('#cnt').textContent=inp.value.replace(/\s/g,'').length+' 字'};
+$('#rw').onclick=pipeline;
 $('#demo').onclick=()=>{inp.value=DEMO;inp.dispatchEvent(new Event('input'));run()};
 $('#btn').onclick=run; $('#fix').onclick=autofix;
 inp.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')run()});
@@ -166,6 +177,7 @@ function showErr(e){
 
 function busy(on,label){
   $('#btn').disabled=on; $('#fix').disabled=on||!cur;
+  $('#rw').disabled=on||!CFG.llm_configured;
   $('#btn').innerHTML=on?`<span class="spin"></span> ${label||'诊断中'}`:'诊断';
 }
 
@@ -186,6 +198,69 @@ async function autofix(){
     renderFix(r);
   }catch(e){ showErr(e); }
   busy(false);
+}
+
+async function pipeline(){
+  const t=inp.value.trim(); if(!t) return;
+  busy(true,'两层处理中');
+  try{ renderPipe(await post('/api/rewrite',{text:t,n:3})); }
+  catch(e){ showErr(e); }
+  busy(false);
+}
+
+function renderPipe(r){
+  const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const stage=(n,s)=>`<tr><td>${n}</td><td>${s['检出特征总数']}</td>
+    <td>${s['高风险']}</td><td>${s['高风险段落']}</td><td>${s['硬约束违反']}</td></tr>`;
+  let h=`<div class="tabs"><div class="tab on">两层改写结果</div></div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:14px">
+      <thead><tr style="color:var(--muted);text-align:left">
+        <th style="padding:5px 0">阶段</th><th>特征</th><th>高风险</th><th>高危段</th><th>硬约束</th>
+      </tr></thead><tbody>
+      ${stage('原文',r.before)}${stage('① 代码修复',r.after_codefix)}
+      ${r.llm_used?stage('② LLM 改写',r.after):''}</tbody></table>`;
+
+  if(r.code_log.length){
+    h+=`<div class="note" style="border:0;margin:0 0 8px;padding:0"><b>① 代码修复</b>（毫秒级，不经模型）</div>`;
+    h+=r.code_log.map(l=>`<div class="lg"><span><span class="id">${l.rule_id}</span> ${l.name}
+      <span class="tag">${l.lang==='en'?'EN':'中'}</span></span><span>${l.count} 处</span></div>`).join('');
+  }
+
+  if(r.llm_used&&r.llm){
+    const L=r.llm;
+    h+=`<div class="note" style="border:0;margin:16px 0 8px;padding:0">
+      <b>② LLM 改写</b> · 定向 ${L.n_targeted} 段，采纳 ${L.n_accepted} 段，
+      未触碰 ${L.untouched} 段</div>`;
+    L.paragraphs.forEach(p=>{
+      h+=`<div class="f ${p.accepted?'low':'medium'}">
+        <div class="t"><span class="id">第${p.index+1}段</span>
+          <span class="tag">${p.lang==='en'?'EN':'中'}</span>
+          ${p.targets.join(' ')}
+          <span style="margin-left:auto;color:var(--${p.accepted?'lo':'md'})">
+            ${p.accepted?'已采纳':'已拒绝，保留原文'}</span></div>
+        <div class="e" style="margin-top:4px">${esc(p.reason)}</div>`;
+      if(p.accepted){
+        h+=`<div class="m" style="margin-top:7px"><s style="opacity:.55">${esc(p.original)}</s>
+          <div style="margin-top:6px">${esc(p.rewritten)}</div></div>`;
+      }
+      if(p.candidates&&p.candidates.length>1){
+        h+=`<div class="e" style="margin-top:5px">候选 ${p.candidates.length} 个：`
+          +p.candidates.map((c,i)=>`#${i+1} ${c.ok?('得分 '+c.score):'作废'}`).join(' · ')+'</div>';
+      }
+      h+=`</div>`;
+    });
+  }
+
+  h+=`<div class="note" style="margin-top:14px"><b>最终文本</b>（已写回左侧输入框）</div>
+      <div class="diffbox">${esc(r.text)}</div>
+      <div class="note"><b>两层都做完了，剩下的只能靠你。</b>
+      代码层做减法，LLM 层重写结构，但都不会凭空造事实——
+      模型只要多出一个原文没有的数字或文献，候选会被直接判废。
+      真正把 AI 率压到底的那一步是<b>恢复具体性</b>：把「效果显著」换成
+      「MAE 从 21.3 降到 19.8」。这个数字只有你知道。</div>`;
+  $('#out').innerHTML=h;
+  inp.value=r.text; inp.dispatchEvent(new Event('input'));
+  cur=r.after_full; curText=r.text;
 }
 
 // 逐字符收集覆盖该位置的发现，再合并成连续区间——这样重叠命中也能正确渲染

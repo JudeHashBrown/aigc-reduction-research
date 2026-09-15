@@ -16,6 +16,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "engine"))
 import lexicon as LEX
 
 
+def tidy_zh(text: str) -> str:
+    """删改之后的标点收尾。
+
+    删掉一个短语常会留下孤立标点（「可解释性，。」）或重复标点。
+    这些残留本身就是明显的机器痕迹，必须清干净。
+    """
+    text = re.sub(r'[，,、]\s*([。！？；])', r'\1', text)      # 「，。」→「。」
+    text = re.sub(r'([，,、])\s*[，,、]+', r'\1', text)         # 重复逗号顿号
+    text = re.sub(r'([。！？；])\s*[。！？；]+', r'\1', text)     # 重复句号
+    text = re.sub(r'(?m)^[，,、。；：]+\s*', '', text)          # 段首孤立标点
+    text = re.sub(r'[，,、：]\s*$', '。', text.rstrip())        # 段尾悬空逗号
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    return text.strip()
+
+
 def _sub_count(pattern, repl, text, flags=0):
     new, n = re.subn(pattern, repl, text, flags=flags)
     return new, n
@@ -30,7 +45,12 @@ def ablate_vocab_t1(text):
         if term not in text:
             continue
         sug = LEX.SUGGEST.get(term)
-        text, k = _sub_count(re.escape(term), sug if sug else "", text)
+        if sug:
+            text, k = _sub_count(re.escape(term), sug, text)
+        elif term in LEX.DELETABLE:
+            text, k = _sub_count(re.escape(term) + r'[，,]?', "", text)
+        else:
+            k = 0                      # 无安全改法，保持原样
         n += k
     text = re.sub(r'[，,]\s*[，,]', '，', text)
     text = re.sub(r'^[，,。、]+', '', text, flags=re.M)
@@ -43,7 +63,12 @@ def ablate_vocab_t2(text):
         if term not in text:
             continue
         sug = LEX.SUGGEST.get(term)
-        text, k = _sub_count(re.escape(term), sug if sug else "", text)
+        if sug:
+            text, k = _sub_count(re.escape(term), sug, text)
+        elif term in LEX.DELETABLE:
+            text, k = _sub_count(re.escape(term) + r'[，,]?', "", text)
+        else:
+            k = 0                      # 无安全改法，保持原样
         n += k
     text = re.sub(r'[，,]\s*[，,]', '，', text)
     return text, n
