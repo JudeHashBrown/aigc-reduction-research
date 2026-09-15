@@ -83,6 +83,11 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
   font:13px/1.9 ui-monospace,Menlo,"PingFang SC",monospace;white-space:pre-wrap;
   max-height:340px;overflow:auto}
 .lg{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px solid var(--line)}
+.led{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);
+  margin-right:6px;vertical-align:middle;transition:background .2s}
+.led.up{background:var(--lo)} .led.down{background:var(--hi);animation:pulse 1.4s infinite}
+@keyframes pulse{50%{opacity:.35}}
+#conn{cursor:default}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);
   border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
@@ -92,6 +97,7 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
   <h1>AI 写作特征诊断</h1>
   <span class="sub">中英双语 · 逐句归因 · 规则与统计，零模型</span>
   <span class="sub" id="cal" style="margin-left:auto"></span>
+  <span class="sub" id="conn"><i class="led"></i><span id="connTxt">检查中…</span></span>
 </header>
 
 <div class="wrap">
@@ -128,17 +134,39 @@ Abstract: This paper delves into the application of graph neural networks for tr
 
 我们在 PeMS04 上训练，输入 12 个时间步，batch size 64。MAE 从基线的 21.3 降到 19.8，提升幅度不大。按传感器重新划分后掉到 20.6，这个数才可信。`;
 
-let CFG={llm_configured:false};
-(async()=>{ try{ const r=await fetch('/health'); if(!r.ok) throw 0; await r.json();
-    CFG=await (await fetch('/api/config')).json();
-    $('#rw').disabled=!CFG.llm_configured;
-    $('#rw').title=CFG.llm_configured?('模型：'+CFG.llm_model)
-      :'未配置 LLM：设置 LLM_BASE_URL 与 LLM_API_KEY 后重启服务';
-    $('#cal').textContent=(CFG.calibrated?'权重已标定':'权重未标定')
-      +' · '+(CFG.llm_configured?('LLM '+CFG.llm_model):'LLM 未配置');
+let CFG={llm_configured:false}, ONLINE=null;
+
+// 持续监测后端。页面可能开了很久，而服务早已停掉——
+// 只在加载时查一次，用户要等到点按钮才发现，还会看到误导性的错误。
+async function ping(){
+  let ok=false;
+  try{ const r=await fetch('/health',{cache:'no-store'}); ok=r.ok && (await r.json()).ok; }
+  catch(e){ ok=false; }
+  if(ok!==ONLINE){
+    ONLINE=ok;
+    $('#conn').querySelector('.led').className='led '+(ok?'up':'down');
+    $('#connTxt').textContent=ok?'服务已连接':'服务未运行';
+    $('#conn').title=ok?'':'在终端运行：python3 web/server.py';
+    if(ok){
+      try{
+        CFG=await (await fetch('/api/config',{cache:'no-store'})).json();
+        $('#rw').disabled=!CFG.llm_configured;
+        $('#rw').title=CFG.llm_configured?('模型：'+CFG.llm_model)
+          :'未配置 LLM：设置 LLM_BASE_URL 与 LLM_API_KEY 后重启服务';
+        $('#cal').textContent=(CFG.calibrated?'权重已标定':'权重未标定')
+          +' · '+(CFG.llm_configured?('LLM '+CFG.llm_model):'LLM 未配置');
+      }catch(e){}
+      // 服务恢复后清掉之前的断线提示
+      const w=$('#out').querySelector('.warn');
+      if(w && w.textContent.includes('连接失败'))
+        $('#out').innerHTML='<div class="empty">服务已恢复，可以重新诊断。</div>';
+    }else{
+      $('#rw').disabled=true;
+      $('#cal').textContent='';
+    }
   }
-  catch(e){ showErr(new Error('NET|页面加载了，但调不通后端接口。'
-    +'若你开着代理软件，请把 127.0.0.1 和 localhost 加入绕过列表。')); } })();
+}
+ping(); setInterval(ping, 4000);
 
 inp.oninput=()=>{$('#cnt').textContent=inp.value.replace(/\s/g,'').length+' 字'};
 $('#rw').onclick=pipeline;
@@ -152,8 +180,11 @@ async function post(url,body){
     r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(body)});
   }catch(e){
-    throw new Error('NET|连不上本地服务。请确认终端里 server.py 还在运行；'
-      +'若你开着代理软件，把 127.0.0.1 和 localhost 加入绕过列表。');
+    throw new Error('NET|连不上本地服务。最常见的原因是**服务没在运行**——'
+      +'这个页面可能是之前开的，而终端里的 server.py 已经停掉了。\n\n'
+      +'在项目目录运行：python3 web/server.py\n\n'
+      +'服务起来后本页会自动恢复（右上角的灯会变绿），不用刷新。'
+      +'若你开着代理软件，还需把 127.0.0.1 和 localhost 加入绕过列表。');
   }
   const raw=await r.text();
   let data=null; try{ data=JSON.parse(raw); }catch(e){}
@@ -169,15 +200,17 @@ function showErr(e){
   const net=e.message.startsWith('NET|');
   const msg=net?e.message.slice(4):e.message;
   $('#out').innerHTML=`<div class="warn" style="margin:0">
-      <b>${net?'连接失败':'处理失败'}</b><div style="margin-top:6px">${msg}</div>
+      <b>${net?'连接失败':'处理失败'}</b>
+      <div style="margin-top:6px;white-space:pre-wrap">${msg.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')}</div>
       ${net?'':'<div style="margin-top:8px;font-size:12px;opacity:.8">'
         +'运行 server.py 的终端里会有完整报错，把它发我即可定位。</div>'}
     </div>`;
 }
 
 function busy(on,label){
-  $('#btn').disabled=on; $('#fix').disabled=on||!cur;
-  $('#rw').disabled=on||!CFG.llm_configured;
+  $('#btn').disabled=on||ONLINE===false;
+  $('#fix').disabled=on||!cur||ONLINE===false;
+  $('#rw').disabled=on||!CFG.llm_configured||ONLINE===false;
   $('#btn').innerHTML=on?`<span class="spin"></span> ${label||'诊断中'}`:'诊断';
 }
 

@@ -129,7 +129,7 @@ if __name__ == "__main__":
         print(f"无法在端口 {port} 启动：{e}")
         print(f"多半是端口被占用。换一个端口试试：python3 web/server.py {port + 1}")
         sys.exit(1)
-    print(f"诊断服务已启动 → {url}")
+    print(f"诊断服务已启动 → {url}", flush=True)
     print(f"权重：{'已标定 weights.json' if WEIGHTS.exists() else '临时权重（未经探测标定）'}")
     _c = Client()
     print(f"LLM ：{_c.model + ' 已就绪' if _c.configured else '未配置（只有规则层可用）'}"
@@ -138,7 +138,7 @@ if __name__ == "__main__":
     if any(os.environ.get(k) for k in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY")):
         print("提示：检测到系统代理。若浏览器打不开或诊断报错，")
         print("     请在代理软件/浏览器里把 127.0.0.1、localhost 加入绕过列表。")
-    print("Ctrl+C 停止")
+    print("Ctrl+C 停止", flush=True)
     try:
         webbrowser.open(url)
     except Exception:
