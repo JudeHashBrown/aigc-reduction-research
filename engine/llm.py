@@ -17,6 +17,13 @@ import urllib.request
 from typing import List, Optional
 
 
+import re
+
+# 不接受 temperature/top_p/top_k 的模型
+_NO_SAMPLING = re.compile(
+    r'(claude-)?(opus-5|opus-4-8|opus-4-7|sonnet-5|fable-5|mythos-5)', re.I)
+
+
 class LLMError(RuntimeError):
     pass
 
@@ -42,9 +49,12 @@ class Client:
             "model": self.model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
-            "temperature": self.temperature,
             "max_tokens": max_tokens,
         }
+        # Claude 5 系列（Opus 5 / Sonnet 5 / Fable 5.x）已移除采样参数，
+        # 传 temperature 会返回 400。这类模型靠多次独立调用获得候选多样性。
+        if not _NO_SAMPLING.search(self.model):
+            payload["temperature"] = self.temperature
         if n > 1:
             payload["n"] = n
 
