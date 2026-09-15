@@ -27,13 +27,13 @@ from llm import Client, LLMError
 
 # 分层按语言而定：中文删词句子还通顺，英文删掉动词就断句，能安全交给代码的因此不同。
 CODE_HANDLED = {
-    "zh": {"V-T1", "V-T2", "S03", "S04", "S05", "S07", "S08", "P02", "F01", "F02"},
+    "zh": {"V-T1", "V-T2", "S03", "S05", "S07", "S08", "P02", "F01", "F02"},
     "en": {"V-T1", "V-T2", "S04", "S05", "S07", "S08", "P02", "F01"},
 }
 # 需要理解语义才能改好的。注意 S01（三元并列）两种语言都归这里：
 # 代码修法是删掉第三项，那是信息丢失，不可接受。
 SEMANTIC = {
-    "zh": {"S01", "S02", "S06", "S09", "S10", "P01"},
+    "zh": {"S01", "S02", "S04", "S06", "S09", "S10", "P01"},
     "en": {"S01", "S02", "S03", "S09", "S11", "S12", "P03"},
 }
 
@@ -270,6 +270,9 @@ def pipeline(text: str, client: Optional[Client] = None, n_candidates: int = 3,
 
     stage1, code_log = codefix(text)
     after1 = diagnose(stage1, weights_path=weights_path)
+    # 代码层也要过护栏。删句式的修复反复出现过内容误删，
+    # 这类问题比 AI 味严重得多，必须能被发现而不是靠人眼盯。
+    code_guard = guard.compare(text, stage1)
 
     rw = None
     stage2 = stage1
@@ -288,7 +291,11 @@ def pipeline(text: str, client: Optional[Client] = None, n_candidates: int = 3,
         "after": final["summary"],
         "after_full": final,
         "code_log": code_log,
+        "code_guard": {"lost": code_guard["n_removed"],
+                       "detail": guard.describe(code_guard)},
         "post_log": post_log,
+        "final_guard": {"lost": guard.compare(text, stage3)["n_removed"],
+                        "detail": guard.describe(guard.compare(text, stage3))},
         "llm": rw,
         "llm_used": rw is not None,
     }

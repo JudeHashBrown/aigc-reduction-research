@@ -10,7 +10,8 @@
 
 # T1：跨时代稳定的强标记
 T1 = [
-    "delve", "delves", "delved", "delving", "tapestry", "testament", "underscore", "underscores",
+    "delve", "delves", "delved", "delving",
+    "delve into", "delves into", "delved into", "delving into", "tapestry", "testament", "underscore", "underscores",
     "underscoring", "underscored", "pivotal", "showcase", "showcases",
     "showcasing", "showcased", "boasts", "meticulous", "meticulously", "intricate",
     "intricacies", "vibrant", "bolster", "bolstered", "garner", "garnered",
@@ -65,7 +66,9 @@ SUGGEST = {
     "delve": "look at", "delving": "looking at",
     "showcase": "show", "showcases": "shows",
     "underscore": "show", "underscores": "shows",
-    "delves": "looks at", "delved": "looked at",
+    "delves into": "looks at", "delve into": "look at",
+    "delving into": "looking at", "delved into": "looked at",
+    "delves": "examines", "delved": "examined",
     "showcasing": "showing", "showcased": "showed",
     "underscoring": "showing", "underscored": "showed",
     "boasts": "has", "garner": "get", "garnered": "got",

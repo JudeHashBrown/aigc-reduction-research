@@ -16,8 +16,17 @@ import jieba.posseg as pseg
 # 数字：阿拉伯数字、百分比、p 值、区间、中文数词
 _NUM = re.compile(r'\d+(?:[.,]\d+)*\s*%?|[pP]\s*[<>=]\s*0?\.\d+'
                   r'|[〇零一二三四五六七八九十百千万亿]{2,}')
-# 拉丁技术名词：模型名、数据集名、缩写（ResNet-50、CIFAR-10、MAE、BERT）
-_LATIN = re.compile(r'[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)*')
+# 拉丁「技术名词」：只认专名形态——首字母大写、全大写缩写、或含数字。
+# 不能把所有英文单词都当术语：英文段落改写时每个换掉的普通词
+# （use→utilize 之类）都会被判成「新增术语」，进而误判为编造，
+# 把所有合法的英文候选全部判废。
+_LATIN = re.compile(
+    r'\b(?:'
+    r'[A-Z]{2,}[A-Za-z0-9]*'                      # 全大写缩写：MAE, AUC, BERT
+    r'|[A-Z][A-Za-z]*[0-9][A-Za-z0-9]*'           # 含数字的专名：PeMS04
+    r'|[A-Za-z][A-Za-z0-9]*[-_][A-Za-z0-9]*[0-9][A-Za-z0-9]*'  # ResNet-50, CIFAR-10
+    r'|[A-Z][a-z]{2,}'                            # 普通专名：Smith, Rajpurkar
+    r')\b')
 # 引用：[1] 【1】 (Smith, 2023) （张等，2024） Smith et al. (2023)
 _CITE = re.compile(r'[\[【]\s*\d+(?:\s*[-–,，]\s*\d+)*\s*[\]】]'
                    r'|[(（][^)）]{0,40}?(?:19|20)\d{2}[^)）]{0,10}[)）]'
@@ -25,14 +34,18 @@ _CITE = re.compile(r'[\[【]\s*\d+(?:\s*[-–,，]\s*\d+)*\s*[\]】]'
 _PROPER_POS = {"nr", "ns", "nt", "nz", "nrt", "nrfg"}
 
 # 这些词形变化不算「新增事实」，避免误杀正常改写
-_STOP_LATIN = {"i", "a", "the", "of", "in", "and", "or", "to", "is", "are", "was",
-               "were", "be", "it", "this", "that", "we", "our", "for", "on", "with",
-               "as", "by", "at", "an", "not", "but", "its", "has", "have", "can"}
+# 句首大写的常见虚词会被上面的专名规则误收，这里排除。
+_STOP_LATIN = {"the", "this", "that", "these", "those", "and", "but", "for", "our",
+               "their", "its", "his", "her", "was", "were", "are", "with", "from",
+               "however", "therefore", "although", "while", "when", "where", "which",
+               "studies", "research", "results", "abstract", "despite", "overall",
+               "conclusion", "moreover", "furthermore", "additionally", "notably",
+               "first", "firstly", "second", "secondly", "finally", "thus", "hence"}
 
 
 def extract(text: str) -> Dict[str, Set[str]]:
     nums = {n.replace(" ", "") for n in _NUM.findall(text)}
-    latin = {w for w in _LATIN.findall(text) if w.lower() not in _STOP_LATIN and len(w) > 1}
+    latin = {w for w in _LATIN.findall(text) if w.lower() not in _STOP_LATIN}
     cites = {c.strip() for c in _CITE.findall(text)}
     proper = {w for w, f in pseg.cut(text) if f in _PROPER_POS and len(w) > 1}
     return {"数字": nums, "术语": latin, "引用": cites, "专名": proper}

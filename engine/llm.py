@@ -24,6 +24,19 @@ _NO_SAMPLING = re.compile(
     r'(claude-)?(opus-5|opus-4-8|opus-4-7|sonnet-5|fable-5|mythos-5)', re.I)
 
 
+def _ssl_ctx():
+    """macOS 上 python.org 版 Python 不带根证书，直连 HTTPS 会报
+    CERTIFICATE_VERIFY_FAILED。优先用 certifi 的证书包。
+    LLM_INSECURE=1 可跳过验证，仅用于自签证书的本地服务。"""
+    if os.environ.get("LLM_INSECURE"):
+        return ssl._create_unverified_context()
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
+
+
 class LLMError(RuntimeError):
     pass
 
@@ -72,12 +85,11 @@ class Client:
             headers={"Content-Type": "application/json",
                      "Authorization": f"Bearer {self.api_key}"},
         )
-        # 本地服务常用自签证书；仅在显式开启时放宽
-        ctx = ssl._create_unverified_context() if os.environ.get("LLM_INSECURE") else None
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),                 # 绕过本机代理
+            urllib.request.HTTPSHandler(context=_ssl_ctx()))
         try:
-            with opener.open(req, timeout=timeout, context=ctx) if ctx else \
-                 opener.open(req, timeout=timeout) as r:
+            with opener.open(req, timeout=timeout) as r:
                 data = json.loads(r.read())
         except urllib.error.HTTPError as e:
             raise LLMError(f"LLM 返回 {e.code}: {e.read()[:300].decode('utf-8', 'replace')}")

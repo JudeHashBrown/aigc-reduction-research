@@ -87,13 +87,30 @@ def ablate_s07(text):
 
 
 def ablate_s08(text):
-    """Canned significance → 删除整句。"""
-    pat = (r'(?i)[^.!?]*(?:plays? an? (?:crucial|vital|pivotal|key|significant|important) role'
-           r'|(?:is|stands|serves) as a testament'
-           r'|underscor(?:es|ing) the (?:importance|significance|need)'
-           r'|highlights? the (?:importance|significance)'
-           r'|paving the way|opens? (?:up )?new (?:avenues|possibilities|frontiers))[^.!?]*[.!?]\s*')
-    return re.subn(pat, '', text)
+    """Canned significance → 优先只摘掉套话，剩不下实质内容时才删整句。
+
+    与中文侧同理：整句删除会连同句中真正有信息的部分一起丢掉，
+    而信息丢失比 AI 味严重得多。
+    """
+    PHRASE = (r'(?i)(?:,\s*)?(?:which )?(?:plays? an? (?:crucial|vital|pivotal|key|significant|important) role(?: in [^,.;!?]{0,40})?'
+              r'|(?:is|stands|serves) as a testament(?: to [^,.;!?]{0,40})?'
+              r'|underscor(?:es|ing) the (?:importance|significance|need)(?: (?:of|for) [^,.;!?]{0,40})?'
+              r'|highlights? the (?:importance|significance)(?: of [^,.;!?]{0,40})?'
+              r'|paving the way(?: for [^,.;!?]{0,40})?'
+              r'|opens? (?:up )?new (?:avenues|possibilities|frontiers)(?: for [^,.;!?]{0,40})?)')
+    n, out = 0, []
+    for sent in re.split(r'(?<=[.!?])\s+', text):
+        if not sent.strip() or not re.search(PHRASE, sent):
+            out.append(sent)
+            continue
+        trimmed = re.sub(PHRASE, '', sent)
+        trimmed = re.sub(r'\s+([.,;:])', r'\1', trimmed)
+        trimmed = re.sub(r',\s*\.', '.', trimmed)
+        core = re.sub(r'[^A-Za-z]', '', trimmed)
+        if len(core) >= 20:                      # 还有实质内容 → 保住
+            out.append(trimmed)
+        n += 1
+    return " ".join(x for x in out if x.strip()), n
 
 
 def ablate_p02(text):
