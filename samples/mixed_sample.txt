@@ -1,0 +1,5 @@
+本文深入探讨了图神经网络在交通流量预测中的应用，系统梳理了相关研究。研究表明，该方法发挥着至关重要的作用，从而彰显了其应用价值。综上所述，本研究具有重要的理论意义。
+
+Abstract: This paper delves into the application of graph neural networks for traffic flow prediction. The proposed framework serves as a pivotal tool, showcasing robust performance across diverse scenarios. Studies show that our approach is not just accurate, but also efficient, scalable, and interpretable, underscoring the importance of spatial-temporal modeling. In conclusion, despite these challenges, future research will explore this promising realm.
+
+我们在 PeMS04 上训练，输入 12 个时间步，batch size 64。MAE 从基线的 21.3 降到 19.8，提升幅度不大。按传感器重新划分后掉到 20.6，这个数才可信。

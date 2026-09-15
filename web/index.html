@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI 写作特征诊断</title>
+<style>
+:root{
+  --bg:#fafaf9; --panel:#fff; --ink:#1c1b19; --muted:#6b6862; --line:#e6e3dd;
+  --hi:#c0392b; --md:#b8860b; --lo:#4a7c59; --accent:#2d5f8a;
+  --hi-bg:#fdecea; --md-bg:#fdf6e3; --lo-bg:#eef6f0;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#17161a; --panel:#1f1e23; --ink:#eceaf0; --muted:#9a96a3; --line:#33313a;
+  --hi:#ff8a7a; --md:#e0b64a; --lo:#7fc99a; --accent:#7fb3e0;
+  --hi-bg:#3a1f1c; --md-bg:#332a13; --lo-bg:#1c2f24;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;
+  align-items:baseline;gap:14px;flex-wrap:wrap}
+h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.01em}
+.sub{color:var(--muted);font-size:12.5px}
+.wrap{display:grid;grid-template-columns:minmax(320px,1fr) minmax(360px,1.25fr);
+  gap:18px;padding:18px 24px;align-items:start}
+@media(max-width:960px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.card h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:600;
+  text-transform:uppercase;letter-spacing:.06em}
+textarea{width:100%;min-height:340px;padding:13px;border:1px solid var(--line);
+  border-radius:8px;background:var(--bg);color:var(--ink);resize:vertical;
+  font:14px/1.8 ui-monospace,"SF Mono",Menlo,"PingFang SC",monospace}
+textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
+.row{display:flex;gap:9px;margin-top:11px;align-items:center;flex-wrap:wrap}
+button{font:inherit;font-size:14px;padding:8px 16px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--line);background:var(--panel);color:var(--ink);transition:.12s}
+button:hover:not(:disabled){border-color:var(--accent)}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:550}
+button.primary:hover:not(:disabled){filter:brightness(1.1)}
+button:disabled{opacity:.45;cursor:default}
+.hint{color:var(--muted);font-size:12.5px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:9px;margin-bottom:15px}
+.stat{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;text-align:center}
+.stat .n{font-size:21px;font-weight:660;line-height:1.15;font-variant-numeric:tabular-nums}
+.stat .l{font-size:11px;color:var(--muted);margin-top:3px}
+.n.hi{color:var(--hi)}.n.md{color:var(--md)}.n.lo{color:var(--lo)}
+#doc{line-height:2.25;white-space:pre-wrap;word-break:break-word;font-size:14.5px;
+  max-height:52vh;overflow:auto;padding:4px 2px}
+mark{background:none;padding:1px 0;border-radius:2px;cursor:pointer;
+  border-bottom:2px solid;transition:background .1s}
+mark.s-high{border-color:var(--hi)} mark.s-medium{border-color:var(--md)} mark.s-low{border-color:var(--lo)}
+mark.s-high:hover,mark.sel.s-high{background:var(--hi-bg)}
+mark.s-medium:hover,mark.sel.s-medium{background:var(--md-bg)}
+mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
+.f{border-left:3px solid var(--line);padding:9px 0 9px 12px;margin-bottom:10px}
+.f.high{border-color:var(--hi)}.f.medium{border-color:var(--md)}.f.low{border-color:var(--lo)}
+.f .t{font-size:13.5px;font-weight:600;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.f .id{font:11.5px ui-monospace,Menlo,monospace;color:var(--muted);
+  border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+.f .m{margin:5px 0;font-size:14px;background:var(--bg);padding:6px 9px;border-radius:5px;
+  border:1px solid var(--line)}
+.f .e{font-size:12.5px;color:var(--muted);line-height:1.6}
+.para{display:flex;gap:10px;align-items:center;padding:7px 9px;border-radius:6px;
+  cursor:pointer;font-size:13px;border:1px solid transparent}
+.para:hover{border-color:var(--line);background:var(--bg)}
+.dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+.dot.high{background:var(--hi)}.dot.medium{background:var(--md)}.dot.low{background:var(--lo)}
+.para .p{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+.tag{font-size:10.5px;border:1px solid var(--line);border-radius:4px;padding:0 5px;
+  color:var(--muted);flex:0 0 auto}
+.warn{background:var(--hi-bg);border:1px solid var(--hi);border-radius:7px;
+  padding:10px 13px;margin-bottom:13px;font-size:13px}
+.warn b{color:var(--hi)}
+.warn ul{margin:7px 0 0;padding-left:19px} .warn li{margin:3px 0}
+.mt{font-size:12.5px;color:var(--muted);line-height:1.9;font-variant-numeric:tabular-nums}
+.mt b{color:var(--ink);font-weight:600}
+.note{font-size:12px;color:var(--muted);border-top:1px solid var(--line);
+  margin-top:14px;padding-top:11px;line-height:1.7}
+.tabs{display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+.tab{padding:7px 13px;cursor:pointer;font-size:13px;border-bottom:2px solid transparent;color:var(--muted)}
+.tab.on{border-color:var(--accent);color:var(--ink);font-weight:550}
+.empty{color:var(--muted);text-align:center;padding:46px 20px;font-size:13.5px;line-height:1.9}
+.diffbox{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:11px;
+  font:13px/1.9 ui-monospace,Menlo,"PingFang SC",monospace;white-space:pre-wrap;
+  max-height:340px;overflow:auto}
+.lg{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px solid var(--line)}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);
+  border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style></head><body>
+
+<header>
+  <h1>AI 写作特征诊断</h1>
+  <span class="sub">中英双语 · 逐句归因 · 规则与统计，零模型</span>
+  <span class="sub" id="cal" style="margin-left:auto"></span>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <h2>输入</h2>
+    <textarea id="in" placeholder="粘贴论文段落（支持中英混排，如中文正文 + 英文摘要）…&#10;&#10;按 ⌘/Ctrl + Enter 直接诊断"></textarea>
+    <div class="row">
+      <button class="primary" id="btn">诊断</button>
+      <button id="fix" disabled>确定性修复</button>
+      <button id="demo">示例</button>
+      <span class="hint" id="cnt">0 字</span>
+    </div>
+    <div class="note">
+      <b>确定性修复</b>只做不需要语义理解的改动（删套话、换词表内高频词、去格式残留），
+      纯代码、毫秒级、结果可复现。<b>不经过任何模型</b>，因此不会反向注入 AI 统计特征。
+      需要理解语义的改写（拆编号排比、补主语、空泛句具体化）不在此列。
+    </div>
+  </div>
+
+  <div class="card" id="out">
+    <div class="empty">左侧粘贴文本，点「诊断」。<br>每一条结论都会指出命中的原文和理由，你可以自己核对。</div>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s), inp=$('#in');
+let cur=null, curText='';
+
+const DEMO=`本文深入探讨了图神经网络在交通流量预测中的应用，系统梳理了相关研究。研究表明，该方法发挥着至关重要的作用，从而彰显了其应用价值。综上所述，本研究具有重要的理论意义和实践价值。
+
+Abstract: This paper delves into the application of graph neural networks for traffic flow prediction. The proposed framework serves as a pivotal tool, showcasing robust performance. Studies show that our approach is not just accurate, but also efficient, scalable, and interpretable, underscoring the importance of spatial-temporal modeling. In conclusion, despite these challenges, future research will explore this promising realm.
+
+我们在 PeMS04 上训练，输入 12 个时间步，batch size 64。MAE 从基线的 21.3 降到 19.8，提升幅度不大。按传感器重新划分后掉到 20.6，这个数才可信。`;
+
+inp.oninput=()=>{$('#cnt').textContent=inp.value.replace(/\s/g,'').length+' 字'};
+$('#demo').onclick=()=>{inp.value=DEMO;inp.dispatchEvent(new Event('input'));run()};
+$('#btn').onclick=run; $('#fix').onclick=autofix;
+inp.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')run()});
+
+async function post(url,body){
+  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)});
+  if(!r.ok) throw new Error((await r.json()).error||r.statusText);
+  return r.json();
+}
+function busy(on,label){
+  $('#btn').disabled=on; $('#fix').disabled=on||!cur;
+  $('#btn').innerHTML=on?`<span class="spin"></span> ${label||'诊断中'}`:'诊断';
+}
+
+async function run(){
+  const t=inp.value.trim(); if(!t) return;
+  busy(true);
+  try{ cur=await post('/api/diagnose',{text:t}); curText=cur.text; render(cur,curText);
+       $('#cal').textContent=cur.calibrated?'权重：已标定':'权重：临时值（未经探测标定）';
+  }catch(e){ $('#out').innerHTML=`<div class="empty">出错：${e.message}</div>`; }
+  busy(false); $('#fix').disabled=!cur;
+}
+
+async function autofix(){
+  const t=inp.value.trim(); if(!t) return;
+  busy(true,'修复中');
+  try{
+    const r=await post('/api/autofix',{text:t});
+    renderFix(r);
+  }catch(e){ alert('出错：'+e.message); }
+  busy(false);
+}
+
+// 逐字符收集覆盖该位置的发现，再合并成连续区间——这样重叠命中也能正确渲染
+function highlight(text,findings){
+  const N=text.length, cover=Array.from({length:N},()=>[]);
+  findings.forEach((f,i)=>{ for(let p=Math.max(0,f.start);p<Math.min(N,f.end);p++) cover[p].push(i); });
+  const SEV={high:3,medium:2,low:1};
+  let html='',run=null;
+  const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const flush=()=>{ if(!run) return;
+    const txt=esc(text.slice(run.s,run.e));
+    if(!run.ids.length){ html+=txt; }
+    else{ const sev=run.ids.map(i=>findings[i].severity)
+            .sort((a,b)=>SEV[b]-SEV[a])[0];
+          html+=`<mark class="s-${sev}" data-f="${run.ids.join(',')}">${txt}</mark>`; }
+    run=null; };
+  for(let p=0;p<N;p++){
+    const key=cover[p].join(',');
+    if(run && run.key===key){ run.e=p+1; } else { flush(); run={s:p,e:p+1,key,ids:cover[p]}; }
+  }
+  flush(); return html;
+}
+
+function fcard(f){
+  return `<div class="f ${f.severity}" data-fi="1">
+    <div class="t"><span class="id">${f.rule_id}</span>${f.name}</div>
+    <div class="m">${f.matched.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</div>
+    <div class="e">${f.explain}</div></div>`;
+}
+
+function render(r,text){
+  const s=r.summary, mz=r.metrics, me=r.metrics_en;
+  const lang=s['语言构成'];
+  let h=`<div class="tabs">
+      <div class="tab on" data-t="doc">全文标注</div>
+      <div class="tab" data-t="list">全部发现 (${r.findings.length})</div>
+      <div class="tab" data-t="stat">统计指标</div></div>`;
+
+  h+=`<div class="stats">
+    <div class="stat"><div class="n">${s['总字数']}</div><div class="l">字数</div></div>
+    <div class="stat"><div class="n">${s['段落数']}</div><div class="l">段落</div></div>
+    <div class="stat"><div class="n hi">${s['高风险']}</div><div class="l">高风险</div></div>
+    <div class="stat"><div class="n md">${s['中风险']}</div><div class="l">中风险</div></div>
+    <div class="stat"><div class="n">${s['高风险段落']}</div><div class="l">高危段</div></div>
+    <div class="stat"><div class="n">${lang['中文段']}/${lang['英文段']}</div><div class="l">中/英段</div></div>
+  </div>`;
+
+  if(r.hard_limit_violations.length){
+    h+=`<div class="warn"><b>硬约束违反 ${r.hard_limit_violations.length} 项</b>
+      <ul>${r.hard_limit_violations.map(v=>
+        `<li>${v.para?('第'+v.para+'段'):'全文'}：${v.desc}（实际 ${v.actual}，上限 ${v.limit}）</li>`
+      ).join('')}</ul></div>`;
+  }
+
+  h+=`<div id="pane-doc"><div id="doc">${highlight(text,r.findings)}</div>
+      <div class="note" id="detail">点击带下划线的文字，看它为什么被标记。</div></div>`;
+
+  h+=`<div id="pane-list" hidden>${
+    r.findings.length?r.findings.map(fcard).join(''):'<div class="empty">没有检出特征。</div>'}</div>`;
+
+  const f=(v)=>v===undefined||v===null?'—':v;
+  h+=`<div id="pane-stat" hidden><div class="mt">`;
+  if(lang['中文段']){
+    h+=`<b>中文部分</b><br>
+      句长均值 <b>${f(mz.sent_len_mean)}</b> · 变异系数 <b>${f(mz.sent_len_cv)}</b>
+      （人类通常 >0.25）<br>
+      具体性：数字密度 <b>${f(mz.digit_density)}</b>/百字 · 专名密度 <b>${f(mz.proper_density)}</b>/百字<br>
+      实词密度 ${f(mz.content_ratio)} · TTR ${f(mz.ttr)} · 4-gram 重复 ${f(mz.ngram_repeat)}<br><br>`;
+  }
+  if(me){
+    h+=`<b>English</b><br>
+      Sentence length <b>${f(me.sent_len_mean)}</b> words · CV <b>${f(me.sent_len_cv)}</b><br>
+      Passive voice <b>${f(me.passive_ratio)}</b> (human &lt;0.30) ·
+      Hedging <b>${f(me.hedge_density)}</b> (human &lt;0.03)<br>
+      TTR <b>${f(me.ttr)}</b> · Transitions ${f(me.transition_density)} ·
+      Digits ${f(me.digit_density)}/100w<br><br>`;
+  }
+  h+=`</div><div class="note">
+    <b>关于阈值。</b>规则层（上面的逐条命中）可直接核对原文，结论可证伪。
+    统计层的阈值抄自公开资料且无出处，因此默认<b>只记录不告警</b>——
+    在黑盒探测标定之前，拿未验证的阈值给你一个百分比，和编造没有区别。
+    目前只有「数字密度」经过对照实验初步验证。</div></div>`;
+
+  h+=`<div class="note"><b>段落一览</b>${r.paragraphs.map(p=>
+    `<div class="para" data-p="${p.index}">
+       <span class="dot ${p.level}"></span>
+       <span class="tag">${p.lang==='en'?'EN':'中'}</span>
+       <span class="p">第${p.index+1}段 · ${p.preview}…</span>
+       <span class="tag">${p.raw_score} 类</span></div>`).join('')}</div>`;
+
+  $('#out').innerHTML=h;
+  wire(r,text);
+}
+
+function wire(r,text){
+  $('#out').querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+    $('#out').querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
+    ['doc','list','stat'].forEach(n=>$('#pane-'+n).hidden=(n!==t.dataset.t));
+  });
+  $('#doc').querySelectorAll('mark').forEach(m=>m.onclick=()=>{
+    $('#doc').querySelectorAll('mark').forEach(x=>x.classList.remove('sel'));
+    m.classList.add('sel');
+    const ids=m.dataset.f.split(',').map(Number);
+    $('#detail').innerHTML=ids.map(i=>fcard(r.findings[i])).join('');
+  });
+  $('#out').querySelectorAll('.para').forEach(p=>p.onclick=()=>{
+    const i=+p.dataset.p;
+    const first=r.findings.find(f=>f.para_index===i);
+    if(!first) return;
+    $('#out').querySelector('.tab[data-t="doc"]').click();
+    const mk=[...$('#doc').querySelectorAll('mark')]
+      .find(m=>m.dataset.f.split(',').map(Number).includes(r.findings.indexOf(first)));
+    if(mk){ mk.scrollIntoView({block:'center',behavior:'smooth'}); mk.click(); }
+  });
+}
+
+function renderFix(r){
+  const b=r.before,a=r.after;
+  const d=(k)=>`${b[k]} → <b>${a[k]}</b>`;
+  let h=`<div class="tabs"><div class="tab on">确定性修复结果</div></div>
+    <div class="stats">
+      <div class="stat"><div class="n">${b['检出特征总数']}→${a['检出特征总数']}</div><div class="l">特征总数</div></div>
+      <div class="stat"><div class="n hi">${b['高风险']}→${a['高风险']}</div><div class="l">高风险</div></div>
+      <div class="stat"><div class="n">${b['高风险段落']}→${a['高风险段落']}</div><div class="l">高危段</div></div>
+      <div class="stat"><div class="n">${b['硬约束违反']}→${a['硬约束违反']}</div><div class="l">硬约束</div></div>
+    </div>
+    <div class="note" style="border:0;margin:0 0 12px;padding:0"><b>改动明细</b></div>`;
+  h+=r.log.map(l=>`<div class="lg"><span><span class="id" style="font:11.5px ui-monospace,monospace">${l.rule_id}</span> ${l.name}</span><span>${l.count} 处</span></div>`).join('');
+  h+=`<div class="note" style="margin-top:14px"><b>修复后文本</b>（已复制到左侧输入框，可再次诊断）</div>
+      <div class="diffbox">${r.fixed_text.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</div>
+      <div class="note"><b>剩下的需要你来。</b>确定性修复只能做减法。
+      真正把 AI 率降下去最有效的一步是<b>恢复具体性</b>——把「效果显著」换成
+      「MAE 从 21.3 降到 19.8」。这类信息只能来自你本人，工具不应当替你编造。</div>`;
+  $('#out').innerHTML=h;
+  inp.value=r.fixed_text; inp.dispatchEvent(new Event('input'));
+  cur=r.after_full; curText=r.fixed_text;
+}
+</script></body></html>
