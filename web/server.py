@@ -68,6 +68,8 @@ class Handler(BaseHTTPRequestHandler):
         data = body if isinstance(body, bytes) else body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -81,6 +83,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, json.dumps({"error": "not found"}))
 
     def do_POST(self):
+        try:
+            self._handle_post()
+        except Exception:
+            import traceback
+            tb = traceback.format_exc()
+            print("\n[请求处理失败]\n" + tb, flush=True)   # 控制台留痕，便于排查
+            try:
+                self._send(500, json.dumps({"error": "服务端处理失败，详见终端输出",
+                                            "detail": tb.strip().splitlines()[-1]},
+                                           ensure_ascii=False))
+            except Exception:
+                pass
+
+    def _handle_post(self):
         n = int(self.headers.get("Content-Length") or 0)
         try:
             payload = json.loads(self.rfile.read(n) or b"{}")
@@ -116,9 +132,18 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
     url = f"http://127.0.0.1:{port}"
-    srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError as e:
+        print(f"无法在端口 {port} 启动：{e}")
+        print(f"多半是端口被占用。换一个端口试试：python3 web/server.py {port + 1}")
+        sys.exit(1)
     print(f"诊断服务已启动 → {url}")
     print(f"权重：{'已标定 weights.json' if WEIGHTS.exists() else '临时权重（未经探测标定）'}")
+    import os
+    if any(os.environ.get(k) for k in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY")):
+        print("提示：检测到系统代理。若浏览器打不开或诊断报错，")
+        print("     请在代理软件/浏览器里把 127.0.0.1、localhost 加入绕过列表。")
     print("Ctrl+C 停止")
     try:
         webbrowser.open(url)

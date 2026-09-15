@@ -126,17 +126,44 @@ Abstract: This paper delves into the application of graph neural networks for tr
 
 我们在 PeMS04 上训练，输入 12 个时间步，batch size 64。MAE 从基线的 21.3 降到 19.8，提升幅度不大。按传感器重新划分后掉到 20.6，这个数才可信。`;
 
+(async()=>{ try{ const r=await fetch('/health'); if(!r.ok) throw 0; await r.json(); }
+  catch(e){ showErr(new Error('NET|页面加载了，但调不通后端接口。'
+    +'若你开着代理软件，请把 127.0.0.1 和 localhost 加入绕过列表。')); } })();
+
 inp.oninput=()=>{$('#cnt').textContent=inp.value.replace(/\s/g,'').length+' 字'};
 $('#demo').onclick=()=>{inp.value=DEMO;inp.dispatchEvent(new Event('input'));run()};
 $('#btn').onclick=run; $('#fix').onclick=autofix;
 inp.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')run()});
 
 async function post(url,body){
-  const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)});
-  if(!r.ok) throw new Error((await r.json()).error||r.statusText);
-  return r.json();
+  let r;
+  try{
+    r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+  }catch(e){
+    throw new Error('NET|连不上本地服务。请确认终端里 server.py 还在运行；'
+      +'若你开着代理软件，把 127.0.0.1 和 localhost 加入绕过列表。');
+  }
+  const raw=await r.text();
+  let data=null; try{ data=JSON.parse(raw); }catch(e){}
+  if(!data){
+    // 返回的不是 JSON —— 几乎总是代理插在中间返回了错误页
+    throw new Error('NET|收到的不是本服务的响应（HTTP '+r.status+'）。'
+      +'多半是代理软件拦截了 127.0.0.1，请把它加入绕过列表后重试。');
+  }
+  if(!r.ok) throw new Error((data.error||r.statusText)+(data.detail?'：'+data.detail:''));
+  return data;
 }
+function showErr(e){
+  const net=e.message.startsWith('NET|');
+  const msg=net?e.message.slice(4):e.message;
+  $('#out').innerHTML=`<div class="warn" style="margin:0">
+      <b>${net?'连接失败':'处理失败'}</b><div style="margin-top:6px">${msg}</div>
+      ${net?'':'<div style="margin-top:8px;font-size:12px;opacity:.8">'
+        +'运行 server.py 的终端里会有完整报错，把它发我即可定位。</div>'}
+    </div>`;
+}
+
 function busy(on,label){
   $('#btn').disabled=on; $('#fix').disabled=on||!cur;
   $('#btn').innerHTML=on?`<span class="spin"></span> ${label||'诊断中'}`:'诊断';
@@ -147,7 +174,7 @@ async function run(){
   busy(true);
   try{ cur=await post('/api/diagnose',{text:t}); curText=cur.text; render(cur,curText);
        $('#cal').textContent=cur.calibrated?'权重：已标定':'权重：临时值（未经探测标定）';
-  }catch(e){ $('#out').innerHTML=`<div class="empty">出错：${e.message}</div>`; }
+  }catch(e){ showErr(e); }
   busy(false); $('#fix').disabled=!cur;
 }
 
@@ -157,7 +184,7 @@ async function autofix(){
   try{
     const r=await post('/api/autofix',{text:t});
     renderFix(r);
-  }catch(e){ alert('出错：'+e.message); }
+  }catch(e){ showErr(e); }
   busy(false);
 }
 
