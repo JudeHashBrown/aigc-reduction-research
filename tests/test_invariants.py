@@ -124,3 +124,46 @@ if FAILS:
         print("  " + f)
     sys.exit(1)
 print("\n✓ 全部通过")
+
+
+def test_rule_coverage():
+    """每条规则必须恰好归属一层：代码层、LLM 层、或明确的只报告。
+
+    P02 曾被 CODE_HANDLED 声称由代码处理、而 SAFE_ZH 里根本没有，
+    于是一条 high 级规则两层都不管，诊断报得出来却永远修不掉。
+    这个断言让那种夹缝不可能再悄悄出现。
+    """
+    import patterns, patterns_en
+    from rewrite import CODE_HANDLED, SEMANTIC, REPORT_ONLY
+    from codefix import SAFE_ZH, SAFE_EN
+    bad = []
+    for lang, rules, safe in (("zh", patterns.ALL_RULES, SAFE_ZH),
+                              ("en", patterns_en.SENTENCE_RULES_EN
+                               + patterns_en.PARAGRAPH_RULES_EN, SAFE_EN)):
+        ids = {r.rule_id for r in rules} | {"V-T1", "V-T2"}
+        code, sem, rep = set(CODE_HANDLED[lang]), set(SEMANTIC[lang]), set(REPORT_ONLY[lang])
+        for rid in sorted(ids):
+            homes = [n for n, g in (("code", code), ("llm", sem), ("report", rep)) if rid in g]
+            if len(homes) != 1:
+                bad.append(f"{lang}/{rid}: 归属 {homes or '无'}")
+        for rid in sorted(code - set(safe)):
+            bad.append(f"{lang}/{rid}: CODE_HANDLED 声称代码处理，但不在 SAFE 列表里")
+    assert not bad, "规则归属有问题:\n  " + "\n  ".join(bad)
+
+
+def test_rules_reachable():
+    """每条注册的规则都必须在 diagnose 的执行路径上。
+
+    新规则只加进 ALL_RULES 而没并进 SENTENCE_RULES/PARAGRAPH_RULES/FORMAT_RULES 时，
+    RULES_BY_ID 查得到、覆盖审计也过，但诊断永远不会命中它——
+    与 P02 同一类错误：注册表不等于执行路径。
+    """
+    import patterns as P, patterns_en as PE
+    for name, mod, lists in (
+            ("zh", P, (P.SENTENCE_RULES, P.PARAGRAPH_RULES, P.FORMAT_RULES)),
+            ("en", PE, (PE.SENTENCE_RULES_EN, PE.PARAGRAPH_RULES_EN))):
+        executed = {r.rule_id for lst in lists for r in lst}
+        registered = ({r.rule_id for r in mod.ALL_RULES} if name == "zh"
+                      else {r.rule_id for lst in lists for r in lst})
+        missing = sorted(registered - executed)
+        assert not missing, f"{name}: 这些规则注册了但诊断跑不到: {missing}"

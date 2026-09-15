@@ -24,7 +24,12 @@ THRESHOLDS = {
     "sent_len_cv":      {"human_min": 0.25, "ai_max": 0.15, "desc": "句长变异系数"},
     "connective_ratio": {"human_max": 0.08, "ai_min": 0.12, "desc": "连接词密度"},
     "content_ratio":    {"human_min": 0.55, "ai_max": 0.45, "desc": "实词密度"},
-    "digit_density":    {"human_min": 1.2,  "ai_max": 0.4,  "desc": "数字密度(每百字)"},
+    # 唯一有外部实测来源的阈值。lieflat-less-ai-tone 对照实验（AI 300 篇 117.9 万汉字 /
+    # 人类 329 篇 164.8 万汉字）测得数字密度 AI 6.34/千字、人类 17.92/千字，人类是 2.8 倍，
+    # 并称「这是覆盖面最广的一项差异……材料稀薄是整篇的底色」。换算成每百字即 0.63 / 1.79。
+    # 口径不完全一致：对方分母是汉字数、本引擎是非空白字符，且对方的数字正则未公开。
+    # 因此这两个值的**方向和量级**可信，精确边界待我们自己在学术语料上复测。
+    "digit_density":    {"human_min": 1.79, "ai_max": 0.63, "desc": "数字密度(每百字)"},
     "proper_density":   {"human_min": 1.0,  "ai_max": 0.3,  "desc": "专名密度(每百字)"},
     "ttr":              {"human_min": 0.60, "ai_max": 0.50, "desc": "类符形符比"},
     "ngram_repeat":     {"human_max": 0.03, "ai_min": 0.06, "desc": "4-gram 自相似度"},

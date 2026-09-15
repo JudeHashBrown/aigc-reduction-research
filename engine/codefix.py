@@ -24,7 +24,13 @@ from diagnose import detect_lang, diagnose
 # 中文 S04（回避系动词）已移出代码层：把「起到了承上启下的作用」机械改成
 # 「很承上启下」会出语法错误——「很X」只在 X 是形容词时成立，需要词性判断。
 # 英文的 serves as → is 是纯词替换，不涉及结构，安全保留。
-SAFE_ZH = ["S08", "S05", "S07", "S03", "V-T1", "V-T2", "F01", "F02"]
+# 顺序要紧：L10 先跑（纯插入，必须在任何删除动作碰到评论语之前）；
+# 结构删除次之；前缀删除、从句改写、连接词替换再次之；词表最后。
+# L07 放在词表前：句首形态由 L07 换词处理，句中残留的才交给词表。
+SAFE_ZH = ["L10",
+           "S08", "S05", "S07", "S03",
+           "L01", "L09", "L05", "L07",
+           "V-T1", "V-T2", "F01", "F02"]
 SAFE_EN = ["S08", "S05", "S07", "S04", "P02", "V-T1", "V-T2", "F01"]
 
 
@@ -39,6 +45,9 @@ def _tidy_en(text: str) -> str:
 # 低危规则：孤立出现时属于正常人类写作，不该碰。
 # 破折号尤其如此——维基指南自己都在讨论要不要把它降级为「历史指标」，
 # 且 2026 年的研究发现 ChatGPT 用破折号反而比职业写手更少。
+# 首段不适用的规则：首段没有上文可回指。
+FIRST_PARA_EXEMPT = {"L10"}
+
 LOW_SEVERITY_RULES = {"F01", "F04", "S10", "S12"}
 NOISE_BUDGET_PER_1K = 3      # 每千字允许保留的低危特征数
 
@@ -71,10 +80,15 @@ def _noise_exempt(text: str) -> set:
 def codefix(text: str) -> Tuple[str, List[Dict]]:
     exempt = _noise_exempt(text)
     tally, out_paras = {}, []
+    seen_nonempty = False
     for para in text.split("\n"):
         if not para.strip():
             out_paras.append(para)
             continue
+        # 首段没有上文可回指，L10 不适用。codefix 是逐行调消融的，
+        # 消融函数内部那套 \n\n 切分在这里永远只看到一段，判不出首段，
+        # 所以首段豁免必须在这一层做。
+        first_para, seen_nonempty = not seen_nonempty, True
         lang = detect_lang(para)
         table = ABLATIONS_EN if lang == "en" else ABLATIONS
         safe = SAFE_EN if lang == "en" else SAFE_ZH
@@ -82,6 +96,8 @@ def codefix(text: str) -> Tuple[str, List[Dict]]:
         touched = False
         for rid in safe:
             if rid not in table or rid in exempt:
+                continue
+            if rid in FIRST_PARA_EXEMPT and first_para:
                 continue
             name, fn = table[rid]
             new, n = fn(cur)

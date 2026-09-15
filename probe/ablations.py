@@ -284,10 +284,95 @@ def ablate_burstiness_flatten(text):
     return "\n".join(out_paras), n
 
 
+
+# ---------- lieflat 实测规则的确定性变换 --------------------------------
+# 只收进代码层的五条：改法是纯前缀删除、纯替换或纯插入，不需要语义判断。
+# L02/L03/L04/L06/L08 的改法要重组句子，留给 LLM 层。
+
+_L01_LEAD = (r'(?:一句话(?:总结|说|概括)|简单说|说白了|总结|小结|结论|核心(?:是|在于|观点)?'
+             r'|关键(?:是|在于)?|重点(?:是)?|原因(?:如下|有|在于)?|问题(?:是|在于)?'
+             r'|答案(?:是)?|本质(?:是|上)?|定义(?:是)?|具体(?:来说|如下|包括)?'
+             r'|举例(?:来说)?|换句话说|也就是说|我的(?:观点|判断|结论)|建议(?:是)?)[：:]')
+
+
+def ablate_l01_lead_colon(text):
+    """提示性冒号 → 删掉提示语，直接写内容。
+
+    只删句首/段首的提示语。句中冒号（「人擅长的是：判断业务逻辑」）是
+    GB/T 15834 认可的总说分说用法，lieflat 实测人机无差异，明确列入不改。
+    """
+    return _sub_count(r'(?m)(?:^|(?<=[。！？；\n]))\s*' + _L01_LEAD + r'\s*', '', text)
+
+
+def ablate_l05_when_clause(text):
+    """「当…时，」→ 删掉「当」和「时」，从句直接作前一分句。"""
+    return _sub_count(r'当([^，。；\n]{2,20}?)(?<!的时候)时([，,])', r'\1\2', text)
+
+
+_L07_MAP = {"然而": "不过", "因此": "所以", "此外": "另外",
+            "与此同时": "同时", "换言之": "也就是说",
+            "总而言之": "总的看", "综上所述": "总的看"}
+
+
+def ablate_l07_opener_connective(text):
+    """句首连接词 → 换成更口语的说法。
+
+    lieflat 的改法是移位或换词，不是删除——删掉会抹掉论证路标，
+    而信息守恒禁止删减。所以这里只做替换。
+    """
+    n = 0
+    for old, new in _L07_MAP.items():
+        text, k = _sub_count(
+            r'(?m)(?:^|(?<=[。！？；\n]))(' + old + r')([，,])', new + r'\2', text)
+        n += k
+    return text, n
+
+
+def ablate_l09_opener_filler(text):
+    """起手式「说白了」「先说结论」→ 删掉，直接给判断。"""
+    return _sub_count(r'(?m)(?:^|(?<=[。！？；\n]))\s*(?:说白了|说穿了|先说结论|直说吧)[，,]?\s*',
+                      '', text)
+
+
+# 纯插入即可修复的评论语：补一个「这」字就把上文接回来了。
+_L10_INSERT = r'(?:听起来|看起来|看上去|听上去|不难看出|不难发现)'
+
+
+def ablate_l10_zero_subject(text):
+    """段首零主语评论 → 补回指词。
+
+    lieflat 全部规则里倍率最高的一条（4.4x），而改法是**加一个字**——
+    零信息损失，因此天然绕开了 guard.py 对小写技术术语的盲区。
+    只处理纯插入就能修好的形态；「更重要的是/关键在于/问题在于」需要
+    点明评论对象，交给 LLM 层。首段不处理（没有上文可指）。
+    """
+    paras = text.split("\n\n")
+    multi = len(paras) > 1            # 整篇输入（探针）才判得出首段
+    n = 0
+    for i, para in enumerate(paras):
+        if multi and i == 0:
+            continue                      # 首段没有上文可回指
+        new, k = _sub_count(r'^(' + _L10_INSERT + r')', r'这\1', para)
+        if k:
+            paras[i] = new
+            n += k
+        else:
+            new, k = _sub_count(r'^值得注意的是[，,]?', '这一点值得注意，', para)
+            if k:
+                paras[i] = new
+                n += k
+    return "\n\n".join(paras), n
+
+
 ABLATIONS = {
     "V-T1": ("T1 强标记词", ablate_vocab_t1),
     "V-T2": ("T2 中等标记词", ablate_vocab_t2),
-    "S01": ("整齐三元并列", ablate_s01_triple),
+    "L01": ("提示性冒号", ablate_l01_lead_colon),
+    "L05": ("当…时前置从句", ablate_l05_when_clause),
+    "L07": ("句首连接词", ablate_l07_opener_connective),
+    "L09": ("起手式", ablate_l09_opener_filler),
+    "L10": ("段首零主语评论", ablate_l10_zero_subject),
+    "S01": ("顿号罗列过密", ablate_s01_triple),
     "S02": ("编号枚举骨架", ablate_s02_enum),
     "S03": ("否定式排比", ablate_s03_neg_parallel),
     "S04": ("回避系动词", ablate_s04_copula),
@@ -300,5 +385,10 @@ ABLATIONS = {
     "P02": ("段末总结套句", ablate_p02_tail_summary),
     "F01": ("破折号", ablate_f01_emdash),
     "F02": ("正文加粗", ablate_f02_bold),
-    "BURST": ("句长拉平(反向)", ablate_burstiness_flatten),
+    # 反向对照，现在是一个预注册的证伪实验：
+    # lieflat 在 283 万汉字上测得句长 CV（AI 0.58 / 人类 0.67，0.87x）、
+    # 相邻句长差（1.00x）、段落长度离散度（0.94x）人机均无差异。
+    # 若该结论对学术语料同样成立，本消融在真实检测器上应当**没有效应**。
+    # 测出显著效应反而说明学术文体与网文不同，届时再解封统计层。
+    "BURST": ("句长拉平(反向对照)", ablate_burstiness_flatten),
 }
