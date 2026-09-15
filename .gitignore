@@ -3,6 +3,7 @@ BypassAIGC/
 thesis-optimizer/
 AIGC-Detector-Pro/
 humanizer-zh-academic/
+lieflat-less-ai-tone/
 
 # 抓取的原始语料与中间产物（可按 研究笔记/README 中的命令重新获取）
 研究笔记/*.wiki
