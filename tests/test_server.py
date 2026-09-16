@@ -87,6 +87,63 @@ try:
         if e.code != 404:
             FAILS.append(f"未知路径 → {e.code}（应为 404）")
 finally:
+    # ---- docx 出入口 ----
+    sys.path.insert(0, str(ROOT / "tests"))
+    sys.path.insert(0, str(ROOT / "engine"))
+    import base64
+    from test_docx import make_docx
+
+    doc = make_docx(["本文研究了该方法。研究表明，它具有重要的理论意义。",
+                     "一句话总结：效果明显。当条件改变时，误差会上升。"], split_runs=True)
+    b64doc = base64.b64encode(doc).decode()
+
+    code, body = post("/api/docx/extract", {"file": b64doc})
+    if code != 200 or "text" not in body:
+        FAILS.append(f"docx 提取失败 {code}: {str(body)[:120]}")
+    elif body["meta"]["n_paragraphs"] != 2:
+        FAILS.append(f"docx 段落数错: {body['meta']}")
+    else:
+        code2, fixed = post("/api/autofix", {"text": body["text"]})
+        if code2 != 200:
+            FAILS.append(f"docx 文本走 autofix 失败 {code2}")
+        else:
+            code3, exp = post("/api/docx/export",
+                              {"file": b64doc, "text": fixed["fixed_text"]})
+            if code3 != 200 or "file" not in exp:
+                FAILS.append(f"docx 导出失败 {code3}: {str(exp)[:160]}")
+            else:
+                try:
+                    base64.b64decode(exp["file"], validate=True)
+                except Exception as exc:
+                    FAILS.append(f"导出的不是合法 base64: {exc}")
+
+    # docx 畸形输入必须回 4xx，不能 500
+    for name, payload in [("缺 file", {}),
+                          ("file 非字符串", {"file": 123}),
+                          ("非法 base64", {"file": "@@@not base64@@@"}),
+                          ("不是 zip", {"file": base64.b64encode(b"hello").decode()}),
+                          ("空 zip", {"file": base64.b64encode(
+                              b"PK\x05\x06" + b"\x00" * 18).decode()})]:
+        code, body = post("/api/docx/extract", payload)
+        if not (400 <= code < 500) or "error" not in body:
+            FAILS.append(f"docx 畸形输入「{name}」→ {code}（应为 4xx + error）")
+
+    # 段落数对不上必须拒绝写回，而不是错位
+    code, body = post("/api/docx/export", {"file": b64doc, "text": "只有一段。"})
+    if not (400 <= code < 500):
+        FAILS.append(f"docx 段落数不符 → {code}（必须拒绝，错位会毁掉整篇论文）")
+
+    # ---- 零宽字符必须被清掉并如实告知 ----
+    code, body = post("/api/diagnose", {"text": "研究\u200b表明该方法有效，具有重要的理论意\u200d义。"})
+    if code != 200:
+        FAILS.append(f"零宽字符输入 → {code}")
+    else:
+        ids = {f["rule_id"] for f in body["findings"]}
+        if "S07" not in ids:
+            FAILS.append(f"零宽字符仍让规则失效，命中 {ids}（必须先归一化再诊断）")
+        if not any(n["level"] == "warn" for n in body.get("notices", [])):
+            FAILS.append("清除了隐藏字符却没有告知用户")
+
     proc.terminate()
     time.sleep(0.4)
     out = proc.stdout.read() if proc.stdout else ""
@@ -98,4 +155,4 @@ if FAILS:
     for f in FAILS:
         print("  " + f)
     sys.exit(1)
-print("✓ 服务端 10 种输入 × 2 接口 + 畸形请求 + 404 全部正确")
+print("✓ 服务端 10 输入 × 2 接口 + docx 出入口往返 + 5 种畸形 docx + 零宽归一化 + 404 全部正确")

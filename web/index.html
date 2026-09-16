@@ -91,6 +91,16 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);
   border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
+  .upl{display:inline-block;padding:7px 14px;border:1px solid var(--line);border-radius:7px;
+       cursor:pointer;font-size:13px;background:var(--btn,transparent)}
+  .upl:hover{border-color:var(--accent,#888)}
+  .notice{margin:8px 0 0;padding:9px 11px;border-radius:7px;font-size:13px;line-height:1.6}
+  .notice.warn{background:#fff6e5;border:1px solid #f0d090;color:#6a4a00}
+  .notice.info{background:#eef4fb;border:1px solid #c5d8ee;color:#2c4a6b}
+  @media (prefers-color-scheme:dark){
+    .notice.warn{background:#3a2e10;border-color:#6b5520;color:#f0d79a}
+    .notice.info{background:#16283a;border-color:#2d4a66;color:#a8c8e8}
+  }
 </style></head><body>
 
 <header>
@@ -109,8 +119,13 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
       <button id="fix" disabled>确定性修复</button>
       <button id="rw" disabled title="需配置 LLM">两层改写</button>
       <button id="demo">示例</button>
+      <label class="upl" for="file">上传 .docx</label>
+      <input type="file" id="file" accept=".docx" hidden>
+      <button id="exp" hidden title="把当前文本写回原 docx，保留全部格式">导出 docx</button>
       <span class="hint" id="cnt">0 字</span>
     </div>
+    <div id="notices"></div>
+    <div id="docinfo" class="note" hidden></div>
     <div class="note">
       <b>两层改写</b> = 代码修复 + LLM 重写结构（需配置 LLM）。
       <b>确定性修复</b>只做不需要语义理解的改动（删套话、换词表内高频词、去格式残留），
@@ -172,6 +187,15 @@ inp.oninput=()=>{$('#cnt').textContent=inp.value.replace(/\s/g,'').length+' 字'
 $('#rw').onclick=pipeline;
 $('#demo').onclick=()=>{inp.value=DEMO;inp.dispatchEvent(new Event('input'));run()};
 $('#btn').onclick=run; $('#fix').onclick=autofix;
+$('#file').onchange=e=>{ onFile(e.target.files[0]); e.target.value=''; };
+$('#exp').onclick=exportDocx;
+// 整页拖放：拖一个 .docx 进来就直接载入
+document.addEventListener('dragover',e=>{e.preventDefault()});
+document.addEventListener('drop',e=>{
+  e.preventDefault();
+  const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+  if(f) onFile(f);
+});
 inp.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')run()});
 
 async function post(url,body){
@@ -196,6 +220,63 @@ async function post(url,body){
   if(!r.ok) throw new Error((data.error||r.statusText)+(data.detail?'：'+data.detail:''));
   return data;
 }
+// 原始 docx 字节由页面保管并在导出时回传，服务端不存会话状态。
+let DOCX=null, DOCX_NAME='';
+
+function renderNotices(list){
+  const box=$('#notices');
+  if(!list||!list.length){ box.innerHTML=''; return; }
+  box.innerHTML=list.map(n=>
+    `<div class="notice ${n.level==='warn'?'warn':'info'}">${n.text.replace(/\n/g,'<br>')}</div>`
+  ).join('');
+}
+
+function b64(buf){
+  // 大文件不能用 apply(...spread)，参数个数会爆栈，必须分块
+  const b=new Uint8Array(buf); let out='';
+  for(let i=0;i<b.length;i+=0x8000) out+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));
+  return btoa(out);
+}
+
+async function onFile(f){
+  if(!f) return;
+  if(!/\.docx$/i.test(f.name)){
+    return showErr(new Error('只支持 .docx。如果是 .doc 旧格式，请在 Word 里另存为 .docx。'));
+  }
+  busy(true,'解析文档');
+  try{
+    DOCX=b64(await f.arrayBuffer()); DOCX_NAME=f.name;
+    const r=await post('/api/docx/extract',{file:DOCX});
+    $('#in').value=r.text;
+    $('#in').dispatchEvent(new Event('input'));
+    renderNotices(r.notices);
+    $('#docinfo').hidden=false;
+    $('#docinfo').innerHTML=`已载入 <b>${f.name}</b>：${r.meta.n_paragraphs} 段、`
+      +`${r.meta.n_chars} 字。修复或改写之后可以<b>导出 docx</b>——`
+      +`只替换文字命中的那些段落，字体、样式、图表、页眉页脚全部保留。`;
+    $('#exp').hidden=false;
+    await run();
+  }catch(e){ showErr(e); }
+  finally{ busy(false); }
+}
+
+async function exportDocx(){
+  if(!DOCX) return;
+  busy(true,'导出中');
+  try{
+    const r=await post('/api/docx/export',{file:DOCX,text:$('#in').value});
+    const bin=atob(r.file), arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    const url=URL.createObjectURL(new Blob([arr],
+      {type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));
+    const a=document.createElement('a');
+    a.href=url; a.download=DOCX_NAME.replace(/\.docx$/i,'')+'_已修改.docx';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+  }catch(e){ showErr(e); }
+  finally{ busy(false); }
+}
+
 function showErr(e){
   const net=e.message.startsWith('NET|');
   const msg=net?e.message.slice(4):e.message;
@@ -211,6 +292,7 @@ function busy(on,label){
   $('#btn').disabled=on||ONLINE===false;
   $('#fix').disabled=on||!cur||ONLINE===false;
   $('#rw').disabled=on||!CFG.llm_configured||ONLINE===false;
+  const ex=$('#exp'); if(ex) ex.disabled=on||ONLINE===false;
   $('#btn').innerHTML=on?`<span class="spin"></span> ${label||'诊断中'}`:'诊断';
 }
 
@@ -242,6 +324,7 @@ async function pipeline(){
 }
 
 function renderPipe(r){
+  renderNotices(r.notices);
   const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const stage=(n,s)=>`<tr><td>${n}</td><td>${s['检出特征总数']}</td>
     <td>${s['高风险']}</td><td>${s['高风险段落']}</td><td>${s['硬约束违反']}</td></tr>`;
@@ -325,6 +408,7 @@ function fcard(f){
 }
 
 function render(r,text){
+  renderNotices(r.notices);
   const s=r.summary, mz=r.metrics, me=r.metrics_en;
   const lang=s['语言构成'];
   let h=`<div class="tabs">
@@ -411,6 +495,7 @@ function wire(r,text){
 }
 
 function renderFix(r){
+  renderNotices(r.notices);
   const b=r.before,a=r.after;
   const d=(k)=>`${b[k]} → <b>${a[k]}</b>`;
   let h=`<div class="tabs"><div class="tab on">确定性修复结果</div></div>
