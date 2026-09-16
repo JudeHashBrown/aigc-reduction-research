@@ -127,6 +127,17 @@ def main():
 
     mf = OUT / "manifest.csv"
     with mf.open("w", newline="", encoding="utf-8-sig") as f:
+        # 优先级分层：46 次手工提交太多，而且大部分在第一层出结果前不值得做。
+        #   P1 基准 + 全清（16 次）—— 决定性实验。全清都推不动分数，
+        #      说明规则层这条路对该检测器无效，后面 30 次直接省掉。
+        #   P2 反向对照 BURST（8 次）—— 预注册的证伪实验：
+        #      lieflat 实测句长离散度人机无差异，预测它没有效应。
+        #   P3 单特征消融（22 次）—— 只在 P1 出现可测降幅后才做。
+        for r in rows:
+            r["priority"] = ("P1" if r["variant"] in ("00_base",)
+                             or r["variant"].startswith("ZZ_ALL")
+                             else "P2" if r["rule_id"] == "BURST" else "P3")
+        rows.sort(key=lambda r: (r["priority"], r["base"], r["variant"]))
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)

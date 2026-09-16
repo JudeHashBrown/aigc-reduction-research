@@ -241,3 +241,61 @@ def test_probe_bases_disjoint_from_dev():
         elif raw.decode("utf-8").strip() in dev_text:
             bad.append(f"{f} 内容与某个开发样本相同")
     assert not bad, "探针基准污染了开发集:\n  " + "\n  ".join(bad)
+
+
+def test_ablation_matches_its_rule():
+    """每个消融函数必须真的降低它宣称的目标规则。
+
+    S02 重定义为「序数词当小标题」之后，ablate_s02_enum 还在删正文的
+    「首先，／其次，」——文本被改动了，目标规则的命中数却一处没降，
+    纯度恒为 0。这类漂移在探针里只会显示成「纯度低」，很容易被当成
+    正则写宽了而放过，实际是消融和规则指的根本不是一回事。
+
+    每条规则给一个必然命中的最小样例，消融后该规则的命中数必须下降。
+    """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "probe"))
+    from ablations import ABLATIONS
+    from diagnose import diagnose
+
+    SAMPLES = {
+        "S01": "系统具备高可靠性、强扩展性和好维护性。",
+        "S02": "一、研究背景\n\n正文。\n\n二、研究方法\n\n正文。\n\n三、研究结论\n\n正文。",
+        "S03": "这不仅是技术问题，更是管理问题。",
+        "S05": "该方法提升了效率，体现了其应用价值。",
+        "S07": "研究表明，该方法可以降低成本。",
+        "S08": "本研究具有重要的理论意义与应用价值。",
+        "S09": "该方法似乎在一定程度上可能有效。",
+        "P02": "前面讲了方法。综上所述，本方法有效。",
+        "F01": "这是一个结论——非常重要。",
+        "F02": "这是**加粗**的正文。",
+        "F04": '他提到了 "数字鸿沟" 这个说法。',
+        "L01": "一句话总结：这个方案成本太高。",
+        "L05": "当所有人都能用工具时，效率就不再是优势。",
+        "L07": "然而，该方案并不适用于所有场景。",
+        "L09": "说白了，这个项目预算不足。",
+        "L11": "方案有优点。然而，它并不适用于所有场景。",
+        "S04": "该技术在诊断中发挥着重要的作用。",
+        "S06": "通过多模态特征融合实现了跨域检索的性能提升。",
+        "P01": "基于社会资本理论，本文构建了分析框架。",
+        "L10": "首段内容在这里。\n\n听起来像一个普通的优化，其实不是。",
+        "V-T1": "该技术发挥着不可替代的作用。",
+        "V-T2": "本文深入探讨了该问题。",
+    }
+    bad = []
+    for rid, (name, fn) in sorted(ABLATIONS.items()):
+        if rid in ("BURST",):          # 反向对照，不针对单条规则
+            continue
+        src = SAMPLES.get(rid)
+        if src is None:
+            bad.append(f"{rid}（{name}）: 没有测试样例，无法验证消融与规则是否对得上")
+            continue
+        before = sum(1 for f in diagnose(src)["findings"] if f["rule_id"] == rid)
+        assert before > 0, f"{rid}: 样例本身没命中该规则，样例写错了：{src!r}"
+        out, n = fn(src)
+        after = sum(1 for f in diagnose(out)["findings"] if f["rule_id"] == rid)
+        if after >= before:
+            bad.append(f"{rid}（{name}）: 消融后命中 {before}→{after}，没下降。"
+                       f"消融改的东西和规则测的东西对不上。")
+    assert not bad, "消融与规则不匹配:\n  " + "\n  ".join(bad)

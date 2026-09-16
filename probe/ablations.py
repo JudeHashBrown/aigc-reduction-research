@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "engine"))
 import lexicon as LEX
+import patterns as PAT
 
 
 def tidy_zh(text: str) -> str:
@@ -98,14 +99,46 @@ def ablate_s01_triple(text):
 
 
 def ablate_s02_enum(text):
-    """编号枚举骨架 → 去掉序号标记，保留内容。"""
+    """序数词当小标题 → 删掉编号，保留小标题原文字。
+
+    旧版删的是正文里的「首先，／其次，」——而那恰恰是 lieflat 实测
+    与人类写作无差别的形态，删它既没依据也改坏文章。
+    S02 重定义为小标题编号后，消融必须跟着改，否则纯度恒为 0：
+    消融动了文本，目标规则的命中数却一处没降。
+    """
+    out, n = [], 0
+    pat = re.compile(r'^(\s*(?:#{1,6}\s*)?(?:\*\*)?\s*)'
+                     r'(?:[一二三四五六七八九十]+[、.]|第[一二三四五六七八九十]+[、,，.]?)\s*')
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped and len(stripped) <= 30 and not stripped.endswith(("。", "！", "？")):
+            new, k = pat.subn(r'\1', line)
+            if k:
+                out.append(new)
+                n += k
+                continue
+        out.append(line)
+    return "\n".join(out), n
+
+
+def ablate_l11_midsent_connective(text):
+    """句中连接词 → 换成更口语的说法。
+
+    生产上是只报告不自动修（效应量无人测过，且会让学术文体口语化），
+    但探针必须测——不测就永远不知道该不该修。这正是探针存在的理由。
+    """
     n = 0
-    for pat in [r'首先[，,]\s*', r'其次[，,]\s*', r'最后[，,]\s*', r'再次[，,]\s*',
-                r'一是', r'二是', r'三是', r'第一[，,]\s*', r'第二[，,]\s*', r'第三[，,]\s*']:
-        text, k = _sub_count(pat, '', text)
+    for old_w, new_w in _L07_MAP.items():
+        text, k = _sub_count(r'(?<=[。！？；])(' + old_w + r')([，,])', new_w + r'\2', text)
         n += k
-    text, k = _sub_count(r'一方面[，,]?\s*', '', text); n += k
-    text, k = _sub_count(r'另一方面[，,]?\s*', '同时', text); n += k
+    return text, n
+
+
+def ablate_f04_straight_quote(text):
+    """英文直引号 → 换成中文弯引号。成对替换，不改字数以外的东西。"""
+    n = 0
+    text, k = _sub_count(r'"([^"\n]{1,40})"', r'“\1”', text); n += k
+    text, k = _sub_count(r"'([^'\n]{1,40})'", r'‘\1’', text); n += k
     return text, n
 
 
@@ -199,7 +232,7 @@ def ablate_s08_generic_end(text):
 
 def ablate_s09_hedge(text):
     """对冲词叠加 → 每句最多保留一个。"""
-    hedges = ['似乎', '或许', '大概', '在一定程度上', '某种程度上', '潜在地', '相对而言']
+    hedges = sorted(PAT.HEDGES_ZH, key=len, reverse=True)   # 与规则同一份词表
     n = 0
     out = []
     for sent in re.split(r'(?<=[。！？；])', text):
@@ -386,6 +419,8 @@ ABLATIONS = {
     "P02": ("段末总结套句", ablate_p02_tail_summary),
     "F01": ("破折号", ablate_f01_emdash),
     "F02": ("正文加粗", ablate_f02_bold),
+    "F04": ("英文直引号", ablate_f04_straight_quote),
+    "L11": ("句中连接词", ablate_l11_midsent_connective),
     # 反向对照，现在是一个预注册的证伪实验：
     # lieflat 在 283 万汉字上测得句长 CV（AI 0.58 / 人类 0.67，0.87x）、
     # 相邻句长差（1.00x）、段落长度离散度（0.94x）人机均无差异。

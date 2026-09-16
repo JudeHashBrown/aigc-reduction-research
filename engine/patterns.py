@@ -94,10 +94,15 @@ def find_triple_parallel(text: str) -> List[Tuple[int, int, str]]:
     return out
 
 
+# 对冲词表。消融函数必须用同一份——两边各维护一份时，规则含「可能」
+# 而消融不含，删掉「在一定程度上」后「似乎…可能」照样叠加，消融永远无效。
+HEDGES_ZH = ['似乎', '可能', '或许', '大概', '在一定程度上', '某种程度上',
+             '潜在', '一定的', '相对而言', '总体上']
+
+
 def find_hedge_stack(text: str) -> List[Tuple[int, int, str]]:
     """对冲词叠加：一句里出现 2 个以上模糊限定 = 机器式不自信。"""
-    hedges = ['似乎', '可能', '或许', '大概', '在一定程度上', '某种程度上',
-              '潜在', '一定的', '相对而言', '总体上']
+    hedges = HEDGES_ZH
     hits = []
     for h in hedges:
         for m in re.finditer(re.escape(h), text):
@@ -206,9 +211,11 @@ FORMAT_RULES = [
          "行首的 -、*、•、1. 等 Markdown 列表符号，是 AI 输出直接粘贴的痕迹。",
          regex=r'(?m)^\s*(?:[-*•·]|\d+[.)、])\s+', scope="document"),
 
-    Rule("F04", "中文里的英文引号", "low", 0.5,
-         "中文正文里出现英文直引号或弯引号，通常是 AI 输出或复制残留。",
-         regex=r'["“”‘’]', scope="document"),
+    Rule("F04", "中文里的英文直引号", "low", 0.5,
+         "中文正文里出现英文直引号（\" 或 '），通常是 AI 输出或复制残留。"
+         "注意：弯引号「“”」是 GB/T 15834 规定的中文标准引号，不算问题——"
+         "旧版正则把它们一并匹配了，在 8 篇基准上产生 12 条全假的命中。",
+         regex=r'["\']', scope="document"),
 ]
 
 # ---------- lieflat-less-ai-tone 实测规则 -------------------------------
