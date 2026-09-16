@@ -20,6 +20,7 @@ from rewrite import pipeline as llm_pipeline  # noqa: E402
 import base64
 from normalize import normalize_text, describe as describe_norm
 import docx_io
+import pdf_io
 from llm import Client, LLMError           # noqa: E402
 
 WEIGHTS = ROOT.parent / "engine" / "weights.json"
@@ -88,8 +89,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, json.dumps({"error": "text 字段必须是字符串"},
                                               ensure_ascii=False))
         # docx 接口不走文本路径，先分流
-        if self.path.startswith("/api/docx/"):
-            return self._handle_docx(payload)
+        if self.path.startswith("/api/docx/") or self.path.startswith("/api/pdf/"):
+            return self._handle_doc(payload)
 
         # 归一化：零宽字符会让**全部规则失效**，必须在诊断之前清掉。
         # 清掉了什么要如实告诉用户——那本身就是有价值的信息。
@@ -137,17 +138,33 @@ class Handler(BaseHTTPRequestHandler):
 
         self._send(404, json.dumps({"error": "not found"}))
 
-    def _handle_docx(self, payload):
+    def _handle_doc(self, payload):
         """docx 出入口。原始文件字节由前端保管并回传，服务端不存会话状态。"""
         b64 = payload.get("file")
         if not isinstance(b64, str) or not b64:
-            return self._send(400, json.dumps({"error": "缺少 file 字段（base64 编码的 .docx）"},
+            return self._send(400, json.dumps({"error": "缺少 file 字段（base64 编码的文档）"},
                                               ensure_ascii=False))
         try:
             data = base64.b64decode(b64, validate=True)
         except Exception:
             return self._send(400, json.dumps({"error": "file 不是合法的 base64"},
                                               ensure_ascii=False))
+
+        if self.path == "/api/pdf/extract":
+            # PDF 只读：它存的是字形坐标而不是段落，没有可靠的回写路径。
+            try:
+                text, meta = pdf_io.extract(data)
+            except pdf_io.PdfError as exc:
+                return self._send(400, json.dumps({"error": str(exc)}, ensure_ascii=False))
+            clean, norm = normalize_text(text)
+            notices = pdf_io.notices(meta) + describe_norm(norm)
+            if len(clean) > MAX_CHARS:
+                notices.insert(0, {"level": "warn",
+                                   "text": f"正文 {len(clean)} 字，超过 {MAX_CHARS} 字上限，"
+                                           f"只诊断前 {MAX_CHARS} 字。"})
+                clean = clean[:MAX_CHARS]
+            return self._send(200, json.dumps({"text": clean, "meta": meta, "kind": "pdf",
+                                               "notices": notices}, ensure_ascii=False))
 
         if self.path == "/api/docx/extract":
             try:
@@ -164,7 +181,7 @@ class Handler(BaseHTTPRequestHandler):
                 notices.insert(0, {"level": "warn",
                                    "text": f"正文 {len(clean)} 字，超过 {MAX_CHARS} 字上限。"})
             meta.pop("para_map", None)          # 下标由服务端在导出时重算，不外传
-            return self._send(200, json.dumps({"text": clean, "meta": meta,
+            return self._send(200, json.dumps({"text": clean, "meta": meta, "kind": "docx",
                                                "notices": notices}, ensure_ascii=False))
 
         if self.path == "/api/docx/export":

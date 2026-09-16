@@ -1,0 +1,6 @@
+# 引擎本体只用标准库。下面四个是各自单独的功能才需要的。
+jieba>=0.42      # 中文分词与词性标注（诊断、事实守卫的专名识别）
+numpy>=1.24      # 统计指标
+certifi>=2024.0  # LLM 调用的 TLS 根证书（macOS 上 python.org 的 Python 不带）
+pypdf>=5.0       # PDF 正文提取。缺了只影响 PDF 入口，其余功能照常
+# docx 读写只用 zipfile + ElementTree，不需要 python-docx

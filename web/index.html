@@ -101,6 +101,27 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
     .notice.warn{background:#3a2e10;border-color:#6b5520;color:#f0d79a}
     .notice.info{background:#16283a;border-color:#2d4a66;color:#a8c8e8}
   }
+  #doccard .row{margin-top:10px}
+  .pg{border:1px solid var(--line);border-radius:9px;padding:12px 14px;margin:10px 0}
+  .pg .no{font:11.5px ui-monospace,monospace;opacity:.55;margin-bottom:6px}
+  .pg .tx{line-height:1.95;font-size:14.5px;white-space:pre-wrap}
+  .pg .tags{margin-top:9px;display:flex;flex-wrap:wrap;gap:6px}
+  .tag{font-size:11.5px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);opacity:.9}
+  .tag.high{background:#fdecec;border-color:#e8a5a5;color:#8a2020}
+  .tag.medium{background:#fff4e2;border-color:#e6c088;color:#7a4c05}
+  .tag.low{background:#f0f0f0;color:#555}
+  @media (prefers-color-scheme:dark){
+    .tag.high{background:#3d1c1c;border-color:#7a3838;color:#f0b0b0}
+    .tag.medium{background:#3a2c10;border-color:#6b5520;color:#f0d79a}
+    .tag.low{background:#2a2a2a;color:#aaa}
+  }
+  .df del{background:#fdecec;color:#8a2020;text-decoration:line-through;padding:0 1px}
+  .df ins{background:#e6f6e8;color:#1c5c26;text-decoration:none;padding:0 1px}
+  @media (prefers-color-scheme:dark){
+    .df del{background:#3d1c1c;color:#f0b0b0}
+    .df ins{background:#16301c;color:#9fd8ac}
+  }
+  .clean{padding:14px;text-align:center;opacity:.6;font-size:13.5px}
 </style></head><body>
 
 <header>
@@ -119,19 +140,30 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
       <button id="fix" disabled>确定性修复</button>
       <button id="rw" disabled title="需配置 LLM">两层改写</button>
       <button id="demo">示例</button>
-      <label class="upl" for="file">上传 .docx</label>
-      <input type="file" id="file" accept=".docx" hidden>
-      <button id="exp" hidden title="把当前文本写回原 docx，保留全部格式">导出 docx</button>
+      <label class="upl" for="file">上传 .docx / .pdf</label>
+      <input type="file" id="file" accept=".docx,.pdf" hidden>
       <span class="hint" id="cnt">0 字</span>
     </div>
     <div id="notices"></div>
-    <div id="docinfo" class="note" hidden></div>
     <div class="note">
       <b>两层改写</b> = 代码修复 + LLM 重写结构（需配置 LLM）。
       <b>确定性修复</b>只做不需要语义理解的改动（删套话、换词表内高频词、去格式残留），
       纯代码、毫秒级、结果可复现。<b>不经过任何模型</b>，因此不会反向注入 AI 统计特征。
       需要理解语义的改写（拆编号排比、补主语、空泛句具体化）不在此列。
     </div>
+  </div>
+
+  <div class="card" id="doccard" hidden>
+    <h2 id="dochead">文档</h2>
+    <div id="docmeta" class="note" style="margin-top:0"></div>
+    <div class="row">
+      <button class="primary" id="dfix">确定性修复</button>
+      <button id="drw" title="需配置 LLM">两层改写</button>
+      <button id="dexp" hidden>导出 docx</button>
+      <button id="dclose">换一份文档</button>
+    </div>
+    <div id="docnotices"></div>
+    <div id="docbody"></div>
   </div>
 
   <div class="card" id="out">
@@ -188,7 +220,10 @@ $('#rw').onclick=pipeline;
 $('#demo').onclick=()=>{inp.value=DEMO;inp.dispatchEvent(new Event('input'));run()};
 $('#btn').onclick=run; $('#fix').onclick=autofix;
 $('#file').onchange=e=>{ onFile(e.target.files[0]); e.target.value=''; };
-$('#exp').onclick=exportDocx;
+$('#dfix').onclick=()=>docRun('fix');
+$('#drw').onclick=()=>docRun('rw');
+$('#dexp').onclick=exportDocx;
+$('#dclose').onclick=closeDoc;
 // 整页拖放：拖一个 .docx 进来就直接载入
 document.addEventListener('dragover',e=>{e.preventDefault()});
 document.addEventListener('drop',e=>{
@@ -220,14 +255,20 @@ async function post(url,body){
   if(!r.ok) throw new Error((data.error||r.statusText)+(data.detail?'：'+data.detail:''));
   return data;
 }
-// 原始 docx 字节由页面保管并在导出时回传，服务端不存会话状态。
-let DOCX=null, DOCX_NAME='';
+// ---------- 文档模式 ----------
+// 上传的文档不灌进输入框：论文里有图、表、公式，转成纯文本再让用户
+// 在文本框里改是错的。这里只做两件事——改写前指出哪里有 AI 特征，
+// 改写后说明每一处是怎么改的。原始字节由页面保管，服务端不存会话状态。
+let DOC=null;
 
-function renderNotices(list){
-  const box=$('#notices');
+function esc(t){return String(t).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+function renderNotices(list,sel){
+  const box=$(sel||'#notices');
+  if(!box) return;
   if(!list||!list.length){ box.innerHTML=''; return; }
   box.innerHTML=list.map(n=>
-    `<div class="notice ${n.level==='warn'?'warn':'info'}">${n.text.replace(/\n/g,'<br>')}</div>`
+    `<div class="notice ${n.level==='warn'?'warn':'info'}">${esc(n.text).replace(/\n/g,'<br>')}</div>`
   ).join('');
 }
 
@@ -238,44 +279,173 @@ function b64(buf){
   return btoa(out);
 }
 
+// 字符级 LCS 差异。段落长度在数百字量级，O(n*m) 足够快；
+// 超长段落退化成整段替换，避免卡住页面。
+function diff(a,b){
+  if(a===b) return [['=',a]];
+  if(a.length*b.length>250000) return [['-',a],['+',b]];
+  const n=a.length,m=b.length,dp=[];
+  for(let i=0;i<=n;i++) dp.push(new Uint32Array(m+1));
+  for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--)
+    dp[i][j]=a[i]===b[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
+  const out=[]; let i=0,j=0;
+  const push=(op,ch)=>{ const l=out[out.length-1];
+    if(l&&l[0]===op) l[1]+=ch; else out.push([op,ch]); };
+  while(i<n&&j<m){
+    if(a[i]===b[j]){ push('=',a[i]); i++; j++; }
+    else if(dp[i+1][j]>=dp[i][j+1]){ push('-',a[i]); i++; }
+    else { push('+',b[j]); j++; }
+  }
+  while(i<n){ push('-',a[i++]); }
+  while(j<m){ push('+',b[j++]); }
+  return out;
+}
+
+function diffHtml(a,b){
+  return '<span class="df">'+diff(a,b).map(([op,t])=>
+    op==='='?esc(t):op==='-'?`<del>${esc(t)}</del>`:`<ins>${esc(t)}</ins>`
+  ).join('')+'</span>';
+}
+
 async function onFile(f){
   if(!f) return;
-  if(!/\.docx$/i.test(f.name)){
-    return showErr(new Error('只支持 .docx。如果是 .doc 旧格式，请在 Word 里另存为 .docx。'));
+  const isPdf=/\.pdf$/i.test(f.name), isDocx=/\.docx$/i.test(f.name);
+  if(!isPdf&&!isDocx){
+    return showErr(new Error('只支持 .docx 和 .pdf。'
+      +'如果是 .doc 旧格式，请在 Word 里另存为 .docx。'));
   }
   busy(true,'解析文档');
   try{
-    DOCX=b64(await f.arrayBuffer()); DOCX_NAME=f.name;
-    const r=await post('/api/docx/extract',{file:DOCX});
-    $('#in').value=r.text;
-    $('#in').dispatchEvent(new Event('input'));
-    renderNotices(r.notices);
-    $('#docinfo').hidden=false;
-    $('#docinfo').innerHTML=`已载入 <b>${f.name}</b>：${r.meta.n_paragraphs} 段、`
-      +`${r.meta.n_chars} 字。修复或改写之后可以<b>导出 docx</b>——`
-      +`只替换文字命中的那些段落，字体、样式、图表、页眉页脚全部保留。`;
-    $('#exp').hidden=false;
-    await run();
+    const data=b64(await f.arrayBuffer());
+    const r=await post(isPdf?'/api/pdf/extract':'/api/docx/extract',{file:data});
+    DOC={kind:r.kind,name:f.name,b64:data,text:r.text,meta:r.meta,notices:r.notices};
+    const d=await post('/api/diagnose',{text:DOC.text});
+    renderDoc(d);
   }catch(e){ showErr(e); }
   finally{ busy(false); }
 }
 
+function docParagraphs(text){ return text.split(/\n\n+/); }
+
+// 把整篇的 findings 按段落归位。诊断返回的是全文偏移，
+// 这里换算成段内偏移，才能在每段里正确高亮。
+function byPara(text,findings){
+  const paras=docParagraphs(text), out=[]; let pos=0;
+  for(const p of paras){
+    const s=text.indexOf(p,pos), e=s+p.length;
+    out.push({text:p,start:s,findings:findings
+      .filter(f=>f.start>=s&&f.end<=e)
+      .map(f=>Object.assign({},f,{start:f.start-s,end:f.end-s}))});
+    pos=e;
+  }
+  return out;
+}
+
+function renderDoc(d){
+  $('#doccard').hidden=false;
+  $('#out').innerHTML='';
+  const m=DOC.meta, isPdf=DOC.kind==='pdf';
+  $('#dochead').textContent=DOC.name;
+  $('#docmeta').innerHTML=isPdf
+    ? `${m.n_pages} 页 · ${m.n_chars} 字 · 检出 <b>${d.findings.length}</b> 处 AI 特征`
+    : `${m.n_paragraphs} 段 · ${m.n_chars} 字 · 检出 <b>${d.findings.length}</b> 处 AI 特征`;
+  $('#dexp').hidden=isPdf;
+  $('#drw').disabled=!CFG.llm_configured;
+  renderNotices((DOC.notices||[]).concat(d.notices||[]),'#docnotices');
+
+  const paras=byPara(DOC.text,d.findings);
+  const flagged=paras.map((p,i)=>({p,i})).filter(x=>x.p.findings.length);
+  if(!flagged.length){
+    $('#docbody').innerHTML='<div class="clean">没有检出规则覆盖范围内的 AI 特征。'
+      +'这不等于检测器会给低分——规则只覆盖已知句式。</div>';
+    return;
+  }
+  $('#docbody').innerHTML=
+    `<div class="note" style="border:0;padding:0;margin:14px 0 4px">
+       <b>改写前：哪里有 AI 特征</b> —— ${flagged.length} 段命中，共 ${d.findings.length} 处。
+       只列出命中的段落，其余 ${paras.length-flagged.length} 段没有问题。</div>`
+    + flagged.map(({p,i})=>{
+        const tags=[...new Map(p.findings.map(f=>[f.rule_id,f])).values()]
+          .map(f=>`<span class="tag ${f.severity}" title="${esc(f.explain)}">${f.rule_id} ${esc(f.name)}</span>`).join('');
+        return `<div class="pg"><div class="no">第 ${i+1} 段 · ${p.findings.length} 处</div>
+          <div class="tx">${highlight(p.text,p.findings)}</div>
+          <div class="tags">${tags}</div></div>`;
+      }).join('');
+}
+
+async function docRun(kind){
+  if(!DOC) return;
+  busy(true,kind==='fix'?'修复中':'改写中（可能要一两分钟）');
+  try{
+    const r=kind==='fix'
+      ? await post('/api/autofix',{text:DOC.text})
+      : await post('/api/rewrite',{text:DOC.text,n:3});
+    const newText=kind==='fix'?r.fixed_text:r.text;
+    renderDocChanges(DOC.text,newText,r);
+    DOC.text=newText;
+  }catch(e){ showErr(e); }
+  finally{ busy(false); }
+}
+
+function renderDocChanges(oldText,newText,r){
+  const A=docParagraphs(oldText), B=docParagraphs(newText);
+  const b=r.before, a=r.after;
+  let h=`<div class="note" style="border:0;padding:0;margin:16px 0 4px">
+      <b>改写后：每一处是怎么改的</b></div>`;
+  if(b&&a){
+    h+=`<div class="stats">
+      <div class="stat"><div class="n">${b['检出特征总数']}→${a['检出特征总数']}</div><div class="l">特征总数</div></div>
+      <div class="stat"><div class="n hi">${b['高风险']}→${a['高风险']}</div><div class="l">高风险</div></div>
+      <div class="stat"><div class="n">${b['高风险段落']}→${a['高风险段落']}</div><div class="l">高危段</div></div>
+      <div class="stat"><div class="n">${b['硬约束违反']}→${a['硬约束违反']}</div><div class="l">硬约束</div></div>
+    </div>`;
+  }
+  if(A.length!==B.length){
+    h+=`<div class="notice warn">段落数从 ${A.length} 变成了 ${B.length}，`
+      +`无法逐段对照，也无法导出 docx。这是 bug，请把文档发我。</div>`;
+    $('#docbody').innerHTML=h; return;
+  }
+  const changed=A.map((t,i)=>({i,a:t,b:B[i]})).filter(x=>x.a!==x.b);
+  if(!changed.length){
+    h+='<div class="clean">没有任何改动。</div>';
+  }else{
+    h+=`<div class="note" style="border:0;padding:0;margin:0 0 4px">`
+      +`${changed.length} 段有改动，其余 ${A.length-changed.length} 段逐字未动。`
+      +`<span style="color:#8a2020">红色删除</span> / `
+      +`<span style="color:#1c5c26">绿色新增</span>。</div>`;
+    h+=changed.map(c=>`<div class="pg"><div class="no">第 ${c.i+1} 段</div>
+        <div class="tx">${diffHtml(c.a,c.b)}</div></div>`).join('');
+  }
+  if(r.log&&r.log.length){
+    h+=`<div class="note" style="margin-top:14px"><b>按规则统计</b></div>`
+      +r.log.map(l=>`<div class="lg"><span><span class="id" style="font:11.5px ui-monospace,monospace">${l.rule_id}</span> ${esc(l.name)}</span><span>${l.count} 处</span></div>`).join('');
+  }
+  h+=`<div class="note" style="margin-top:14px"><b>剩下的需要你来。</b>`
+    +`工具只能做减法和重组。真正把 AI 率降下去最有效的一步是<b>恢复具体性</b>`
+    +`——把「效果显著」换成「MAE 从 21.3 降到 19.8」。这类信息只能来自你本人。`
+    +(DOC.kind==='pdf'?`<br><br>PDF 无法导出，请回原始 Word 文件按上面的对照修改。`:'')
+    +`</div>`;
+  $('#docbody').innerHTML=h;
+}
+
 async function exportDocx(){
-  if(!DOCX) return;
+  if(!DOC||DOC.kind!=='docx') return;
   busy(true,'导出中');
   try{
-    const r=await post('/api/docx/export',{file:DOCX,text:$('#in').value});
+    const r=await post('/api/docx/export',{file:DOC.b64,text:DOC.text});
     const bin=atob(r.file), arr=new Uint8Array(bin.length);
     for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
     const url=URL.createObjectURL(new Blob([arr],
       {type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));
     const a=document.createElement('a');
-    a.href=url; a.download=DOCX_NAME.replace(/\.docx$/i,'')+'_已修改.docx';
+    a.href=url; a.download=DOC.name.replace(/\.docx$/i,'')+'_已修改.docx';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(url),4000);
   }catch(e){ showErr(e); }
   finally{ busy(false); }
 }
+
+function closeDoc(){ DOC=null; $('#doccard').hidden=true; $('#docbody').innerHTML=''; $('#docnotices').innerHTML=''; }
 
 function showErr(e){
   const net=e.message.startsWith('NET|');
@@ -292,7 +462,10 @@ function busy(on,label){
   $('#btn').disabled=on||ONLINE===false;
   $('#fix').disabled=on||!cur||ONLINE===false;
   $('#rw').disabled=on||!CFG.llm_configured||ONLINE===false;
-  const ex=$('#exp'); if(ex) ex.disabled=on||ONLINE===false;
+  ['#dfix','#drw','#dexp','#dclose'].forEach(id=>{
+    const el=$(id); if(el) el.disabled=on||ONLINE===false;
+  });
+  if(!on&&$('#drw')) $('#drw').disabled=!CFG.llm_configured;
   $('#btn').innerHTML=on?`<span class="spin"></span> ${label||'诊断中'}`:'诊断';
 }
 
