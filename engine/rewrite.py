@@ -268,9 +268,18 @@ def _score_candidate(orig: str, cand: str, lang: str,
         res["reason"] = f"长度偏离过大（{ratio:.2f}×）"
         return res
 
-    g = guard.compare(orig, cand)
+    g = guard.compare(orig, cand, lang)
     if g["fabricated"]:
         res["reason"] = "编造事实：" + guard.describe(g)
+        res["guard"] = g
+        return res
+
+    # 丢术语与编造同级，直接作废而不是扣分。
+    # 理由是 lieflat 的信息守恒：删掉原文的专业术语是篡改，不是去 AI 味。
+    # 扣分不够——旧版把术语损失记为 0，这类候选反而因为「规则命中最少」被优先选中。
+    # 三个候选全废时会回落到代码层输出，那是安全的。
+    if g["terms_lost"]:
+        res["reason"] = "丢失实义术语：" + "、".join(g["terms_lost"][:5])
         res["guard"] = g
         return res
 
@@ -292,7 +301,7 @@ def _score_candidate(orig: str, cand: str, lang: str,
         over_clean = 1.0
 
     score = (base_w - cand_w)                 # AI 特征减少
-    score -= 2.0 * g["n_removed"]             # 信息丢失重罚
+    score -= 2.0 * g["n_removed"]             # 其余信息丢失（数字/专名/引用）重罚
     score -= 1.5 * len(new_ids)               # 引入了原来没有的问题
     score -= over_clean
     score -= abs(1 - ratio) * 2.0             # 长度越接近越好

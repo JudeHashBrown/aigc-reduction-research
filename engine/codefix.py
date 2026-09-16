@@ -11,6 +11,7 @@ from typing import Dict, List, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "probe"))
 
+import guard
 from ablations import ABLATIONS, tidy_zh
 from ablations_en import ABLATIONS_EN
 from diagnose import detect_lang, diagnose
@@ -79,7 +80,7 @@ def _noise_exempt(text: str) -> set:
 
 def codefix(text: str) -> Tuple[str, List[Dict]]:
     exempt = _noise_exempt(text)
-    tally, out_paras = {}, []
+    tally, out_paras, reverted = {}, [], {}
     seen_nonempty = False
     for para in text.split("\n"):
         if not para.strip():
@@ -102,6 +103,16 @@ def codefix(text: str) -> Tuple[str, List[Dict]]:
             name, fn = table[rid]
             new, n = fn(cur)
             if n and new.strip() != cur.strip():
+                # 逐条回滚：这次变换如果让某个实义术语在本段彻底消失，就撤销它。
+                # S05/S08 的改法是删句尾从句，而技术贡献常常写在那儿——
+                # b02 曾被删掉「数据驱动教学」（方法名）和「教育管理决策」（应用对象），
+                # 旧守卫只认数字和专名，全部放行。
+                # 放在这一层而不是最后统一检查，是为了只撤销闯祸的那一条，
+                # 其余修复照常保留。
+                lost = guard.lost_terms(cur, new, lang)
+                if lost:
+                    reverted[rid] = sorted(set(reverted.get(rid, [])) | set(lost))
+                    continue
                 key = (rid, name, lang)
                 tally[key] = tally.get(key, 0) + n
                 cur = new
@@ -116,6 +127,9 @@ def codefix(text: str) -> Tuple[str, List[Dict]]:
     fixed = re.sub(r'\n{3,}', '\n\n', fixed).strip()
     log = [{"rule_id": k[0], "name": k[1], "lang": k[2], "count": v}
            for k, v in sorted(tally.items(), key=lambda kv: -kv[1])]
+    for rid, terms in sorted(reverted.items()):
+        log.append({"rule_id": rid, "lang": "—", "count": len(terms),
+                    "name": "已回滚（会丢失术语：" + "、".join(terms[:4]) + "）"})
     if exempt:
         log.append({"rule_id": "—", "lang": "—",
                     "name": f"按噪声预算保留：{'、'.join(sorted(exempt))}", "count": 0})

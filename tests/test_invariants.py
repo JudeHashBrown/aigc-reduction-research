@@ -167,3 +167,53 @@ def test_rules_reachable():
                       else {r.rule_id for lst in lists for r in lst})
         missing = sorted(registered - executed)
         assert not missing, f"{name}: 这些规则注册了但诊断跑不到: {missing}"
+
+
+def test_guard_catches_term_loss():
+    """事实守卫必须看得见小写技术术语的丢失。
+
+    旧版只认数字、专名形态的拉丁词、引用，下面四个用例全部放行（丢失 0 项），
+    而 S05/S08 的改法恰恰是删句尾从句——技术贡献常常写在那儿。
+    守卫放行 → 评分函数的 facts_lost 也是 0 → 这类候选反而因为
+    「规则命中最少」被优先选中。
+    """
+    import guard
+    must_catch = [
+        ("en", "Our approach is efficient, underscoring the importance of "
+               "spatial-temporal modeling.", "Our approach is efficient."),
+        ("zh", "本文采用时空建模方法，充分说明了其有效性。", "本文采用方法。"),
+        ("zh", "我们用注意力机制建模长程依赖，效果显著。", "我们建模，效果显著。"),
+        ("zh", "模型在梯度下降中收敛，具有重要意义。", "模型收敛。"),
+    ]
+    for lang, a, b in must_catch:
+        lost = guard.compare(a, b, lang)["terms_lost"]
+        assert lost, f"未抓到术语丢失：{a!r} -> {b!r}"
+
+    # 反向：合法改写不能误报，否则会把所有候选判废（英文侧曾经栽在这里）
+    must_pass = [
+        ("zh", "本文深入探讨了该问题，具有重要参考价值。", "本文分析了该问题。"),
+        ("zh", "该技术发挥着不可替代的作用。", "该技术是关键。"),
+        ("en", "This paper delves into the problem, showcasing robust results.",
+               "This paper looks at the problem."),
+    ]
+    for lang, a, b in must_pass:
+        lost = guard.compare(a, b, lang)["terms_lost"]
+        assert not lost, f"误报术语丢失：{a!r} -> {b!r} 报了 {lost}"
+
+
+def test_codefix_never_loses_terms():
+    """代码层修完之后，不允许有任何实义术语在全文彻底消失。"""
+    import glob
+    import guard
+    from codefix import codefix
+    from diagnose import detect_lang
+    bad = []
+    for f in sorted(glob.glob("samples/*.txt")) + sorted(glob.glob("probe/bases/*.txt")):
+        src = open(f, encoding="utf-8").read()
+        out, _ = codefix(src)
+        langs = ["zh", "en"] if "mixed" in f else [detect_lang(src)]
+        for lang in langs:
+            lost = guard.compare(src, out, lang)["terms_lost"]
+            if lost:
+                bad.append(f"{f} [{lang}]: {lost}")
+    assert not bad, "代码层丢了术语:\n  " + "\n  ".join(bad)
