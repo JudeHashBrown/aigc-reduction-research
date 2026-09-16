@@ -121,6 +121,52 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
     .df del{background:#3d1c1c;color:#f0b0b0}
     .df ins{background:#16301c;color:#9fd8ac}
   }
+  .why{border-left:3px solid var(--line);padding:9px 0 9px 12px;margin:10px 0 0}
+  .why.high{border-left-color:#d06060}
+  .why.medium{border-left-color:#d9a03c}
+  .why.low{border-left-color:#aaa}
+  .why .hd{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:5px}
+  .why .rid{font:11.5px ui-monospace,monospace;opacity:.6}
+  .why .nm{font-weight:600;font-size:13.5px}
+  .why .hw{font-size:11px;padding:1.5px 7px;border-radius:20px;border:1px solid var(--line);opacity:.85}
+  .why .hw.code{background:#e8f4ea;border-color:#a8cdb0;color:#1c5c26}
+  .why .hw.llm{background:#eaf0fa;border-color:#aac0e0;color:#24446e}
+  .why .hw.report{background:#f3f0e8;border-color:#ccc0a0;color:#6a5a2a}
+  .why .q{font-size:13.5px;margin:3px 0 6px;padding:5px 9px;border-radius:5px;
+          background:rgba(128,128,128,.10);display:inline-block;max-width:100%}
+  .why .rw{font-size:13px;line-height:1.75;opacity:.92;margin-top:4px}
+  .why .rw b{opacity:.7;font-weight:600;margin-right:4px}
+  @media (prefers-color-scheme:dark){
+    .why .hw.code{background:#16301c;border-color:#2f5c39;color:#9fd8ac}
+    .why .hw.llm{background:#17263d;border-color:#31507d;color:#a8c2ea}
+    .why .hw.report{background:#322c1c;border-color:#5f5533;color:#ddcfa0}
+  }
+  .ov{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0 4px}
+  .ov-h{font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .ov-tag{font-size:11.5px;padding:2px 9px;border-radius:20px;font-weight:600}
+  .ov-k{font-size:13.5px;opacity:.85}
+  .ov-k b{font-size:18px;opacity:1}
+  .ov-bar{position:relative;height:8px;border-radius:5px;background:rgba(128,128,128,.18);
+          margin:26px 0 8px}
+  .ov-fill{height:100%;border-radius:5px}
+  .ov-mk{position:absolute;top:-19px;transform:translateX(-50%);font-size:10.5px;
+         opacity:.6;white-space:nowrap}
+  .ov-mk::after{content:'';position:absolute;left:50%;top:15px;width:1px;height:8px;
+                background:currentColor;opacity:.45}
+  .ov-t{font-size:13px;line-height:1.7;opacity:.9}
+  .ov-src{display:block;font-size:11.5px;opacity:.55;margin-top:3px}
+  .ov-sp{display:flex;gap:7px;flex-wrap:wrap;margin:7px 0 0}
+  .ov-sp .hw{font-size:11.5px;padding:2px 9px;border-radius:20px;border:1px solid var(--line)}
+  .ov-sp .hw.code{background:#e8f4ea;border-color:#a8cdb0;color:#1c5c26}
+  .ov-sp .hw.llm{background:#eaf0fa;border-color:#aac0e0;color:#24446e}
+  .ov-sp .hw.report{background:#f3f0e8;border-color:#ccc0a0;color:#6a5a2a}
+  .ov-warn{font-size:12px;line-height:1.7;opacity:.72;margin-top:9px;
+           padding-left:9px;border-left:2px solid var(--line)}
+  @media (prefers-color-scheme:dark){
+    .ov-sp .hw.code{background:#16301c;border-color:#2f5c39;color:#9fd8ac}
+    .ov-sp .hw.llm{background:#17263d;border-color:#31507d;color:#a8c2ea}
+    .ov-sp .hw.report{background:#322c1c;border-color:#5f5533;color:#ddcfa0}
+  }
   .clean{padding:14px;text-align:center;opacity:.6;font-size:13.5px}
 </style></head><body>
 
@@ -325,6 +371,72 @@ async function onFile(f){
   finally{ busy(false); }
 }
 
+// 每条规则归哪一层处理，如实标出来。相当比例的规则是工具不自动改的，
+// 含糊其辞会让用户以为工具没干活，或者以为已经改好了。
+const HANDLE={
+  code:['自动修复','点「确定性修复」就会改掉，纯代码、不经模型'],
+  llm:['需要改写','改法要理解语义，点「两层改写」交给模型，改完会逐字对照'],
+  report:['只提示','这条误报多或效应量没测过，工具不自动改，请你自己判断'],
+};
+
+function whyCard(f){
+  const h=HANDLE[f.handling]||['',''];
+  return `<div class="why ${f.severity}">
+    <div class="hd"><span class="rid">${esc(f.rule_id)}</span>
+      <span class="nm">${esc(f.name)}</span>
+      ${h[0]?`<span class="hw ${f.handling}" title="${esc(h[1])}">${h[0]}</span>`:''}</div>
+    <div class="q">${esc(f.matched)}</div>
+    <div class="rw"><b>为什么</b>${esc(f.explain)}</div>
+    ${f.fix?`<div class="rw"><b>怎么改</b>${esc(f.fix)}</div>`:''}
+  </div>`;
+}
+
+// 同一条规则命中同一段文字会重复出现，按「规则+原文」去重；高危排前面
+function dedupe(fs){
+  const seen=new Set(), out=[];
+  for(const f of fs){
+    const k=f.rule_id+'␟'+f.matched;
+    if(seen.has(k)) continue;
+    seen.add(k); out.push(f);
+  }
+  const SEV={high:0,medium:1,low:2};
+  return out.sort((a,b)=>SEV[a.severity]-SEV[b.severity]);
+}
+
+// 整体评估。刻意不给 AI 率百分比——任何百分比都预测不了知网会给多少分，
+// 报一个对不上的数字只会毁掉信任。这里给的是可自己核对的观测量。
+function renderOverall(o){
+  if(!o) return '';
+  const BAND={good:['#1c5c26','#e8f4ea','达标'],
+              mid:['#7a4c05','#fff4e2','偏低'],
+              low:['#8a2020','#fdecec','很低']};
+  const b=BAND[o.band]||BAND.low, r=o.digit_ref;
+  // 刻度按人类参照值定位，超出就顶满
+  const pos=v=>Math.min(100,Math.max(1.5,v/r.human*100));
+  return `<div class="ov">
+    <div class="ov-h">整体评估<span class="ov-tag" style="color:${b[0]};background:${b[1]}">材料密度${b[2]}</span></div>
+
+    <div class="ov-k">材料密度 <b>${o.digit_density_per_1k}</b> 个数字/千字</div>
+    <div class="ov-bar">
+      <div class="ov-fill" style="width:${pos(o.digit_density_per_1k)}%;background:${b[0]}"></div>
+      <span class="ov-mk" style="left:${pos(r.ai)}%" title="AI 生成参照">AI ${r.ai}</span>
+      <span class="ov-mk" style="left:${pos(r.human)}%" title="人类论文参照">人类 ${r.human}</span>
+    </div>
+    <div class="ov-t">${esc(o.verdict)}
+      <span class="ov-src">参照来源：${esc(r.src)}</span></div>
+    ${o.reliable?'':`<div class="ov-warn">${esc(o.unreliable_note)}</div>`}
+
+    <div class="ov-k" style="margin-top:14px">句式特征 <b>${o.total_findings}</b> 处（${o.feature_per_1k}/千字）</div>
+    <div class="ov-sp">
+      <span class="hw code">自动修复 ${o.by_handling.code}</span>
+      <span class="hw llm">需要改写 ${o.by_handling.llm}</span>
+      <span class="hw report">只提示 ${o.by_handling.report}</span>
+    </div>
+    <div class="ov-warn">${esc(o.feature_caveat)}</div>
+    <div class="ov-warn" style="margin-top:8px">${esc(o.disclaimer)}</div>
+  </div>`;
+}
+
 function docParagraphs(text){ return text.split(/\n\n+/); }
 
 // 把整篇的 findings 按段落归位。诊断返回的是全文偏移，
@@ -355,21 +467,21 @@ function renderDoc(d){
 
   const paras=byPara(DOC.text,d.findings);
   const flagged=paras.map((p,i)=>({p,i})).filter(x=>x.p.findings.length);
+  const ov=renderOverall(d.overall);
   if(!flagged.length){
-    $('#docbody').innerHTML='<div class="clean">没有检出规则覆盖范围内的 AI 特征。'
+    $('#docbody').innerHTML=ov+'<div class="clean">没有检出规则覆盖范围内的 AI 特征。'
       +'这不等于检测器会给低分——规则只覆盖已知句式。</div>';
     return;
   }
-  $('#docbody').innerHTML=
+  $('#docbody').innerHTML=ov+
     `<div class="note" style="border:0;padding:0;margin:14px 0 4px">
        <b>改写前：哪里有 AI 特征</b> —— ${flagged.length} 段命中，共 ${d.findings.length} 处。
        只列出命中的段落，其余 ${paras.length-flagged.length} 段没有问题。</div>`
     + flagged.map(({p,i})=>{
-        const tags=[...new Map(p.findings.map(f=>[f.rule_id,f])).values()]
-          .map(f=>`<span class="tag ${f.severity}" title="${esc(f.explain)}">${f.rule_id} ${esc(f.name)}</span>`).join('');
+        const uniq=dedupe(p.findings);
         return `<div class="pg"><div class="no">第 ${i+1} 段 · ${p.findings.length} 处</div>
           <div class="tx">${highlight(p.text,p.findings)}</div>
-          <div class="tags">${tags}</div></div>`;
+          ${uniq.map(whyCard).join('')}</div>`;
       }).join('');
 }
 
@@ -573,12 +685,7 @@ function highlight(text,findings){
   flush(); return html;
 }
 
-function fcard(f){
-  return `<div class="f ${f.severity}" data-fi="1">
-    <div class="t"><span class="id">${f.rule_id}</span>${f.name}</div>
-    <div class="m">${f.matched.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</div>
-    <div class="e">${f.explain}</div></div>`;
-}
+function fcard(f){ return whyCard(f); }
 
 function render(r,text){
   renderNotices(r.notices);
@@ -605,6 +712,7 @@ function render(r,text){
       ).join('')}</ul></div>`;
   }
 
+  h+=renderOverall(r.overall);
   h+=`<div id="pane-doc"><div id="doc">${highlight(text,r.findings)}</div>
       <div class="note" id="detail">点击带下划线的文字，看它为什么被标记。</div></div>`;
 

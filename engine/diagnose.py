@@ -18,6 +18,7 @@ import lexicon_en as LEX_EN
 import patterns as PAT
 import patterns_en as PAT_EN
 import metrics as MET
+import overall as OVR
 import metrics_en as MET_EN
 
 SENT_END = r'[。！？；\n]'
@@ -58,6 +59,8 @@ class Finding:
     end: int
     matched: str
     explain: str
+    fix: str = ""          # 怎么改。界面直接展示，用户看到的必须是原因和改法，不是规则名
+    handling: str = ""     # code / llm / report —— 这条会被自动修，还是要你自己判断
 
     def to_dict(self):
         return asdict(self)
@@ -134,7 +137,12 @@ def _vocab_findings(sent: Span, pi: int, si: int, lang: str = "zh") -> List[Find
                 matched=m.group(0),
                 explain=(f"「{term}」是中文 AI 学术写作的高频标记。{hint}"
                          if lang == "zh"
-                         else f"“{term}” is an overused AI academic marker. {hint}")))
+                         else f"“{term}” is an overused AI academic marker. {hint}"),
+                fix=(f"改成「{sug}」。" if sug else
+                     ("删掉它，或换成具体说法——这个词本身不承载信息。"
+                      if lang == "zh" else
+                      "Drop it, or replace it with something concrete.")),
+                handling=_handling(f"V-{tier}", lang)))
     # 去重：丢弃被更长命中完全覆盖的短命中
     out.sort(key=lambda f: (f.start, -(f.end - f.start)))
     kept: List[Finding] = []
@@ -143,6 +151,23 @@ def _vocab_findings(sent: Span, pi: int, si: int, lang: str = "zh") -> List[Find
             continue
         kept.append(f)
     return kept
+
+
+# 每条规则归哪一层处理。界面要如实告诉用户：这条点一下就自动修好了，
+# 还是必须你自己判断——后者占相当比例，含糊其辞会让人以为工具没干活。
+def _handling(rule_id: str, lang: str) -> str:
+    try:
+        from rewrite import CODE_HANDLED, SEMANTIC, REPORT_ONLY
+    except Exception:                        # noqa: BLE001
+        return ""
+    lg = lang if lang in ("zh", "en") else "zh"
+    if rule_id in REPORT_ONLY.get(lg, ()):
+        return "report"
+    if rule_id in CODE_HANDLED.get(lg, ()):
+        return "code"
+    if rule_id in SEMANTIC.get(lg, ()):
+        return "llm"
+    return ""
 
 
 def diagnose(text: str, weights_path: Optional[str] = None) -> Dict:
@@ -177,19 +202,22 @@ def diagnose(text: str, weights_path: Optional[str] = None) -> Dict:
                 for s, e, matched in rule.find(sent.text):
                     findings.append(Finding(
                         rule.rule_id, rule.name, rule.severity, rule.weight,
-                        pi, si, sent.start + s, sent.start + e, matched, rule.explain))
+                        pi, si, sent.start + s, sent.start + e, matched, rule.explain,
+                        rule.fix, _handling(rule.rule_id, lang)))
 
         for rule in para_rules:
             for s, e, matched in rule.find(para.text):
                 findings.append(Finding(
                     rule.rule_id, rule.name, rule.severity, rule.weight,
-                    pi, None, para.start + s, para.start + e, matched, rule.explain))
+                    pi, None, para.start + s, para.start + e, matched, rule.explain,
+                    rule.fix, _handling(rule.rule_id, lang)))
 
     for rule in PAT.FORMAT_RULES:
         for s, e, matched in rule.find(text):
             findings.append(Finding(
                 rule.rule_id, rule.name, rule.severity, rule.weight,
-                -1, None, s, e, matched, rule.explain))
+                -1, None, s, e, matched, rule.explain,
+                rule.fix, _handling(rule.rule_id, "zh")))
 
     zh_text = "\n".join(p.text for p, lg in zip(paras, para_langs) if lg == "zh")
     en_text = "\n".join(p.text for p, lg in zip(paras, para_langs) if lg == "en")
@@ -263,6 +291,7 @@ def diagnose(text: str, weights_path: Optional[str] = None) -> Dict:
             "语言构成": {"中文段": para_langs.count("zh"), "英文段": para_langs.count("en")},
         },
         "findings": [f.to_dict() for f in findings],
+        "overall": OVR.assess(text, [f.to_dict() for f in findings]),
         "paragraphs": [asdict(p) for p in para_scores],
         "metrics": m.to_dict(),
         "metric_flags": m.flags(),

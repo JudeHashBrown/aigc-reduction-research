@@ -299,3 +299,107 @@ def test_ablation_matches_its_rule():
             bad.append(f"{rid}（{name}）: 消融后命中 {before}→{after}，没下降。"
                        f"消融改的东西和规则测的东西对不上。")
     assert not bad, "消融与规则不匹配:\n  " + "\n  ".join(bad)
+
+
+def test_every_finding_has_reason_and_fix():
+    """每条命中都必须能说清「为什么」和「怎么改」，并标明归哪一层处理。
+
+    界面上只列规则名（S01 Rule of three）等于没说——用户无法判断
+    该不该改、怎么改。explain / fix / handling 三样缺一不可。
+    """
+    import glob
+    from diagnose import diagnose
+    texts = [open(f, encoding="utf-8").read() for f in
+             sorted(glob.glob("samples/*.txt")) + sorted(glob.glob("probe/bases/*.txt"))]
+    texts.append("John (Jianqiu) Bai, Nicole Boyson, Yi Cao, Miao Liu, and Chi Wan\n\n"
+                 "The framework serves as a pivotal tool, showcasing robust performance. "
+                 "Overall, our results highlight the importance of this approach.")
+    bad = []
+    seen = set()
+    for t in texts:
+        for f in diagnose(t)["findings"]:
+            seen.add(f["rule_id"])
+            if not f.get("explain"):
+                bad.append(f"{f['rule_id']}: 缺 explain")
+            if not f.get("fix"):
+                bad.append(f"{f['rule_id']}: 缺 fix（怎么改）")
+            if f.get("handling") not in ("code", "llm", "report"):
+                bad.append(f"{f['rule_id']}: handling='{f.get('handling')}'，"
+                           f"必须是 code/llm/report 之一")
+    assert not bad, "命中信息不完整:\n  " + "\n  ".join(sorted(set(bad)))
+
+
+def test_author_list_not_flagged():
+    """作者署名不是文风问题。
+
+    真实论文第一页就是作者名单，「Yi Cao, Miao Liu, and Chi Wan」
+    被判成 Rule of three 是明显误报，会让用户第一眼就不信任这个工具。
+    """
+    from diagnose import diagnose
+    for line in ["John (Jianqiu) Bai, Nicole Boyson, Yi Cao, Miao Liu, and Chi Wan",
+                 "We thank Alice Chen, Bob Smith, and Carol Wang for comments.",
+                 "Experiments run on PeMS04, METR-LA, and NYC-Taxi datasets."]:
+        hits = [f["rule_id"] for f in diagnose(line)["findings"] if f["rule_id"] == "S01"]
+        assert not hits, f"专名枚举被误判为 S01：{line!r}"
+
+
+def test_overall_never_reports_a_percentage():
+    """整体评估绝不能出现「AI 率 X%」这种数字。
+
+    产品设计里定死的一条：任何百分比都预测不了知网、维普会给多少分。
+    我们说 40%、知网给 70%，用户会永久性地不再信任这个工具——
+    一次失准毁掉的信任，靠后面多少次准确都补不回来。
+    """
+    import re
+    from diagnose import diagnose
+    o = diagnose("本文深入探讨了该问题，研究表明其具有重要的理论意义。")["overall"]
+    blob = str(o)
+    for pat in (r'AI\s*率', r'AI[- ]?rate', r'概率', r'置信度'):
+        assert not re.search(pat, blob, re.I), f"整体评估里出现了 {pat}：{blob[:200]}"
+    assert "百分比" in o["disclaimer"], "必须明确声明不给百分比"
+    # 声明必须跟数据一起下发，换个前端也不能丢
+    assert o["feature_caveat"] and o["disclaimer"]
+
+
+def test_overall_feature_caveat_matches_measurement():
+    """「特征数不能当分数读」这句话必须和实测数据一致。
+
+    人类对照样本的句式特征密度如果不再高于 AI 样本，这句话就成了假话，
+    必须跟着改——文案和数据必须同步，否则会变成我们自己编的说辞。
+    """
+    import glob
+    import re as _re
+    from diagnose import diagnose
+    from rewrite import REPORT_ONLY
+
+    def density(paths):
+        tot = n = 0
+        for f in paths:
+            t = open(f, encoding="utf-8").read()
+            tot += len([x for x in diagnose(t)["findings"]
+                        if x["rule_id"] not in REPORT_ONLY["zh"]])
+            n += len(_re.findall(r'[一-鿿]', t))
+        return tot / n * 1000 if n else 0
+
+    human = density(["samples/human_sample.txt"])
+    ai = density(sorted(glob.glob("probe/bases/*.txt")))
+    assert human > ai, (
+        f"人类样本特征密度 {human:.2f} 不再高于 AI 样本 {ai:.2f}，"
+        f"overall.py 里「特征数不能当分数读」的说明已与数据不符，必须更新")
+
+
+def test_density_denominator_handles_chinese():
+    """密度分母不能用 \\b\\w+\\b 数中文。
+
+    Python 的 \\w 包含 CJK，而 \\b 只在中英交界处成立，
+    整段中文会被算成两三个「词」，密度虚高几百倍——
+    线上曾出现「句式特征 625/千字」这种明显荒谬的数字。
+    """
+    from diagnose import diagnose
+    zh = "本文深入探讨了图神经网络在交通流预测中的应用。" * 20
+    o = diagnose(zh)["overall"]
+    assert 300 <= o["n_unit"] <= len(zh) + 10, f"中文当量字数算错：{o['n_unit']} vs 实际 {len(zh)}"
+    assert o["feature_per_1k"] < 100, f"特征密度 {o['feature_per_1k']}/千字 明显失真"
+    # 短文本必须标出不可信，而不是给一个会误导人的数字
+    short = diagnose("研究表明该方法有效。")["overall"]
+    assert not short["reliable"] and short["unreliable_note"]
