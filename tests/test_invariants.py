@@ -217,3 +217,27 @@ def test_codefix_never_loses_terms():
             if lost:
                 bad.append(f"{f} [{lang}]: {lost}")
     assert not bad, "代码层丢了术语:\n  " + "\n  ".join(bad)
+
+
+def test_probe_bases_disjoint_from_dev():
+    """探针基准必须与开发集（samples/）严格分离。
+
+    probe/bases/b01_医学影像.txt 曾与 samples/ai_sample.txt 是同一个文件
+    （MD5 都是 81cd0686…）。引擎是照着那篇调出来的，再拿它测效应量
+    等于自测自考——校准结果一定虚高，且虚高多少无法估计。
+    """
+    import glob
+    import hashlib
+    dev = {}
+    for f in glob.glob("samples/*.txt"):
+        dev[hashlib.md5(open(f, "rb").read()).hexdigest()] = f
+    dev_text = {open(f, encoding="utf-8").read().strip() for f in glob.glob("samples/*.txt")}
+    bad = []
+    for f in glob.glob("probe/bases/*.txt"):
+        raw = open(f, "rb").read()
+        h = hashlib.md5(raw).hexdigest()
+        if h in dev:
+            bad.append(f"{f} 与 {dev[h]} 完全相同")
+        elif raw.decode("utf-8").strip() in dev_text:
+            bad.append(f"{f} 内容与某个开发样本相同")
+    assert not bad, "探针基准污染了开发集:\n  " + "\n  ".join(bad)
