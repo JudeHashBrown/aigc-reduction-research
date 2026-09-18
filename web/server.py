@@ -18,6 +18,9 @@ from diagnose import diagnose          # noqa: E402
 from codefix import codefix as autofix     # noqa: E402
 from rewrite import pipeline as llm_pipeline  # noqa: E402
 import base64
+import threading
+import time
+import uuid
 from normalize import normalize_text, describe as describe_norm
 import docx_io
 import pdf_io
@@ -28,6 +31,30 @@ WEIGHTS = ROOT.parent / "engine" / "weights.json"
 # 而截断是静默发生的，用户拿到的报告只覆盖前半篇。
 MAX_CHARS = 120000
 MAX_BODY_BYTES = 64 * 1024 * 1024      # 请求体上限（docx 走 base64，约 1.37 倍膨胀）
+
+
+# 整篇改写一篇硕士论文要跑几分钟。同步返回的话浏览器只能干转圈，
+# 用户会以为卡死而反复刷新——每刷一次都重新烧一遍 token。
+# 本地单用户工具，用一个内存字典当任务表足够。
+_JOBS = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def _new_job():
+    jid = uuid.uuid4().hex[:12]
+    with _JOBS_LOCK:
+        _JOBS[jid] = {"done": 0, "total": 0, "state": "running",
+                      "result": None, "error": None, "t0": time.time()}
+        # 只保留最近 20 个，避免长期运行的服务无限吃内存
+        for old in sorted(_JOBS, key=lambda k: _JOBS[k]["t0"])[:-20]:
+            _JOBS.pop(old, None)
+    return jid
+
+
+def _job_set(jid, **kw):
+    with _JOBS_LOCK:
+        if jid in _JOBS:
+            _JOBS[jid].update(kw)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -46,6 +73,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, (ROOT / "index.html").read_bytes(), "text/html; charset=utf-8")
         elif self.path == "/health":
             self._send(200, json.dumps({"ok": True}))
+        elif self.path.startswith("/api/job/"):
+            jid = self.path.rsplit("/", 1)[-1]
+            with _JOBS_LOCK:
+                j = _JOBS.get(jid)
+            if not j:
+                return self._send(404, json.dumps({"error": "任务不存在或已过期"},
+                                                  ensure_ascii=False))
+            out = {"state": j["state"], "done": j["done"], "total": j["total"],
+                   "elapsed": round(time.time() - j["t0"], 1)}
+            if j["state"] == "done":
+                out["result"] = j["result"]
+            if j["state"] == "error":
+                out["error"] = j["error"]
+            return self._send(200, json.dumps(out, ensure_ascii=False))
         elif self.path == "/api/config":
             c = Client()
             self._send(200, json.dumps({
@@ -130,11 +171,27 @@ class Handler(BaseHTTPRequestHandler):
                 }, ensure_ascii=False))
             n = int(payload.get("n") or 3)
             mx = payload.get("max_paragraphs")
-            r = llm_pipeline(text, client, n_candidates=max(1, min(n, 5)),
-                             weights_path=wp,
-                             max_paragraphs=int(mx) if mx else None)
-            r["notices"] = notices
-            return self._send(200, json.dumps(r, ensure_ascii=False))
+            cov = payload.get("coverage")
+            cov = cov if cov in ("targeted", "all") else "targeted"
+            jid = _new_job()
+
+            def run():
+                try:
+                    r = llm_pipeline(
+                        text, client, n_candidates=max(1, min(n, 5)),
+                        weights_path=wp,
+                        max_paragraphs=int(mx) if mx else None,
+                        coverage=cov,
+                        progress=lambda d, t: _job_set(jid, done=d, total=t))
+                    r["notices"] = notices
+                    _job_set(jid, state="done", result=r)
+                except Exception as exc:                      # noqa: BLE001
+                    import traceback
+                    print("\n[改写任务失败]\n" + traceback.format_exc(), flush=True)
+                    _job_set(jid, state="error", error=str(exc))
+
+            threading.Thread(target=run, daemon=True).start()
+            return self._send(200, json.dumps({"job": jid}, ensure_ascii=False))
 
         self._send(404, json.dumps({"error": "not found"}))
 

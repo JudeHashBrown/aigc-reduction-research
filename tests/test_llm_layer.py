@@ -103,3 +103,32 @@ if FAILS:
         print("  " + f)
     sys.exit(1)
 print("✓ 13 种失效模式全部处理正确")
+
+
+def test_report_only_rules_excluded_from_objective():
+    """只提示类规则不得进入 best-of-N 的目标函数。
+
+    S01 实测 85% 是合法技术枚举（材料属性、法条项目、药理机制），
+    L11 效应量无人测过，两条都已明令代码层不许碰。
+    但评分函数原本用「全部规则权重降幅」当目标，等于给模型加分去删它们——
+    「石墨烯具有高比表面积、优异的电子导电性、良好的力学性能」这段
+    全部权重都来自 S01，打散它就能拿满分，而那是正确的技术枚举。
+    用一条我们自己都不信的指标驱动改写，比不改写更糟。
+    """
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "engine"))
+    from diagnose import diagnose
+    from rewrite import _score_candidate, REPORT_ONLY
+
+    orig = "石墨烯具有高比表面积、优异的电子导电性、良好的力学性能及稳定的二维结构。"
+    hits = diagnose(orig)["findings"]
+    assert hits and all(f["rule_id"] in REPORT_ONLY["zh"] for f in hits), \
+        "样例前提变了：这段应当只命中只提示类规则"
+
+    # 打散顿号并列 —— 正是 S01 想要的「修复」
+    flat = "石墨烯的比表面积高，电子导电性优异，力学性能良好，二维结构稳定。"
+    r = _score_candidate(orig, flat, "zh", diagnose(orig), None, sweep=True)
+    assert r["score"] <= 0, (
+        f"打散合法技术枚举拿到了正分 {r['score']}，"
+        f"说明只提示类规则仍在目标函数里")

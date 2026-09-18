@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "probe"))
 
 import guard
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from diagnose import diagnose, detect_lang, split_paragraphs
 from llm import Client, LLMError
 
@@ -172,6 +173,9 @@ class ParaResult:
     reason: str
     targets: List[str] = field(default_factory=list)
     candidates: List[Dict] = field(default_factory=list)
+    # 全覆盖模式下，这一段本来就没命中任何规则，改完也无法验证是否更好。
+    # 必须单独标出来，不能和有依据的改动混在一起报给用户。
+    unverified: bool = False
 
 
 
@@ -237,6 +241,27 @@ def _weighted(rep: Dict, pi: Optional[int] = None) -> float:
     return sum(f["weight"] for f in fs)
 
 
+def _build_user_sweep(para: str, lang: str) -> str:
+    """全覆盖模式：这一段规则一处都没命中，但仍要交给模型自查。
+
+    规则只覆盖已知句式，而检测器看的是整篇分布。做「替人改」这门生意，
+    改写就不能被自己的规则命中率卡住——那等于把产品上限锁死在
+    规则覆盖率上，而规则覆盖率我们自己都没标定过。
+
+    代价要说清楚：这一段本来就没有可测量的问题，改完也无法验证是否更好。
+    白名单、事实守卫、术语守卫、诊断复检照旧兜底，但它们只能证明
+    「没改坏」，证明不了「改好了」。
+    """
+    if lang == "en":
+        return ("Check this paragraph against the rules in your instructions. "
+                "Fix only what actually matches a rule; if nothing matches, "
+                "return the text unchanged, word for word.\n\n"
+                "Text:\n<<<TEXT>>>\n" + para + "\n<<<END>>>")
+    return ("请对照你指令里的规则清单自查这一段。只修真正命中规则的地方；"
+            "如果一条都不命中，逐字原样返回。\n\n"
+            "待改写文本：\n<<<TEXT>>>\n" + para + "\n<<<END>>>")
+
+
 def _build_user(para: str, findings: List[Dict], lang: str) -> str:
     if lang == "en":
         head = "Fix these specific issues:\n"
@@ -256,7 +281,8 @@ def _build_user(para: str, findings: List[Dict], lang: str) -> str:
 
 
 def _score_candidate(orig: str, cand: str, lang: str,
-                     base_rep: Dict, weights_path: Optional[str]) -> Dict:
+                     base_rep: Dict, weights_path: Optional[str],
+                     sweep: bool = False) -> Dict:
     """给候选打分。硬性不合格直接作废，其余按加权分排序。"""
     cand = _clean_output(cand)
     res = {"text": cand, "ok": False, "reason": "", "score": -1e9}
@@ -290,11 +316,19 @@ def _score_candidate(orig: str, cand: str, lang: str,
         return res
 
     crep = diagnose(cand, weights_path=weights_path)
-    base_w = sum(f["weight"] for f in base_rep["findings"])
-    cand_w = sum(f["weight"] for f in crep["findings"])
+
+    # 只提示类规则不计入目标函数。S01 实测 85% 是合法技术枚举、
+    # L11 效应量无人测过，我们已明令代码层不许碰它们——
+    # 评分却照旧给「删掉它们」加分，等于用一条我们自己不信的指标
+    # 去驱动模型破坏正确内容。上面那段石墨烯材料属性就是典型：
+    # 全部权重都来自 S01，删掉它就能拿满分。
+    ro = REPORT_ONLY.get(lang, set())
+    eff = lambda fs: sum(f["weight"] for f in fs if f["rule_id"] not in ro)  # noqa: E731
+    base_w = eff(base_rep["findings"])
+    cand_w = eff(crep["findings"])
 
     base_ids = {f["rule_id"] for f in base_rep["findings"]}
-    new_ids = {f["rule_id"] for f in crep["findings"]} - base_ids
+    new_ids = ({f["rule_id"] for f in crep["findings"]} - base_ids) - ro
 
     # 噪声预算：清到一处不剩会产生新的均质化异常
     over_clean = 0.0
@@ -308,6 +342,10 @@ def _score_candidate(orig: str, cand: str, lang: str,
     score -= over_clean
     score -= abs(1 - ratio) * 2.0             # 长度越接近越好
 
+    # 全覆盖模式下这一段本来就没有可测量的问题，权重降幅必然是 0。
+    # 这时只能退而求其次：不编造、不丢术语、不引入新问题、长度没跑偏，
+    # 就算「没改坏」。必须记下来——这类改动是在赌，不是在优化。
+    res["unverified"] = bool(sweep and base_w == 0)
     res.update(ok=True, score=round(score, 2), guard=g,
                weighted_before=round(base_w, 2), weighted_after=round(cand_w, 2),
                findings_after=len(crep["findings"]), new_rules=sorted(new_ids),
@@ -320,46 +358,86 @@ def _score_candidate(orig: str, cand: str, lang: str,
 
 def rewrite(text: str, client: Client, n_candidates: int = 3,
             weights_path: Optional[str] = None,
-            max_paragraphs: Optional[int] = None) -> Dict:
-    """对需要语义改写的段落做 best-of-N 改写。"""
+            max_paragraphs: Optional[int] = None,
+            coverage: str = "targeted",
+            workers: int = 6,
+            progress=None) -> Dict:
+    """对段落做 best-of-N 改写。
+
+    coverage="targeted"：只改规则命中的段落（诊断工具的做法，最小干预）
+    coverage="all"：整篇每段都过模型（「替人改」的做法，覆盖率不受规则限制）
+    """
     rep = diagnose(text, weights_path=weights_path)
     paras = split_paragraphs(text)
     langs = rep.get("para_langs") or [detect_lang(p.text) for p in paras]
 
-    targets = [pi for pi in range(len(paras)) if _semantic_findings(rep, pi, langs[pi])]
+    if coverage == "all":
+        # 做「替人改」时不能只改规则命中的段落——那把产品上限锁死在
+        # 规则覆盖率上。实测：一篇 4.8 万字论文 108 段里只有 12 段命中语义规则。
+        targets = list(range(len(paras)))
+    else:
+        targets = [pi for pi in range(len(paras)) if _semantic_findings(rep, pi, langs[pi])]
     if max_paragraphs:
         targets = sorted(targets,
                          key=lambda pi: -_weighted(rep, pi))[:max_paragraphs]
         targets.sort()
 
-    results: List[ParaResult] = []
     new_paras = [p.text for p in paras]
 
-    for pi in targets:
+    def work(pi):
         para, lang = paras[pi].text, langs[pi]
         fs = _semantic_findings(rep, pi, lang)
+        sweep = not fs
         pr = ParaResult(pi, lang, para, para, False, "", [f["rule_id"] for f in fs])
 
         sub = diagnose(para, weights_path=weights_path)
         try:
-            cands = client.complete(SYS_EN if lang == "en" else SYS_ZH,
-                                    _build_user(para, fs, lang), n=n_candidates)
+            cands = client.complete(
+                SYS_EN if lang == "en" else SYS_ZH,
+                _build_user_sweep(para, lang) if sweep else _build_user(para, fs, lang),
+                n=n_candidates)
         except LLMError as e:
             pr.reason = f"调用失败：{e}"
-            results.append(pr)
-            continue
+            return pr, None
 
-        scored = [_score_candidate(para, c, lang, sub, weights_path) for c in cands]
-        pr.candidates = [{k: v for k, v in s.items() if k != "guard"} for s in scored]
-        ok = [s for s in scored if s["ok"] and s["score"] > 0]
+        scored = [_score_candidate(para, c, lang, sub, weights_path, sweep)
+                  for c in cands]
+        pr.candidates = [{k: v for k, v in x.items() if k != "guard"} for x in scored]
+        # 有可测量改善的优先；没有的（全覆盖模式）只要「没改坏」也收
+        ok = [x for x in scored if x["ok"] and x["score"] > 0]
+        if not ok and sweep:
+            ok = [x for x in scored if x["ok"] and x["score"] >= 0]
         if ok:
-            best = max(ok, key=lambda s: s["score"])
-            pr.rewritten, pr.accepted, pr.reason = best["text"], True, best["reason"]
-            new_paras[pi] = best["text"]
-        else:
-            why = scored[0]["reason"] if scored else "无候选"
-            pr.reason = f"全部候选未通过（{why}），保留原文"
-        results.append(pr)
+            best = max(ok, key=lambda x: x["score"])
+            if best["text"].strip() == para.strip():
+                pr.reason = "模型判定无需改动，原样保留"
+                return pr, None
+            pr.rewritten, pr.accepted = best["text"], True
+            pr.unverified = bool(best.get("unverified"))
+            pr.reason = (("未命中任何规则，此段改动无可测量依据；" if pr.unverified else "")
+                         + best["reason"])
+            return pr, best["text"]
+        why = scored[0]["reason"] if scored else "无候选"
+        pr.reason = f"全部候选未通过（{why}），保留原文"
+        return pr, None
+
+    results: List[ParaResult] = []
+    done = 0
+    # 总数必须在开跑前就报出去。第一段完成可能要一分多钟（并发请求被服务端排队），
+    # 这段时间里界面显示 0/0 跟卡死没区别，用户会刷新——而刷新会重烧一遍 token。
+    if progress:
+        progress(0, len(targets))
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futs = {pool.submit(work, pi): pi for pi in targets}
+        for fut in as_completed(futs):
+            pr, newtext = fut.result()
+            if newtext is not None:
+                new_paras[pr.index] = newtext
+            results.append(pr)
+            done += 1
+            if progress:
+                progress(done, len(targets))
+    results.sort(key=lambda r: r.index)
 
     rebuilt = _rebuild(text, paras, new_paras)
     final = diagnose(rebuilt, weights_path=weights_path)
@@ -377,6 +455,9 @@ def rewrite(text: str, client: Client, n_candidates: int = 3,
         } for r in results],
         "n_targeted": len(targets),
         "n_accepted": sum(1 for r in results if r.accepted),
+        "coverage": coverage,
+        # 这个数字必须暴露出来：它是「改了但无法证明有用」的段落数。
+        "n_unverified": sum(1 for r in results if getattr(r, "unverified", False)),
         "untouched": len(paras) - len(targets),
     }
 
@@ -393,6 +474,7 @@ def _rebuild(text: str, paras, new_texts) -> str:
 
 
 def pipeline(text: str, client: Optional[Client] = None, n_candidates: int = 3,
+             coverage: str = "targeted", workers: int = 6, progress=None,
              weights_path: Optional[str] = None,
              max_paragraphs: Optional[int] = None) -> Dict:
     """完整两层流水线：代码修复 → LLM 改写 → 代码后处理 → 最终诊断。
@@ -414,7 +496,8 @@ def pipeline(text: str, client: Optional[Client] = None, n_candidates: int = 3,
     stage2 = stage1
     if client is not None and client.configured:
         rw = rewrite(stage1, client, n_candidates=n_candidates,
-                     weights_path=weights_path, max_paragraphs=max_paragraphs)
+                     weights_path=weights_path, max_paragraphs=max_paragraphs,
+                     coverage=coverage, workers=workers, progress=progress)
         stage2 = rw["text"]
 
     stage3, post_log = codefix(stage2)          # 后处理：最后一手必须是代码

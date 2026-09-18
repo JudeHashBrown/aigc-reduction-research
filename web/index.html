@@ -167,6 +167,8 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
     .ov-sp .hw.llm{background:#17263d;border-color:#31507d;color:#a8c2ea}
     .ov-sp .hw.report{background:#322c1c;border-color:#5f5533;color:#ddcfa0}
   }
+  #cov{padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:13px;
+       background:transparent;color:inherit}
   .clean{padding:14px;text-align:center;opacity:.6;font-size:13.5px}
 </style></head><body>
 
@@ -205,6 +207,10 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
     <div class="row">
       <button class="primary" id="dfix">确定性修复</button>
       <button id="drw" title="需配置 LLM">两层改写</button>
+      <select id="cov" title="整篇改写覆盖全部段落，不受规则命中率限制">
+        <option value="all">整篇改写</option>
+        <option value="targeted">只改命中段落</option>
+      </select>
       <button id="dexp" hidden>导出 docx</button>
       <button id="dclose">换一份文档</button>
     </div>
@@ -437,6 +443,34 @@ function renderOverall(o){
   </div>`;
 }
 
+// 整篇改写一篇论文要跑几分钟，同步等待只能干转圈，用户会以为卡死而反复刷新
+// ——每刷一次都重新烧一遍 token。改成提交任务 + 轮询进度。
+async function runRewrite(text, coverage, onProgress){
+  const {job}=await post('/api/rewrite',{text,n:3,coverage});
+  let idle=0;
+  for(;;){
+    await new Promise(r=>setTimeout(r,1500));
+    let st;
+    try{ st=await fetch('/api/job/'+job).then(r=>r.json()); }
+    catch(e){ if(++idle>8) throw new Error('与服务失去联系，改写任务可能仍在后台运行'); continue; }
+    idle=0;
+    if(st.error) throw new Error(st.error);
+    if(onProgress) onProgress(st);
+    if(st.state==='done') return st.result;
+    if(st.state==='error') throw new Error(st.error||'改写失败');
+  }
+}
+
+function progressText(st){
+  if(!st.total) return '规则层处理中…';
+  if(!st.done) return `已提交 ${st.total} 段，等待模型响应…（首段可能要一分钟）`;
+  const pct=Math.round(st.done/st.total*100);
+  const rate=st.done?st.elapsed/st.done:0;
+  const left=rate?Math.ceil(rate*(st.total-st.done)):0;
+  return `改写中 ${st.done}/${st.total} 段（${pct}%）`
+    +(left>3?` · 约剩 ${left>=60?Math.ceil(left/60)+' 分钟':left+' 秒'}`:'');
+}
+
 function docParagraphs(text){ return text.split(/\n\n+/); }
 
 // 把整篇的 findings 按段落归位。诊断返回的是全文偏移，
@@ -491,7 +525,9 @@ async function docRun(kind){
   try{
     const r=kind==='fix'
       ? await post('/api/autofix',{text:DOC.text})
-      : await post('/api/rewrite',{text:DOC.text,n:3});
+      : await runRewrite(DOC.text, $('#cov').value,
+          st=>{ const b=$('#btn'); if(b) b.innerHTML=
+            `<span class="spin"></span> ${progressText(st)}`; });
     const newText=kind==='fix'?r.fixed_text:r.text;
     renderDocChanges(DOC.text,newText,r);
     DOC.text=newText;
