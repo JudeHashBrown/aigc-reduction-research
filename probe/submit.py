@@ -64,6 +64,74 @@ def status(rows):
         print(f"\n已用检测器：{', '.join(sorted(dets))}")
 
 
+
+RANGE_DIR = ROOT / "out" / "_range"
+RANGE_CSV = ROOT / "out" / "range.csv"
+
+RANGE_NOTE = {
+    "R1_真人文本": "真人写的（低锚点）。如果这份也接近 100，说明朱雀在这类学术文本上"
+                   "根本不区分人机，后面所有测量都没有意义。",
+    "R2_b11两层改写后": "本产品当前的两层改写。白名单约束下只改了 3 个字。",
+    "R3_另一篇AI原版": "另一篇 AI 原版。看是不是所有 AI 学术文本都顶到 100。",
+    "R4_激进改写_行业做法": "不加任何约束直接让模型「降 AI 率」——竞品和 ChatGPT 的通行做法。"
+                            "改了 59% 的字，丢了 6 个技术术语。它如果也压不下来，"
+                            "说明这件事本身做不到，不是我们做得不够狠。",
+}
+
+
+def run_range(detector):
+    import csv as _csv
+    files = sorted(RANGE_DIR.glob("*.txt"))
+    if not files:
+        sys.exit("没有量程校验文件。它们由对话中的脚本生成在 probe/out/_range/")
+    prev = {}
+    if RANGE_CSV.exists():
+        with RANGE_CSV.open(encoding="utf-8-sig") as f:
+            prev = {r["item"]: r for r in _csv.DictReader(f)}
+
+    print("=" * 64)
+    print(f"  量程校验    检测器：{detector}    {len(files)} 条")
+    print("=" * 64)
+    print("""
+  为什么先做这个：b11 的基准和全清都是 100 分。两边顶满时，
+  测不出差异不代表规则没用，也可能是标尺没有分辨率——
+  就像用最大刻度 100 的秤去称两个 200 斤的东西。
+  这 4 条先确认这把尺子分不分得出人写的和 AI 写的。
+
+  操作同前：文本已复制到剪贴板 → 粘贴到朱雀 → 把分数填回来
+""")
+    out = []
+    for i, f in enumerate(files, 1):
+        name = f.stem
+        text = f.read_text(encoding="utf-8")
+        ok = to_clipboard(text)
+        print(f"[{i}/{len(files)}] {name}")
+        print(f"          {RANGE_NOTE.get(name, '')}")
+        print(f"          {len(text)} 字" + ("   ✓ 已复制到剪贴板" if ok else f"   ✗ 请手动打开 {f}"))
+        try:
+            v = input("          分数（%）：").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n已退出。")
+            break
+        if v.lower() == "q":
+            break
+        if not v:
+            v = prev.get(name, {}).get("score", "")
+        out.append({"item": name, "detector": detector, "score": v.rstrip("%"),
+                    "n_chars": len(text)})
+        with RANGE_CSV.open("w", encoding="utf-8-sig", newline="") as fh:
+            w = _csv.DictWriter(fh, fieldnames=["item", "detector", "score", "n_chars"])
+            w.writeheader()
+            w.writerows(out)
+
+    print("\n" + "-" * 64)
+    for r in out:
+        print(f"  {r['item']:26s} {r['score'] or '（跳过）':>6s}")
+    print("-" * 64)
+    print("把这张表发我。")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--detector", help="检测器名称，例如 朱雀 / 知网 / 维普")
@@ -73,7 +141,16 @@ def main():
                     help="本轮只做前 N 条。先跑通一对（--limit 2）再做全部，"
                          "比一口气做 16 条更容易发现流程里的问题")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--range", action="store_true",
+                    help="量程校验：先确认这把尺子分得出人写的和 AI 写的。"
+                         "基准和全清都是 100 分时，效应量测不出来不是因为规则没用，"
+                         "而是因为标尺顶满了，没有分辨率。")
     args = ap.parse_args()
+
+    if args.range:
+        if not args.detector:
+            sys.exit("请用 --detector 指定检测器名")
+        return run_range(args.detector)
 
     rows, fields = load()
     if args.status:

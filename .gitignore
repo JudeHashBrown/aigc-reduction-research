@@ -22,3 +22,5 @@ __pycache__/
 venv/
 .env
 engine/weights.draft.json
+probe/out/_range/
+probe/out/range.csv
