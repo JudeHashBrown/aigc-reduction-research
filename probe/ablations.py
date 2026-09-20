@@ -78,24 +78,26 @@ def ablate_vocab_t2(text):
 # ---------- 句式类 --------------------------------------------------------
 
 def ablate_s01_triple(text):
-    """整齐三元并列 → 保留两项。「A、B和C」→「A和B」"""
-    def repl(m):
-        items = [i for i in re.split(r'、|和|以及|与', m.group(0)) if i]
-        return items[0] + "和" + items[1] if len(items) >= 2 else m.group(0)
-    pat = r'[^，。；：！？、\s]{2,12}(?:、[^，。；：！？、\s]{2,12}){1,}(?:(?:和|以及|与)[^，。；：！？、\s]{2,12})?'
-    n = 0
-    out = []
-    last = 0
-    for m in re.finditer(pat, text):
-        items = [i for i in re.split(r'、|和|以及|与', m.group(0)) if i]
+    """顿号罗列过密 → 删掉第三项及之后。
+
+    命中位置直接用规则自己的 finder，不另写一套正则——
+    两边各写各的必然漂移：旧版消融不带「各项等长」条件，
+    在 b12 上改了文本而规则一处没降，纯度恒为 0。
+    """
+    hits = PAT.RULES_BY_ID["S01"].find(text)
+    if not hits:
+        return text, 0
+    out, last, n = [], 0, 0
+    for s_, e_, matched in hits:
+        items = PAT.split_parallel_items(matched)   # 与规则共用同一份切分
         if len(items) < 3:
             continue
-        tail = [len(i) for i in items[1:]]
-        if max(tail) - min(tail) > 2:
-            continue
-        out.append(text[last:m.start()]); out.append(repl(m)); last = m.end(); n += 1
+        out.append(text[last:s_])
+        out.append("、".join(items[:2]))     # 只留前两项
+        last = e_
+        n += 1
     out.append(text[last:])
-    return "".join(out), n
+    return ("".join(out), n) if n else (text, 0)
 
 
 def ablate_s02_enum(text):

@@ -283,6 +283,28 @@ def test_ablation_matches_its_rule():
         "V-T1": "该技术发挥着不可替代的作用。",
         "V-T2": "本文深入探讨了该问题。",
     }
+    # 最小样例只能证明「两边都能触发」，证明不了在真实文本上范围一致。
+    # 消融比规则宽是反复出现的 bug（S02 / S09 / S01 / P02 都栽过），
+    # 表现为探针里纯度恒为 0，很容易被当成正则写宽了而放过。
+    # 所以再用真实基准复核一遍：消融改了文本，目标规则就必须下降。
+    import glob as _glob
+    bad = []
+    for f in sorted(_glob.glob("probe/bases/*.txt")):
+        src = open(f, encoding="utf-8").read()
+        before_all = diagnose(src)["findings"]
+        for rid, (name, fn) in sorted(ABLATIONS.items()):
+            if rid == "BURST":
+                continue
+            b = sum(1 for x in before_all if x["rule_id"] == rid)
+            out, n = fn(src)
+            if n == 0:
+                continue
+            a = sum(1 for x in diagnose(out)["findings"] if x["rule_id"] == rid)
+            if a >= b:
+                bad.append(f"{f.split('/')[-1]} / {rid}: 消融改了 {n} 处，"
+                           f"但规则命中 {b}→{a} 没下降（消融比规则宽）")
+    assert not bad, "消融范围超出规则:\n  " + "\n  ".join(bad)
+
     bad = []
     for rid, (name, fn) in sorted(ABLATIONS.items()):
         if rid in ("BURST",):          # 反向对照，不针对单条规则

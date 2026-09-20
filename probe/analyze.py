@@ -103,12 +103,42 @@ def main(path):
             print(f"\n⚠ 以下规则实测无效，说明五份资料的判断在中文检测器上不成立：{', '.join(dead)}")
 
     if all_weights:
-        wp = ROOT.parent / "engine" / "weights.json"
         det = max(all_weights, key=lambda d: len(all_weights[d]))
-        wp.write_text(json.dumps({"detector": det, "rules": all_weights[det]},
-                                 ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"\n已写出标定权重 → {wp}（基于 {det}）")
-        print("引擎会自动加载：diagnose(text, weights_path='engine/weights.json')")
+        # 注意 load() 已经把 score 转成 float 了，这里不能再当字符串用。
+        # 第一版写成 (r.get("score") or "").strip() 直接抛 AttributeError——
+        # 若不是先用假数据空跑一遍，要等手工提交完 16 次才会撞上。
+        rows_det = [r for r in rows if r.get("detector") == det
+                    and r.get("score") is not None]
+        n_base = sum(1 for r in rows_det if r["variant"] == "00_base")
+        n_all = sum(1 for r in rows_det if r["variant"].startswith("ZZ_ALL"))
+        thin = [k for k, v in eff.items() if k != "__ALL__" and len(v) < 3]
+
+        # 数据不够就不许写 weights.json。写了的话服务端的 calibrated 标志
+        # 会变成 true，界面对用户宣称「已标定」——拿三五个点的样本冒充标定，
+        # 比完全不标定更糟：用户会照着一组噪声去改论文。
+        if n_base < 5 or n_all < 5:
+            wp = ROOT.parent / "engine" / "weights.draft.json"
+            reason = f"基准 {n_base} 篇 / 全清 {n_all} 篇，不足 5 篇"
+        elif len(thin) > len(eff) // 2:
+            wp = ROOT.parent / "engine" / "weights.draft.json"
+            reason = f"{len(thin)} 条规则的样本数 <3：{', '.join(sorted(thin)[:6])}"
+        else:
+            wp = ROOT.parent / "engine" / "weights.json"
+            reason = ""
+
+        wp.write_text(json.dumps({
+            "detector": det, "rules": all_weights[det],
+            "n_bases": n_base, "n_all_variants": n_all,
+            "thin_rules": sorted(thin),
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        if reason:
+            print(f"\n⚠ 数据不足，只写成草稿 → {wp.name}（{reason}）")
+            print("  引擎不会加载草稿，界面也不会显示「已标定」。")
+            print("  补齐 P1（8 篇基准 + 8 篇全清）后重跑本脚本即可转正。")
+        else:
+            print(f"\n已写出标定权重 → {wp}（基于 {det}，{n_base} 篇基准）")
+            print("引擎会自动加载：diagnose(text, weights_path='engine/weights.json')")
 
 
 if __name__ == "__main__":

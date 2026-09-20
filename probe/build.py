@@ -88,6 +88,11 @@ def main():
 
         applicable = 0
         for rid, (name, fn) in ABLATIONS.items():
+            # 基准里根本没有这条规则的命中，就别生成变体。
+            # 消融往往比规则宽（正则各写各的），这种变体会白白占掉一次
+            # 手工提交，而且纯度恒为 0，还会被误当成「附带改动过多」。
+            if rid != "BURST" and bcounts.get(rid, 0) == 0:
+                continue
             new, n = fn(text)
             if n == 0 or new.strip() == text.strip():
                 continue                      # 该基准文本没有这个特征，跳过

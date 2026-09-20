@@ -21,3 +21,4 @@ __pycache__/
 .venv/
 venv/
 .env
+engine/weights.draft.json

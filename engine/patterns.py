@@ -62,6 +62,22 @@ def find_ordinal_headings(text: str) -> List[Tuple[int, int, str]]:
     return hits if len(hits) >= 3 else []
 
 
+PARALLEL_CONJ = '且和以及与并'
+
+
+def split_parallel_items(clause: str):
+    """把一个顿号并列切成各项。
+
+    末项常用连词收尾：「A、B和C」要先归一成「A、B、C」再切，
+    否则只切出两项。消融函数必须共用这一份——各写各的必然漂移，
+    实测消融在「高可靠性、强扩展性和好维护性」上直接失效。
+    """
+    norm = re.sub(rf'、([^、{PARALLEL_CONJ}]{{2,12}})[{PARALLEL_CONJ}]'
+                  rf'([^、{PARALLEL_CONJ}]{{2,12}})$',
+                  r'、\1、\2', clause)
+    return [i for i in norm.split('、') if i]
+
+
 def find_triple_parallel(text: str) -> List[Tuple[int, int, str]]:
     """三元及以上的并列，且各项长度接近（对称感强 = AI 味重）。
 
@@ -80,10 +96,7 @@ def find_triple_parallel(text: str) -> List[Tuple[int, int, str]]:
         clause, base = cm.group(0), cm.start()
         if '、' not in clause:
             continue
-        # 末项可能用连词收尾：「A、B且C」→ 统一成「A、B、C」再切分
-        norm = re.sub(rf'、([^、{CONJ}]{{2,12}})[{CONJ}]([^、{CONJ}]{{2,12}})$',
-                      r'、\1、\2', clause)
-        items = [i for i in norm.split('、') if i]
+        items = split_parallel_items(clause)
         if len(items) < 3:
             continue
         tail = [len(i) for i in items[1:]]      # 跳过带前缀的首项
@@ -185,9 +198,13 @@ PARAGRAPH_RULES = [
 
     Rule("P02", "段末总结套句", "high", 2.5,
          "段落收尾用「由此可见」「这一案例印证了」画蛇添足地重述一遍。",
-         fix="删掉段末那句重述。如果它确实给出了前文推不出的新结论，那就保留，但把「综上所述」这个壳去掉。",         regex=r'(?:由此可见|综上|总的来说|总而言之|不难看出|不难发现)[^。]{0,40}[。！？]?\s*$'
+         fix="删掉段末那句重述。如果它确实给出了前文推不出的新结论，那就保留，但把「综上所述」这个壳去掉。",         # 上限从 40 放到 120：实测漏掉了「由此可见，城市绿地降温并非简单增加
+         # 面积，而是需要通过尺度匹配、网络连通和功能复合，实现对热岛效应的
+         # 系统性缓解。」——这是典型的段末总结套句，只是比 40 字长。
+         # 探针里表现为「消融动了文本、规则一处没降」，纯度恒为 0。
+         regex=r'(?:由此可见|综上|总的来说|总而言之|不难看出|不难发现)[^。]{0,120}[。！？]?\s*$'
                r'|(?:这|该|此)(?:一)?(?:案例|现象|结果|发现|数据)[^。]{0,10}'
-               r'(?:印证|表明|说明|揭示|反映)了[^。]{0,40}[。！？]?\s*$',
+               r'(?:印证|表明|说明|揭示|反映)了[^。]{0,120}[。！？]?\s*$',
          scope="paragraph"),
 ]
 
