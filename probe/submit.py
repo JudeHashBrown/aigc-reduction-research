@@ -69,6 +69,9 @@ def main():
     ap.add_argument("--detector", help="检测器名称，例如 朱雀 / 知网 / 维普")
     ap.add_argument("--priority", default="P1", choices=["P1", "P2", "P3", "all"])
     ap.add_argument("--redo", action="store_true", help="连已填过的也重新做")
+    ap.add_argument("--limit", type=int,
+                    help="本轮只做前 N 条。先跑通一对（--limit 2）再做全部，"
+                         "比一口气做 16 条更容易发现流程里的问题")
     ap.add_argument("--status", action="store_true")
     args = ap.parse_args()
 
@@ -82,6 +85,8 @@ def main():
     todo = [r for r in rows
             if (args.priority == "all" or r.get("priority") == args.priority)
             and (args.redo or not (r.get("score") or "").strip())]
+    if args.limit:
+        todo = todo[:args.limit]
     if not todo:
         print("这一层已经填完了。")
         status(rows)

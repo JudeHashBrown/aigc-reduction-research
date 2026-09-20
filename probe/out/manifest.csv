@@ -1,6 +1,6 @@
 ﻿base,variant,rule_id,n_changes,purity,target_drop,collateral,n_chars,engine_findings,detector,score,priority
-b11_材料,00_base,-,0,1.0,0,0,538,5,,,P1
-b11_材料,ZZ_ALL_全部消融,ALL,-1,-,-,-,520,1,,,P1
+b11_材料,00_base,-,0,1.0,0,0,538,5,朱雀,100,P1
+b11_材料,ZZ_ALL_全部消融,ALL,-1,-,-,-,520,1,朱雀,100,P1
 b12_经济,00_base,-,0,1.0,0,0,590,3,,,P1
 b12_经济,ZZ_ALL_全部消融,ALL,-1,-,-,-,590,0,,,P1
 b13_环境,00_base,-,0,1.0,0,0,544,10,,,P1
