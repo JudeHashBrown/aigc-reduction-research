@@ -88,10 +88,24 @@ def main():
         return 0
 
     tier = args.priority
-    print(f"\n检测器：{args.detector}    本轮 {len(todo)} 条"
-          + (f"\n{tier}：{TIER[tier]}" if tier in TIER else ""))
-    print("每条会自动复制到剪贴板。填分数回车即可；"
-          "直接回车=跳过，输入 q=退出（已填的都已保存）\n")
+    print("=" * 64)
+    print(f"  检测器：{args.detector}      本轮 {len(todo)} 条")
+    if tier in TIER:
+        print(f"  {tier}：{TIER[tier]}")
+    print("=" * 64)
+    print("""
+  怎么操作（每条重复一次）：
+    1. 脚本已把这一条的文本复制到你的剪贴板
+    2. 切到检测器网页，粘贴，点检测
+    3. 把它给出的百分比数字填回下面，回车
+    4. 自动跳到下一条
+
+  朱雀（免费）：https://matrix.tencent.com/ai-detect/
+    登录后每天 20 次文本检测，不登录只有 5 次——P1 要 16 次，记得先登录。
+    只认 tencent.com 这个域名，其他域名的「朱雀付费版」都是蹭名字的。
+
+  直接回车 = 跳过这条    输入 q = 退出（填过的都已存盘，下次接着做）
+""")
 
     for i, r in enumerate(todo, 1):
         path = ROOT / "out" / r["base"] / (r["variant"] + ".txt")
