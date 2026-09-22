@@ -67,6 +67,10 @@ def status(rows):
 
 RANGE_DIR = ROOT / "out" / "_range"
 RANGE_CSV = ROOT / "out" / "range.csv"
+TACTICS_DIR = ROOT / "out" / "_tactics"
+TACTICS_CSV = ROOT / "out" / "tactics.csv"
+
+RANGE_CSV_ACTIVE = []
 
 RANGE_NOTE = {
     "R1_真人文本": "真人写的（低锚点）。如果这份也接近 100，说明朱雀在这类学术文本上"
@@ -76,30 +80,47 @@ RANGE_NOTE = {
     "R4_激进改写_行业做法": "不加任何约束直接让模型「降 AI 率」——竞品和 ChatGPT 的通行做法。"
                             "改了 59% 的字，丢了 6 个技术术语。它如果也压不下来，"
                             "说明这件事本身做不到，不是我们做得不够狠。",
+    "T1_回译": "中→英→中。仍过模型，但翻译的条件分布受源文约束强得多，"
+               "与自由生成不是一回事。全自动，产品上可行。",
+    "T2_少样本条件化": "把真人写的文本当文风范例喂进去，让模型从「那位作者的分布」采样，"
+                       "而不是从助手的默认分布。R4 失败很可能正是因为它始终在助手的默认分布里"
+                       "——换措辞解决不了，换分布才可能。这条是四条里最可能成立的。",
+    "T3_非神经扰动": "纯代码：段内句子重排 + 长句拆分，完全不经模型采样，"
+                     "因此不可能把 AI 统计特征重新采样回来。"
+                     "它如果有效，说明检测器看句子顺序和句长结构；无效则说明它看的是别的东西。",
 }
 
 
-def run_range(detector):
+def run_range(detector, mode="range"):
     import csv as _csv
-    files = sorted(RANGE_DIR.glob("*.txt"))
+    d, csv_path, title, why = (
+        (TACTICS_DIR, TACTICS_CSV, "技术路线对比", """
+  朱雀实测已经否掉了「让通用助手改得不像 AI」这条路
+  （改 59% 字数，分数 100 → 100 纹丝不动）。
+  但那只否掉了**一种条件分布**。下面三条都是全自动、产品上可行的
+  不同路线，用同一篇 b11_材料 生成，只有改写方式不同。
+
+  任何一条能把 100 压下来，产品就还有路；三条都是 100，
+  才能说「自动降 AI 率」这件事做不到。""")
+        if mode == "tactics" else
+        (RANGE_DIR, RANGE_CSV, "量程校验", """
+  b11 的基准和全清都是 100 分。两边顶满时，测不出差异不代表规则没用，
+  也可能是标尺没有分辨率。这几条先确认这把尺子分不分得出人写的和 AI 写的。"""))
+
+    files = sorted(d.glob("*.txt"))
     if not files:
-        sys.exit("没有量程校验文件。它们由对话中的脚本生成在 probe/out/_range/")
+        sys.exit(f"{d} 里没有文件。先运行 python3 probe/tactics.py 生成。")
     prev = {}
-    if RANGE_CSV.exists():
-        with RANGE_CSV.open(encoding="utf-8-sig") as f:
+    if csv_path.exists():
+        with csv_path.open(encoding="utf-8-sig") as f:
             prev = {r["item"]: r for r in _csv.DictReader(f)}
+    RANGE_CSV_ACTIVE.append(csv_path)
 
     print("=" * 64)
-    print(f"  量程校验    检测器：{detector}    {len(files)} 条")
+    print(f"  {title}    检测器：{detector}    {len(files)} 条")
     print("=" * 64)
-    print("""
-  为什么先做这个：b11 的基准和全清都是 100 分。两边顶满时，
-  测不出差异不代表规则没用，也可能是标尺没有分辨率——
-  就像用最大刻度 100 的秤去称两个 200 斤的东西。
-  这 4 条先确认这把尺子分不分得出人写的和 AI 写的。
-
-  操作同前：文本已复制到剪贴板 → 粘贴到朱雀 → 把分数填回来
-""")
+    print(why)
+    print("\n  操作同前：文本已复制到剪贴板 → 粘贴到朱雀 → 把分数填回来\n")
     out = []
     for i, f in enumerate(files, 1):
         name = f.stem
@@ -119,7 +140,7 @@ def run_range(detector):
             v = prev.get(name, {}).get("score", "")
         out.append({"item": name, "detector": detector, "score": v.rstrip("%"),
                     "n_chars": len(text)})
-        with RANGE_CSV.open("w", encoding="utf-8-sig", newline="") as fh:
+        with RANGE_CSV_ACTIVE[-1].open("w", encoding="utf-8-sig", newline="") as fh:
             w = _csv.DictWriter(fh, fieldnames=["item", "detector", "score", "n_chars"])
             w.writeheader()
             w.writerows(out)
@@ -141,16 +162,19 @@ def main():
                     help="本轮只做前 N 条。先跑通一对（--limit 2）再做全部，"
                          "比一口气做 16 条更容易发现流程里的问题")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--tactics", action="store_true",
+                    help="技术路线对比：回译 / 少样本条件化 / 非神经扰动，"
+                         "全是自动方案，看有没有哪条能推动分数")
     ap.add_argument("--range", action="store_true",
                     help="量程校验：先确认这把尺子分得出人写的和 AI 写的。"
                          "基准和全清都是 100 分时，效应量测不出来不是因为规则没用，"
                          "而是因为标尺顶满了，没有分辨率。")
     args = ap.parse_args()
 
-    if args.range:
+    if args.range or args.tactics:
         if not args.detector:
             sys.exit("请用 --detector 指定检测器名")
-        return run_range(args.detector)
+        return run_range(args.detector, "tactics" if args.tactics else "range")
 
     rows, fields = load()
     if args.status:
