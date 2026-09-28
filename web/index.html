@@ -207,9 +207,11 @@ mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
     <div class="row">
       <button class="primary" id="dfix">确定性修复</button>
       <button id="drw" title="需配置 LLM">两层改写</button>
-      <select id="cov" title="整篇改写覆盖全部段落，不受规则命中率限制">
-        <option value="all">整篇改写</option>
+      <select id="cov" title="选择改写策略">
+        <option value="all">整篇改写（本项目规则）</option>
         <option value="targeted">只改命中段落</option>
+        <option value="humanizer-safe">humanizer-zh（保留事实守卫）</option>
+        <option value="humanizer">humanizer-zh（完整·会编造内容）</option>
       </select>
       <button id="dexp" hidden>导出 docx</button>
       <button id="dclose">换一份文档</button>

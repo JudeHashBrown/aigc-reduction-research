@@ -23,6 +23,7 @@ import time
 import uuid
 from normalize import normalize_text, describe as describe_norm
 import docx_io
+import humanizer
 import pdf_io
 from llm import Client, LLMError           # noqa: E402
 
@@ -172,11 +173,22 @@ class Handler(BaseHTTPRequestHandler):
             n = int(payload.get("n") or 3)
             mx = payload.get("max_paragraphs")
             cov = payload.get("coverage")
-            cov = cov if cov in ("targeted", "all") else "targeted"
+            cov = cov if cov in ("targeted", "all", "humanizer", "humanizer-safe") else "targeted"
             jid = _new_job()
 
             def run():
                 try:
+                    if cov.startswith("humanizer"):
+                        # humanizer-zh-academic 的 SOP 是整篇级的，
+                        # 走单独路径，不经过逐段流水线
+                        r = humanizer.humanize(
+                            text, client, safe=(cov == "humanizer-safe"),
+                            progress=lambda d, t: _job_set(jid, done=d, total=t))
+                        r["notices"] = notices + [
+                            {"level": "warn" if cov == "humanizer" else "info",
+                             "text": n} for n in r.get("notes", [])]
+                        _job_set(jid, state="done", result=r)
+                        return
                     r = llm_pipeline(
                         text, client, n_candidates=max(1, min(n, 5)),
                         weights_path=wp,
