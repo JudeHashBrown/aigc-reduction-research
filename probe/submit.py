@@ -73,6 +73,18 @@ TACTICS_CSV = ROOT / "out" / "tactics.csv"
 RANGE_CSV_ACTIVE = []
 
 RANGE_NOTE = {
+    "C0_原版重测": "b11 原版，9 月 20 日测过 100。再测一次，确认这 6 天里朱雀本身没变。"
+                   "这一条如果不是 100，下面所有分数的可比性都没了。",
+    "C1_朴素改写_Claude写": "对照 R4。**同样是不加约束的激进改写，同样的长度，只换了执笔的模型**"
+                            "（R4 是 gpt，这条是 Claude）。H1 拿 0 分最可疑的解释就是"
+                            "「朱雀认 gpt 不认 Claude」——这条专门用来验它。"
+                            "这条如果也接近 0，H1 的 0 分就和那套 SKILL 没关系。",
+    "C2_H1截到原版长度": "H1 的前几段，截到和原版一样长（794 → 545 字）。"
+                          "H1 比原版长 47%，而朱雀对短文本的判定通常更保守。"
+                          "这条隔离长度这个变量。",
+    "C3_真人文本经gpt改写": "R1 那段真人文本（已实测 0 分）交给 gpt 改写一遍。"
+                            "从 0 跳到 100，说明分数主要由「谁写的」决定；"
+                            "仍然是低分，说明模型改写不会自动把文本打成 AI。",
     "R1_真人文本": "真人写的（低锚点）。如果这份也接近 100，说明朱雀在这类学术文本上"
                    "根本不区分人机，后面所有测量都没有意义。",
     "R2_b11两层改写后": "本产品当前的两层改写。白名单约束下只改了 3 个字。",
@@ -97,17 +109,44 @@ RANGE_NOTE = {
 }
 
 
-def run_range(detector, mode="range"):
+def _num(v):
+    """分数必须是数字。之前 run_range 没有这道校验，把粘错的 shell 命令
+    原样写进了 tactics.csv 的 score 列，两条数据报废。"""
+    v = (v or "").strip().rstrip("%")
+    if not v:
+        return None
+    try:
+        f = float(v)
+    except ValueError:
+        return None
+    return f if 0 <= f <= 100 else None
+
+
+def _flush(csv_path, files, done):
+    import csv as _csv
+    with csv_path.open("w", encoding="utf-8-sig", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=["item", "detector", "score", "n_chars"])
+        w.writeheader()
+        for f in files:                       # 按文件顺序写，行序稳定
+            if f.stem in done:
+                w.writerow(done[f.stem])
+
+
+def run_range(detector, mode="range", reset=False, redo=False):
     import csv as _csv
     d, csv_path, title, why = (
         (TACTICS_DIR, TACTICS_CSV, "技术路线对比", """
-  朱雀实测已经否掉了「让通用助手改得不像 AI」这条路
-  （改 59% 字数，分数 100 → 100 纹丝不动）。
-  但那只否掉了**一种条件分布**。下面三条都是全自动、产品上可行的
-  不同路线，用同一篇 b11_材料 生成，只有改写方式不同。
+  上一轮跑出了这个项目第一个不是 100 的数：H1 = 0，H2 = 32.25。
+  在那之前原版、全清、两层改写、激进改写（改 59% 字数）全是 100。
 
-  任何一条能把 100 压下来，产品就还有路；三条都是 100，
-  才能说「自动降 AI 率」这件事做不到。""")
+  但这个 0 还不能信，有三个混淆没排除，C0-C3 四条对照就是为它们准备的：
+    C0  朱雀自己这 6 天有没有变
+    C1  是那套 SKILL 起作用，还是只因为 H1 是 Claude 写的、R4 是 gpt 写的
+    C2  是不是只因为 H1 比原版长了 47%
+    C3  真人文本过一遍模型，会不会自动变成 AI
+
+  先看 C1。**C1 如果也接近 0，H1 的 0 分就与 humanizer 那套规则无关**，
+  整件事变成「换个模型执笔」，那是完全不同的产品，也便宜得多。""")
         if mode == "tactics" else
         (RANGE_DIR, RANGE_CSV, "量程校验", """
   b11 的基准和全清都是 100 分。两边顶满时，测不出差异不代表规则没用，
@@ -116,46 +155,82 @@ def run_range(detector, mode="range"):
     files = sorted(d.glob("*.txt"))
     if not files:
         sys.exit(f"{d} 里没有文件。先运行 python3 probe/tactics.py 生成。")
-    prev = {}
+
+    # 已填过的分数必须活过这一轮。之前是每轮从空 out 重写 CSV，
+    # 中途 Ctrl+C 就把上一轮填好的行一起抹掉了。
+    done = {}
     if csv_path.exists():
         with csv_path.open(encoding="utf-8-sig") as f:
-            prev = {r["item"]: r for r in _csv.DictReader(f)}
-    RANGE_CSV_ACTIVE.append(csv_path)
+            for r in _csv.DictReader(f):
+                if _num(r.get("score")) is not None:
+                    done[r["item"]] = r
+    if reset:
+        print(f"  --reset：丢弃已填的 {len(done)} 条，全部重测")
+        done = {}
 
     print("=" * 64)
     print(f"  {title}    检测器：{detector}    {len(files)} 条")
     print("=" * 64)
     print(why)
-    print("\n  操作同前：文本已复制到剪贴板 → 粘贴到朱雀 → 把分数填回来\n")
-    out = []
-    for i, f in enumerate(files, 1):
+    todo = files if redo else [f for f in files if f.stem not in done]
+    if not todo:
+        print(f"\n  {len(files)} 条全部填过了。要重测：加 --reset\n")
+    elif len(todo) < len(files):
+        print(f"\n  已填 {len(done)} 条，本轮只做剩下的 {len(todo)} 条"
+              f"（要连填过的一起重测：加 --redo）")
+    print("\n  每条重复：⌘V 粘进朱雀 → 点检测 → 把百分比数字打回来 → 回车")
+    print("  只接受 0-100 的数字。直接回车＝跳过这条，q＝退出（已填的都存好了）\n")
+
+    for i, f in enumerate(todo, 1):
         name = f.stem
         text = f.read_text(encoding="utf-8")
         ok = to_clipboard(text)
-        print(f"[{i}/{len(files)}] {name}")
-        print(f"          {RANGE_NOTE.get(name, '')}")
+        print(f"[{i}/{len(todo)}] {name}"
+              + (f"    （上次 {done[name]['score']}）" if name in done else ""))
+        note = RANGE_NOTE.get(name, "")
+        if note:
+            print(f"          {note}")
         print(f"          {len(text)} 字" + ("   ✓ 已复制到剪贴板" if ok else f"   ✗ 请手动打开 {f}"))
-        try:
-            v = input("          分数（%）：").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n已退出。")
+
+        quit_ = False
+        while True:
+            try:
+                v = input("          朱雀给的分数（%）：").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\n已退出，填过的都存好了。")
+                quit_ = True
+                break
+            if v.lower() == "q":
+                quit_ = True
+                break
+            if not v:
+                print("          跳过这条")
+                v = None
+                break
+            if _num(v) is None:
+                print(f"          「{v}」不是 0-100 的数字。"
+                      "是不是粘错窗口了？重新输一次（q 退出）")
+                continue
             break
-        if v.lower() == "q":
+        if quit_:
             break
-        if not v:
-            v = prev.get(name, {}).get("score", "")
-        out.append({"item": name, "detector": detector, "score": v.rstrip("%"),
-                    "n_chars": len(text)})
-        with RANGE_CSV_ACTIVE[-1].open("w", encoding="utf-8-sig", newline="") as fh:
-            w = _csv.DictWriter(fh, fieldnames=["item", "detector", "score", "n_chars"])
-            w.writeheader()
-            w.writerows(out)
+        if v is None:
+            continue
+
+        done[name] = {"item": name, "detector": detector,
+                      "score": f"{_num(v):g}", "n_chars": len(text)}
+        _flush(csv_path, files, done)
 
     print("\n" + "-" * 64)
-    for r in out:
-        print(f"  {r['item']:26s} {r['score'] or '（跳过）':>6s}")
+    for f in files:
+        r = done.get(f.stem)
+        print(f"  {f.stem:26s} {(r['score'] + '%') if r else '（未测）':>8s}")
     print("-" * 64)
-    print("把这张表发我。")
+    print(f"  已存盘：{csv_path}")
+    miss = [f.stem for f in files if f.stem not in done]
+    if miss:
+        print(f"  还差 {len(miss)} 条，重跑同一条命令会自动从这里接上")
+    print("  把这张表发我。")
     return 0
 
 
@@ -168,6 +243,8 @@ def main():
                     help="本轮只做前 N 条。先跑通一对（--limit 2）再做全部，"
                          "比一口气做 16 条更容易发现流程里的问题")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--reset", action="store_true",
+                    help="丢弃 tactics.csv / range.csv 里已填的分数，从头重测")
     ap.add_argument("--tactics", action="store_true",
                     help="技术路线对比：回译 / 少样本条件化 / 非神经扰动，"
                          "全是自动方案，看有没有哪条能推动分数")
@@ -180,7 +257,8 @@ def main():
     if args.range or args.tactics:
         if not args.detector:
             sys.exit("请用 --detector 指定检测器名")
-        return run_range(args.detector, "tactics" if args.tactics else "range")
+        return run_range(args.detector, "tactics" if args.tactics else "range",
+                         reset=args.reset, redo=args.redo)
 
     rows, fields = load()
     if args.status:
