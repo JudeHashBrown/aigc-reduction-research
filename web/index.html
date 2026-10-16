@@ -1,838 +1,327 @@
 <!doctype html>
-<html lang="zh-CN"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AI 写作特征诊断</title>
-<style>
-:root{
-  --bg:#fafaf9; --panel:#fff; --ink:#1c1b19; --muted:#6b6862; --line:#e6e3dd;
-  --hi:#c0392b; --md:#b8860b; --lo:#4a7c59; --accent:#2d5f8a;
-  --hi-bg:#fdecea; --md-bg:#fdf6e3; --lo-bg:#eef6f0;
-}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
-  --bg:#17161a; --panel:#1f1e23; --ink:#eceaf0; --muted:#9a96a3; --line:#33313a;
-  --hi:#ff8a7a; --md:#e0b64a; --lo:#7fc99a; --accent:#7fb3e0;
-  --hi-bg:#3a1f1c; --md-bg:#332a13; --lo-bg:#1c2f24;
-}}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
-header{padding:18px 24px;border-bottom:1px solid var(--line);display:flex;
-  align-items:baseline;gap:14px;flex-wrap:wrap}
-h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.01em}
-.sub{color:var(--muted);font-size:12.5px}
-.wrap{display:grid;grid-template-columns:minmax(320px,1fr) minmax(360px,1.25fr);
-  gap:18px;padding:18px 24px;align-items:start}
-@media(max-width:960px){.wrap{grid-template-columns:1fr}}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
-.card h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:600;
-  text-transform:uppercase;letter-spacing:.06em}
-textarea{width:100%;min-height:340px;padding:13px;border:1px solid var(--line);
-  border-radius:8px;background:var(--bg);color:var(--ink);resize:vertical;
-  font:14px/1.8 ui-monospace,"SF Mono",Menlo,"PingFang SC",monospace}
-textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
-.row{display:flex;gap:9px;margin-top:11px;align-items:center;flex-wrap:wrap}
-button{font:inherit;font-size:14px;padding:8px 16px;border-radius:7px;cursor:pointer;
-  border:1px solid var(--line);background:var(--panel);color:var(--ink);transition:.12s}
-button:hover:not(:disabled){border-color:var(--accent)}
-button.primary{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:550}
-button.primary:hover:not(:disabled){filter:brightness(1.1)}
-button:disabled{opacity:.45;cursor:default}
-.hint{color:var(--muted);font-size:12.5px}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));gap:9px;margin-bottom:15px}
-.stat{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;text-align:center}
-.stat .n{font-size:21px;font-weight:660;line-height:1.15;font-variant-numeric:tabular-nums}
-.stat .l{font-size:11px;color:var(--muted);margin-top:3px}
-.n.hi{color:var(--hi)}.n.md{color:var(--md)}.n.lo{color:var(--lo)}
-#doc{line-height:2.25;white-space:pre-wrap;word-break:break-word;font-size:14.5px;
-  max-height:52vh;overflow:auto;padding:4px 2px}
-mark{background:none;padding:1px 0;border-radius:2px;cursor:pointer;
-  border-bottom:2px solid;transition:background .1s}
-mark.s-high{border-color:var(--hi)} mark.s-medium{border-color:var(--md)} mark.s-low{border-color:var(--lo)}
-mark.s-high:hover,mark.sel.s-high{background:var(--hi-bg)}
-mark.s-medium:hover,mark.sel.s-medium{background:var(--md-bg)}
-mark.s-low:hover,mark.sel.s-low{background:var(--lo-bg)}
-.f{border-left:3px solid var(--line);padding:9px 0 9px 12px;margin-bottom:10px}
-.f.high{border-color:var(--hi)}.f.medium{border-color:var(--md)}.f.low{border-color:var(--lo)}
-.f .t{font-size:13.5px;font-weight:600;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
-.f .id{font:11.5px ui-monospace,Menlo,monospace;color:var(--muted);
-  border:1px solid var(--line);border-radius:4px;padding:1px 5px}
-.f .m{margin:5px 0;font-size:14px;background:var(--bg);padding:6px 9px;border-radius:5px;
-  border:1px solid var(--line)}
-.f .e{font-size:12.5px;color:var(--muted);line-height:1.6}
-.para{display:flex;gap:10px;align-items:center;padding:7px 9px;border-radius:6px;
-  cursor:pointer;font-size:13px;border:1px solid transparent}
-.para:hover{border-color:var(--line);background:var(--bg)}
-.dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
-.dot.high{background:var(--hi)}.dot.medium{background:var(--md)}.dot.low{background:var(--lo)}
-.para .p{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
-.tag{font-size:10.5px;border:1px solid var(--line);border-radius:4px;padding:0 5px;
-  color:var(--muted);flex:0 0 auto}
-.warn{background:var(--hi-bg);border:1px solid var(--hi);border-radius:7px;
-  padding:10px 13px;margin-bottom:13px;font-size:13px}
-.warn b{color:var(--hi)}
-.warn ul{margin:7px 0 0;padding-left:19px} .warn li{margin:3px 0}
-.mt{font-size:12.5px;color:var(--muted);line-height:1.9;font-variant-numeric:tabular-nums}
-.mt b{color:var(--ink);font-weight:600}
-.note{font-size:12px;color:var(--muted);border-top:1px solid var(--line);
-  margin-top:14px;padding-top:11px;line-height:1.7}
-.tabs{display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid var(--line)}
-.tab{padding:7px 13px;cursor:pointer;font-size:13px;border-bottom:2px solid transparent;color:var(--muted)}
-.tab.on{border-color:var(--accent);color:var(--ink);font-weight:550}
-.empty{color:var(--muted);text-align:center;padding:46px 20px;font-size:13.5px;line-height:1.9}
-.diffbox{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:11px;
-  font:13px/1.9 ui-monospace,Menlo,"PingFang SC",monospace;white-space:pre-wrap;
-  max-height:340px;overflow:auto}
-.lg{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px solid var(--line)}
-.led{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);
-  margin-right:6px;vertical-align:middle;transition:background .2s}
-.led.up{background:var(--lo)} .led.down{background:var(--hi);animation:pulse 1.4s infinite}
-@keyframes pulse{50%{opacity:.35}}
-#conn{cursor:default}
-.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);
-  border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite}
-@keyframes sp{to{transform:rotate(360deg)}}
-  .upl{display:inline-block;padding:7px 14px;border:1px solid var(--line);border-radius:7px;
-       cursor:pointer;font-size:13px;background:var(--btn,transparent)}
-  .upl:hover{border-color:var(--accent,#888)}
-  .notice{margin:8px 0 0;padding:9px 11px;border-radius:7px;font-size:13px;line-height:1.6}
-  .notice.warn{background:#fff6e5;border:1px solid #f0d090;color:#6a4a00}
-  .notice.info{background:#eef4fb;border:1px solid #c5d8ee;color:#2c4a6b}
-  @media (prefers-color-scheme:dark){
-    .notice.warn{background:#3a2e10;border-color:#6b5520;color:#f0d79a}
-    .notice.info{background:#16283a;border-color:#2d4a66;color:#a8c8e8}
-  }
-  #doccard .row{margin-top:10px}
-  .pg{border:1px solid var(--line);border-radius:9px;padding:12px 14px;margin:10px 0}
-  .pg .no{font:11.5px ui-monospace,monospace;opacity:.55;margin-bottom:6px}
-  .pg .tx{line-height:1.95;font-size:14.5px;white-space:pre-wrap}
-  .pg .tags{margin-top:9px;display:flex;flex-wrap:wrap;gap:6px}
-  .tag{font-size:11.5px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);opacity:.9}
-  .tag.high{background:#fdecec;border-color:#e8a5a5;color:#8a2020}
-  .tag.medium{background:#fff4e2;border-color:#e6c088;color:#7a4c05}
-  .tag.low{background:#f0f0f0;color:#555}
-  @media (prefers-color-scheme:dark){
-    .tag.high{background:#3d1c1c;border-color:#7a3838;color:#f0b0b0}
-    .tag.medium{background:#3a2c10;border-color:#6b5520;color:#f0d79a}
-    .tag.low{background:#2a2a2a;color:#aaa}
-  }
-  .df del{background:#fdecec;color:#8a2020;text-decoration:line-through;padding:0 1px}
-  .df ins{background:#e6f6e8;color:#1c5c26;text-decoration:none;padding:0 1px}
-  @media (prefers-color-scheme:dark){
-    .df del{background:#3d1c1c;color:#f0b0b0}
-    .df ins{background:#16301c;color:#9fd8ac}
-  }
-  .why{border-left:3px solid var(--line);padding:9px 0 9px 12px;margin:10px 0 0}
-  .why.high{border-left-color:#d06060}
-  .why.medium{border-left-color:#d9a03c}
-  .why.low{border-left-color:#aaa}
-  .why .hd{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:5px}
-  .why .rid{font:11.5px ui-monospace,monospace;opacity:.6}
-  .why .nm{font-weight:600;font-size:13.5px}
-  .why .hw{font-size:11px;padding:1.5px 7px;border-radius:20px;border:1px solid var(--line);opacity:.85}
-  .why .hw.code{background:#e8f4ea;border-color:#a8cdb0;color:#1c5c26}
-  .why .hw.llm{background:#eaf0fa;border-color:#aac0e0;color:#24446e}
-  .why .hw.report{background:#f3f0e8;border-color:#ccc0a0;color:#6a5a2a}
-  .why .q{font-size:13.5px;margin:3px 0 6px;padding:5px 9px;border-radius:5px;
-          background:rgba(128,128,128,.10);display:inline-block;max-width:100%}
-  .why .rw{font-size:13px;line-height:1.75;opacity:.92;margin-top:4px}
-  .why .rw b{opacity:.7;font-weight:600;margin-right:4px}
-  @media (prefers-color-scheme:dark){
-    .why .hw.code{background:#16301c;border-color:#2f5c39;color:#9fd8ac}
-    .why .hw.llm{background:#17263d;border-color:#31507d;color:#a8c2ea}
-    .why .hw.report{background:#322c1c;border-color:#5f5533;color:#ddcfa0}
-  }
-  .ov{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:12px 0 4px}
-  .ov-h{font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:10px;margin-bottom:12px}
-  .ov-tag{font-size:11.5px;padding:2px 9px;border-radius:20px;font-weight:600}
-  .ov-k{font-size:13.5px;opacity:.85}
-  .ov-k b{font-size:18px;opacity:1}
-  .ov-bar{position:relative;height:8px;border-radius:5px;background:rgba(128,128,128,.18);
-          margin:26px 0 8px}
-  .ov-fill{height:100%;border-radius:5px}
-  .ov-mk{position:absolute;top:-19px;transform:translateX(-50%);font-size:10.5px;
-         opacity:.6;white-space:nowrap}
-  .ov-mk::after{content:'';position:absolute;left:50%;top:15px;width:1px;height:8px;
-                background:currentColor;opacity:.45}
-  .ov-t{font-size:13px;line-height:1.7;opacity:.9}
-  .ov-src{display:block;font-size:11.5px;opacity:.55;margin-top:3px}
-  .ov-sp{display:flex;gap:7px;flex-wrap:wrap;margin:7px 0 0}
-  .ov-sp .hw{font-size:11.5px;padding:2px 9px;border-radius:20px;border:1px solid var(--line)}
-  .ov-sp .hw.code{background:#e8f4ea;border-color:#a8cdb0;color:#1c5c26}
-  .ov-sp .hw.llm{background:#eaf0fa;border-color:#aac0e0;color:#24446e}
-  .ov-sp .hw.report{background:#f3f0e8;border-color:#ccc0a0;color:#6a5a2a}
-  .ov-warn{font-size:12px;line-height:1.7;opacity:.72;margin-top:9px;
-           padding-left:9px;border-left:2px solid var(--line)}
-  @media (prefers-color-scheme:dark){
-    .ov-sp .hw.code{background:#16301c;border-color:#2f5c39;color:#9fd8ac}
-    .ov-sp .hw.llm{background:#17263d;border-color:#31507d;color:#a8c2ea}
-    .ov-sp .hw.report{background:#322c1c;border-color:#5f5533;color:#ddcfa0}
-  }
-  #cov{padding:6px 9px;border:1px solid var(--line);border-radius:7px;font-size:13px;
-       background:transparent;color:inherit}
-  .clean{padding:14px;text-align:center;opacity:.6;font-size:13.5px}
-</style></head><body>
-
-<header>
-  <h1>AI 写作特征诊断</h1>
-  <span class="sub">中英双语 · 逐句归因 · 规则与统计，零模型</span>
-  <span class="sub" id="cal" style="margin-left:auto"></span>
-  <span class="sub" id="conn"><i class="led"></i><span id="connTxt">检查中…</span></span>
-</header>
-
-<div class="wrap">
-  <div class="card">
-    <h2>输入</h2>
-    <textarea id="in" placeholder="粘贴论文段落（支持中英混排，如中文正文 + 英文摘要）…&#10;&#10;按 ⌘/Ctrl + Enter 直接诊断"></textarea>
-    <div class="row">
-      <button class="primary" id="btn">诊断</button>
-      <button id="fix" disabled>确定性修复</button>
-      <button id="rw" disabled title="需配置 LLM">两层改写</button>
-      <button id="demo">示例</button>
-      <label class="upl" for="file">上传 .docx / .pdf</label>
-      <input type="file" id="file" accept=".docx,.pdf" hidden>
-      <span class="hint" id="cnt">0 字</span>
-    </div>
-    <div id="notices"></div>
-    <div class="note">
-      <b>两层改写</b> = 代码修复 + LLM 重写结构（需配置 LLM）。
-      <b>确定性修复</b>只做不需要语义理解的改动（删套话、换词表内高频词、去格式残留），
-      纯代码、毫秒级、结果可复现。<b>不经过任何模型</b>，因此不会反向注入 AI 统计特征。
-      需要理解语义的改写（拆编号排比、补主语、空泛句具体化）不在此列。
-    </div>
-  </div>
-
-  <div class="card" id="doccard" hidden>
-    <h2 id="dochead">文档</h2>
-    <div id="docmeta" class="note" style="margin-top:0"></div>
-    <div class="row">
-      <button class="primary" id="dfix">确定性修复</button>
-      <button id="drw" title="需配置 LLM">两层改写</button>
-      <select id="cov" title="选择改写策略">
-        <option value="all">整篇改写（本项目规则）</option>
-        <option value="targeted">只改命中段落</option>
-        <option value="humanizer-safe">humanizer-zh（保留事实守卫）</option>
-        <option value="humanizer">humanizer-zh（完整·会编造内容）</option>
-      </select>
-      <button id="dexp" hidden>导出 docx</button>
-      <button id="dclose">换一份文档</button>
-    </div>
-    <div id="docnotices"></div>
-    <div id="docbody"></div>
-  </div>
-
-  <div class="card" id="out">
-    <div class="empty">左侧粘贴文本，点「诊断」。<br>每一条结论都会指出命中的原文和理由，你可以自己核对。</div>
-  </div>
-</div>
-
-<script>
-const $=s=>document.querySelector(s), inp=$('#in');
-let cur=null, curText='';
-
-const DEMO=`本文深入探讨了图神经网络在交通流量预测中的应用，系统梳理了相关研究。研究表明，该方法发挥着至关重要的作用，从而彰显了其应用价值。综上所述，本研究具有重要的理论意义和实践价值。
-
-Abstract: This paper delves into the application of graph neural networks for traffic flow prediction. The proposed framework serves as a pivotal tool, showcasing robust performance. Studies show that our approach is not just accurate, but also efficient, scalable, and interpretable, underscoring the importance of spatial-temporal modeling. In conclusion, despite these challenges, future research will explore this promising realm.
-
-我们在 PeMS04 上训练，输入 12 个时间步，batch size 64。MAE 从基线的 21.3 降到 19.8，提升幅度不大。按传感器重新划分后掉到 20.6，这个数才可信。`;
-
-let CFG={llm_configured:false}, ONLINE=null;
-
-// 持续监测后端。页面可能开了很久，而服务早已停掉——
-// 只在加载时查一次，用户要等到点按钮才发现，还会看到误导性的错误。
-async function ping(){
-  let ok=false;
-  try{ const r=await fetch('/health',{cache:'no-store'}); ok=r.ok && (await r.json()).ok; }
-  catch(e){ ok=false; }
-  if(ok!==ONLINE){
-    ONLINE=ok;
-    $('#conn').querySelector('.led').className='led '+(ok?'up':'down');
-    $('#connTxt').textContent=ok?'服务已连接':'服务未运行';
-    $('#conn').title=ok?'':'在终端运行：python3 web/server.py';
-    if(ok){
-      try{
-        CFG=await (await fetch('/api/config',{cache:'no-store'})).json();
-        $('#rw').disabled=!CFG.llm_configured;
-        $('#rw').title=CFG.llm_configured?('模型：'+CFG.llm_model)
-          :'未配置 LLM：设置 LLM_BASE_URL 与 LLM_API_KEY 后重启服务';
-        $('#cal').textContent=(CFG.calibrated?'权重已标定':'权重未标定')
-          +' · '+(CFG.llm_configured?('LLM '+CFG.llm_model):'LLM 未配置');
-      }catch(e){}
-      // 服务恢复后清掉之前的断线提示
-      const w=$('#out').querySelector('.warn');
-      if(w && w.textContent.includes('连接失败'))
-        $('#out').innerHTML='<div class="empty">服务已恢复，可以重新诊断。</div>';
-    }else{
-      $('#rw').disabled=true;
-      $('#cal').textContent='';
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>中文学术写作助手 · 本地 MVP</title>
+  <style>
+    :root{
+      --bg:#f5f6f8;--panel:#fff;--panel-2:#fafafa;--ink:#17191f;--muted:#68707d;
+      --line:#e4e6eb;--line-2:#d6d9e0;--accent:#4f63d8;--accent-2:#eef0ff;
+      --green:#16845b;--green-bg:#e9f7f1;--amber:#a16008;--amber-bg:#fff5df;
+      --red:#b6423a;--red-bg:#fff0ee;--blue:#2e6ca4;--blue-bg:#edf6ff;
+      --shadow:0 1px 2px rgba(25,30,40,.04),0 10px 36px rgba(40,48,72,.06);
+      --radius:16px;--sidebar:228px;
     }
-  }
-}
-ping(); setInterval(ping, 4000);
-
-inp.oninput=()=>{$('#cnt').textContent=inp.value.replace(/\s/g,'').length+' 字'};
-$('#rw').onclick=pipeline;
-$('#demo').onclick=()=>{inp.value=DEMO;inp.dispatchEvent(new Event('input'));run()};
-$('#btn').onclick=run; $('#fix').onclick=autofix;
-$('#file').onchange=e=>{ onFile(e.target.files[0]); e.target.value=''; };
-$('#dfix').onclick=()=>docRun('fix');
-$('#drw').onclick=()=>docRun('rw');
-$('#dexp').onclick=exportDocx;
-$('#dclose').onclick=closeDoc;
-// 整页拖放：拖一个 .docx 进来就直接载入
-document.addEventListener('dragover',e=>{e.preventDefault()});
-document.addEventListener('drop',e=>{
-  e.preventDefault();
-  const f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
-  if(f) onFile(f);
-});
-inp.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')run()});
-
-async function post(url,body){
-  let r;
-  try{
-    r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(body)});
-  }catch(e){
-    throw new Error('NET|连不上本地服务。最常见的原因是**服务没在运行**——'
-      +'这个页面可能是之前开的，而终端里的 server.py 已经停掉了。\n\n'
-      +'在项目目录运行：python3 web/server.py\n\n'
-      +'服务起来后本页会自动恢复（右上角的灯会变绿），不用刷新。'
-      +'若你开着代理软件，还需把 127.0.0.1 和 localhost 加入绕过列表。');
-  }
-  const raw=await r.text();
-  let data=null; try{ data=JSON.parse(raw); }catch(e){}
-  if(!data){
-    // 返回的不是 JSON —— 几乎总是代理插在中间返回了错误页
-    throw new Error('NET|收到的不是本服务的响应（HTTP '+r.status+'）。'
-      +'多半是代理软件拦截了 127.0.0.1，请把它加入绕过列表后重试。');
-  }
-  if(!r.ok) throw new Error((data.error||r.statusText)+(data.detail?'：'+data.detail:''));
-  return data;
-}
-// ---------- 文档模式 ----------
-// 上传的文档不灌进输入框：论文里有图、表、公式，转成纯文本再让用户
-// 在文本框里改是错的。这里只做两件事——改写前指出哪里有 AI 特征，
-// 改写后说明每一处是怎么改的。原始字节由页面保管，服务端不存会话状态。
-let DOC=null;
-
-function esc(t){return String(t).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-
-function renderNotices(list,sel){
-  const box=$(sel||'#notices');
-  if(!box) return;
-  if(!list||!list.length){ box.innerHTML=''; return; }
-  box.innerHTML=list.map(n=>
-    `<div class="notice ${n.level==='warn'?'warn':'info'}">${esc(n.text).replace(/\n/g,'<br>')}</div>`
-  ).join('');
-}
-
-function b64(buf){
-  // 大文件不能用 apply(...spread)，参数个数会爆栈，必须分块
-  const b=new Uint8Array(buf); let out='';
-  for(let i=0;i<b.length;i+=0x8000) out+=String.fromCharCode.apply(null,b.subarray(i,i+0x8000));
-  return btoa(out);
-}
-
-// 字符级 LCS 差异。段落长度在数百字量级，O(n*m) 足够快；
-// 超长段落退化成整段替换，避免卡住页面。
-function diff(a,b){
-  if(a===b) return [['=',a]];
-  if(a.length*b.length>250000) return [['-',a],['+',b]];
-  const n=a.length,m=b.length,dp=[];
-  for(let i=0;i<=n;i++) dp.push(new Uint32Array(m+1));
-  for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--)
-    dp[i][j]=a[i]===b[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
-  const out=[]; let i=0,j=0;
-  const push=(op,ch)=>{ const l=out[out.length-1];
-    if(l&&l[0]===op) l[1]+=ch; else out.push([op,ch]); };
-  while(i<n&&j<m){
-    if(a[i]===b[j]){ push('=',a[i]); i++; j++; }
-    else if(dp[i+1][j]>=dp[i][j+1]){ push('-',a[i]); i++; }
-    else { push('+',b[j]); j++; }
-  }
-  while(i<n){ push('-',a[i++]); }
-  while(j<m){ push('+',b[j++]); }
-  return out;
-}
-
-function diffHtml(a,b){
-  return '<span class="df">'+diff(a,b).map(([op,t])=>
-    op==='='?esc(t):op==='-'?`<del>${esc(t)}</del>`:`<ins>${esc(t)}</ins>`
-  ).join('')+'</span>';
-}
-
-async function onFile(f){
-  if(!f) return;
-  const isPdf=/\.pdf$/i.test(f.name), isDocx=/\.docx$/i.test(f.name);
-  if(!isPdf&&!isDocx){
-    return showErr(new Error('只支持 .docx 和 .pdf。'
-      +'如果是 .doc 旧格式，请在 Word 里另存为 .docx。'));
-  }
-  busy(true,'解析文档');
-  try{
-    const data=b64(await f.arrayBuffer());
-    const r=await post(isPdf?'/api/pdf/extract':'/api/docx/extract',{file:data});
-    DOC={kind:r.kind,name:f.name,b64:data,text:r.text,meta:r.meta,notices:r.notices};
-    const d=await post('/api/diagnose',{text:DOC.text});
-    renderDoc(d);
-  }catch(e){ showErr(e); }
-  finally{ busy(false); }
-}
-
-// 每条规则归哪一层处理，如实标出来。相当比例的规则是工具不自动改的，
-// 含糊其辞会让用户以为工具没干活，或者以为已经改好了。
-const HANDLE={
-  code:['自动修复','点「确定性修复」就会改掉，纯代码、不经模型'],
-  llm:['需要改写','改法要理解语义，点「两层改写」交给模型，改完会逐字对照'],
-  report:['只提示','这条误报多或效应量没测过，工具不自动改，请你自己判断'],
-};
-
-function whyCard(f){
-  const h=HANDLE[f.handling]||['',''];
-  return `<div class="why ${f.severity}">
-    <div class="hd"><span class="rid">${esc(f.rule_id)}</span>
-      <span class="nm">${esc(f.name)}</span>
-      ${h[0]?`<span class="hw ${f.handling}" title="${esc(h[1])}">${h[0]}</span>`:''}</div>
-    <div class="q">${esc(f.matched)}</div>
-    <div class="rw"><b>为什么</b>${esc(f.explain)}</div>
-    ${f.fix?`<div class="rw"><b>怎么改</b>${esc(f.fix)}</div>`:''}
-  </div>`;
-}
-
-// 同一条规则命中同一段文字会重复出现，按「规则+原文」去重；高危排前面
-function dedupe(fs){
-  const seen=new Set(), out=[];
-  for(const f of fs){
-    const k=f.rule_id+'␟'+f.matched;
-    if(seen.has(k)) continue;
-    seen.add(k); out.push(f);
-  }
-  const SEV={high:0,medium:1,low:2};
-  return out.sort((a,b)=>SEV[a.severity]-SEV[b.severity]);
-}
-
-// 整体评估。刻意不给 AI 率百分比——任何百分比都预测不了知网会给多少分，
-// 报一个对不上的数字只会毁掉信任。这里给的是可自己核对的观测量。
-function renderOverall(o){
-  if(!o) return '';
-  const BAND={good:['#1c5c26','#e8f4ea','达标'],
-              mid:['#7a4c05','#fff4e2','偏低'],
-              low:['#8a2020','#fdecec','很低']};
-  const b=BAND[o.band]||BAND.low, r=o.digit_ref;
-  // 刻度按人类参照值定位，超出就顶满
-  const pos=v=>Math.min(100,Math.max(1.5,v/r.human*100));
-  return `<div class="ov">
-    <div class="ov-h">整体评估<span class="ov-tag" style="color:${b[0]};background:${b[1]}">材料密度${b[2]}</span></div>
-
-    <div class="ov-k">材料密度 <b>${o.digit_density_per_1k}</b> 个数字/千字</div>
-    <div class="ov-bar">
-      <div class="ov-fill" style="width:${pos(o.digit_density_per_1k)}%;background:${b[0]}"></div>
-      <span class="ov-mk" style="left:${pos(r.ai)}%" title="AI 生成参照">AI ${r.ai}</span>
-      <span class="ov-mk" style="left:${pos(r.human)}%" title="人类论文参照">人类 ${r.human}</span>
-    </div>
-    <div class="ov-t">${esc(o.verdict)}
-      <span class="ov-src">参照来源：${esc(r.src)}</span></div>
-    ${o.reliable?'':`<div class="ov-warn">${esc(o.unreliable_note)}</div>`}
-
-    <div class="ov-k" style="margin-top:14px">句式特征 <b>${o.total_findings}</b> 处（${o.feature_per_1k}/千字）</div>
-    <div class="ov-sp">
-      <span class="hw code">自动修复 ${o.by_handling.code}</span>
-      <span class="hw llm">需要改写 ${o.by_handling.llm}</span>
-      <span class="hw report">只提示 ${o.by_handling.report}</span>
-    </div>
-    <div class="ov-warn">${esc(o.feature_caveat)}</div>
-    <div class="ov-warn" style="margin-top:8px">${esc(o.disclaimer)}</div>
-  </div>`;
-}
-
-// 整篇改写一篇论文要跑几分钟，同步等待只能干转圈，用户会以为卡死而反复刷新
-// ——每刷一次都重新烧一遍 token。改成提交任务 + 轮询进度。
-async function runRewrite(text, coverage, onProgress){
-  const {job}=await post('/api/rewrite',{text,n:3,coverage});
-  let idle=0;
-  for(;;){
-    await new Promise(r=>setTimeout(r,1500));
-    let st;
-    try{ st=await fetch('/api/job/'+job).then(r=>r.json()); }
-    catch(e){ if(++idle>8) throw new Error('与服务失去联系，改写任务可能仍在后台运行'); continue; }
-    idle=0;
-    if(st.error) throw new Error(st.error);
-    if(onProgress) onProgress(st);
-    if(st.state==='done') return st.result;
-    if(st.state==='error') throw new Error(st.error||'改写失败');
-  }
-}
-
-function progressText(st){
-  if(!st.total) return '规则层处理中…';
-  if(!st.done) return `已提交 ${st.total} 段，等待模型响应…（首段可能要一分钟）`;
-  const pct=Math.round(st.done/st.total*100);
-  const rate=st.done?st.elapsed/st.done:0;
-  const left=rate?Math.ceil(rate*(st.total-st.done)):0;
-  return `改写中 ${st.done}/${st.total} 段（${pct}%）`
-    +(left>3?` · 约剩 ${left>=60?Math.ceil(left/60)+' 分钟':left+' 秒'}`:'');
-}
-
-function docParagraphs(text){ return text.split(/\n\n+/); }
-
-// 把整篇的 findings 按段落归位。诊断返回的是全文偏移，
-// 这里换算成段内偏移，才能在每段里正确高亮。
-function byPara(text,findings){
-  const paras=docParagraphs(text), out=[]; let pos=0;
-  for(const p of paras){
-    const s=text.indexOf(p,pos), e=s+p.length;
-    out.push({text:p,start:s,findings:findings
-      .filter(f=>f.start>=s&&f.end<=e)
-      .map(f=>Object.assign({},f,{start:f.start-s,end:f.end-s}))});
-    pos=e;
-  }
-  return out;
-}
-
-function renderDoc(d){
-  $('#doccard').hidden=false;
-  $('#out').innerHTML='';
-  const m=DOC.meta, isPdf=DOC.kind==='pdf';
-  $('#dochead').textContent=DOC.name;
-  $('#docmeta').innerHTML=isPdf
-    ? `${m.n_pages} 页 · ${m.n_chars} 字 · 检出 <b>${d.findings.length}</b> 处 AI 特征`
-    : `${m.n_paragraphs} 段 · ${m.n_chars} 字 · 检出 <b>${d.findings.length}</b> 处 AI 特征`;
-  $('#dexp').hidden=isPdf;
-  $('#drw').disabled=!CFG.llm_configured;
-  renderNotices((DOC.notices||[]).concat(d.notices||[]),'#docnotices');
-
-  const paras=byPara(DOC.text,d.findings);
-  const flagged=paras.map((p,i)=>({p,i})).filter(x=>x.p.findings.length);
-  const ov=renderOverall(d.overall);
-  if(!flagged.length){
-    $('#docbody').innerHTML=ov+'<div class="clean">没有检出规则覆盖范围内的 AI 特征。'
-      +'这不等于检测器会给低分——规则只覆盖已知句式。</div>';
-    return;
-  }
-  $('#docbody').innerHTML=ov+
-    `<div class="note" style="border:0;padding:0;margin:14px 0 4px">
-       <b>改写前：哪里有 AI 特征</b> —— ${flagged.length} 段命中，共 ${d.findings.length} 处。
-       只列出命中的段落，其余 ${paras.length-flagged.length} 段没有问题。</div>`
-    + flagged.map(({p,i})=>{
-        const uniq=dedupe(p.findings);
-        return `<div class="pg"><div class="no">第 ${i+1} 段 · ${p.findings.length} 处</div>
-          <div class="tx">${highlight(p.text,p.findings)}</div>
-          ${uniq.map(whyCard).join('')}</div>`;
-      }).join('');
-}
-
-async function docRun(kind){
-  if(!DOC) return;
-  busy(true,kind==='fix'?'修复中':'改写中（可能要一两分钟）');
-  try{
-    const r=kind==='fix'
-      ? await post('/api/autofix',{text:DOC.text})
-      : await runRewrite(DOC.text, $('#cov').value,
-          st=>{ const b=$('#btn'); if(b) b.innerHTML=
-            `<span class="spin"></span> ${progressText(st)}`; });
-    const newText=kind==='fix'?r.fixed_text:r.text;
-    renderDocChanges(DOC.text,newText,r);
-    DOC.text=newText;
-  }catch(e){ showErr(e); }
-  finally{ busy(false); }
-}
-
-function renderDocChanges(oldText,newText,r){
-  const A=docParagraphs(oldText), B=docParagraphs(newText);
-  const b=r.before, a=r.after;
-  let h=`<div class="note" style="border:0;padding:0;margin:16px 0 4px">
-      <b>改写后：每一处是怎么改的</b></div>`;
-  if(b&&a){
-    h+=`<div class="stats">
-      <div class="stat"><div class="n">${b['检出特征总数']}→${a['检出特征总数']}</div><div class="l">特征总数</div></div>
-      <div class="stat"><div class="n hi">${b['高风险']}→${a['高风险']}</div><div class="l">高风险</div></div>
-      <div class="stat"><div class="n">${b['高风险段落']}→${a['高风险段落']}</div><div class="l">高危段</div></div>
-      <div class="stat"><div class="n">${b['硬约束违反']}→${a['硬约束违反']}</div><div class="l">硬约束</div></div>
-    </div>`;
-  }
-  if(A.length!==B.length){
-    h+=`<div class="notice warn">段落数从 ${A.length} 变成了 ${B.length}，`
-      +`无法逐段对照，也无法导出 docx。这是 bug，请把文档发我。</div>`;
-    $('#docbody').innerHTML=h; return;
-  }
-  const changed=A.map((t,i)=>({i,a:t,b:B[i]})).filter(x=>x.a!==x.b);
-  if(!changed.length){
-    h+='<div class="clean">没有任何改动。</div>';
-  }else{
-    h+=`<div class="note" style="border:0;padding:0;margin:0 0 4px">`
-      +`${changed.length} 段有改动，其余 ${A.length-changed.length} 段逐字未动。`
-      +`<span style="color:#8a2020">红色删除</span> / `
-      +`<span style="color:#1c5c26">绿色新增</span>。</div>`;
-    h+=changed.map(c=>`<div class="pg"><div class="no">第 ${c.i+1} 段</div>
-        <div class="tx">${diffHtml(c.a,c.b)}</div></div>`).join('');
-  }
-  if(r.log&&r.log.length){
-    h+=`<div class="note" style="margin-top:14px"><b>按规则统计</b></div>`
-      +r.log.map(l=>`<div class="lg"><span><span class="id" style="font:11.5px ui-monospace,monospace">${l.rule_id}</span> ${esc(l.name)}</span><span>${l.count} 处</span></div>`).join('');
-  }
-  h+=`<div class="note" style="margin-top:14px"><b>剩下的需要你来。</b>`
-    +`工具只能做减法和重组。真正把 AI 率降下去最有效的一步是<b>恢复具体性</b>`
-    +`——把「效果显著」换成「MAE 从 21.3 降到 19.8」。这类信息只能来自你本人。`
-    +(DOC.kind==='pdf'?`<br><br>PDF 无法导出，请回原始 Word 文件按上面的对照修改。`:'')
-    +`</div>`;
-  $('#docbody').innerHTML=h;
-}
-
-async function exportDocx(){
-  if(!DOC||DOC.kind!=='docx') return;
-  busy(true,'导出中');
-  try{
-    const r=await post('/api/docx/export',{file:DOC.b64,text:DOC.text});
-    const bin=atob(r.file), arr=new Uint8Array(bin.length);
-    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
-    const url=URL.createObjectURL(new Blob([arr],
-      {type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));
-    const a=document.createElement('a');
-    a.href=url; a.download=DOC.name.replace(/\.docx$/i,'')+'_已修改.docx';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),4000);
-  }catch(e){ showErr(e); }
-  finally{ busy(false); }
-}
-
-function closeDoc(){ DOC=null; $('#doccard').hidden=true; $('#docbody').innerHTML=''; $('#docnotices').innerHTML=''; }
-
-function showErr(e){
-  const net=e.message.startsWith('NET|');
-  const msg=net?e.message.slice(4):e.message;
-  $('#out').innerHTML=`<div class="warn" style="margin:0">
-      <b>${net?'连接失败':'处理失败'}</b>
-      <div style="margin-top:6px;white-space:pre-wrap">${msg.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')}</div>
-      ${net?'':'<div style="margin-top:8px;font-size:12px;opacity:.8">'
-        +'运行 server.py 的终端里会有完整报错，把它发我即可定位。</div>'}
-    </div>`;
-}
-
-function busy(on,label){
-  $('#btn').disabled=on||ONLINE===false;
-  $('#fix').disabled=on||!cur||ONLINE===false;
-  $('#rw').disabled=on||!CFG.llm_configured||ONLINE===false;
-  ['#dfix','#drw','#dexp','#dclose'].forEach(id=>{
-    const el=$(id); if(el) el.disabled=on||ONLINE===false;
-  });
-  if(!on&&$('#drw')) $('#drw').disabled=!CFG.llm_configured;
-  $('#btn').innerHTML=on?`<span class="spin"></span> ${label||'诊断中'}`:'诊断';
-}
-
-async function run(){
-  const t=inp.value.trim(); if(!t) return;
-  busy(true);
-  try{ cur=await post('/api/diagnose',{text:t}); curText=cur.text; render(cur,curText);
-       $('#cal').textContent=cur.calibrated?'权重：已标定':'权重：临时值（未经探测标定）';
-  }catch(e){ showErr(e); }
-  busy(false); $('#fix').disabled=!cur;
-}
-
-async function autofix(){
-  const t=inp.value.trim(); if(!t) return;
-  busy(true,'修复中');
-  try{
-    const r=await post('/api/autofix',{text:t});
-    renderFix(r);
-  }catch(e){ showErr(e); }
-  busy(false);
-}
-
-async function pipeline(){
-  const t=inp.value.trim(); if(!t) return;
-  busy(true,'两层处理中');
-  try{ renderPipe(await post('/api/rewrite',{text:t,n:3})); }
-  catch(e){ showErr(e); }
-  busy(false);
-}
-
-function renderPipe(r){
-  renderNotices(r.notices);
-  const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-  const stage=(n,s)=>`<tr><td>${n}</td><td>${s['检出特征总数']}</td>
-    <td>${s['高风险']}</td><td>${s['高风险段落']}</td><td>${s['硬约束违反']}</td></tr>`;
-  let h=`<div class="tabs"><div class="tab on">两层改写结果</div></div>
-    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:14px">
-      <thead><tr style="color:var(--muted);text-align:left">
-        <th style="padding:5px 0">阶段</th><th>特征</th><th>高风险</th><th>高危段</th><th>硬约束</th>
-      </tr></thead><tbody>
-      ${stage('原文',r.before)}${stage('① 代码修复',r.after_codefix)}
-      ${r.llm_used?stage('② LLM 改写',r.after):''}</tbody></table>`;
-
-  if(r.code_log.length){
-    h+=`<div class="note" style="border:0;margin:0 0 8px;padding:0"><b>① 代码修复</b>（毫秒级，不经模型）</div>`;
-    h+=r.code_log.map(l=>`<div class="lg"><span><span class="id">${l.rule_id}</span> ${l.name}
-      <span class="tag">${l.lang==='en'?'EN':'中'}</span></span><span>${l.count} 处</span></div>`).join('');
-  }
-
-  if(r.llm_used&&r.llm){
-    const L=r.llm;
-    h+=`<div class="note" style="border:0;margin:16px 0 8px;padding:0">
-      <b>② LLM 改写</b> · 定向 ${L.n_targeted} 段，采纳 ${L.n_accepted} 段，
-      未触碰 ${L.untouched} 段</div>`;
-    L.paragraphs.forEach(p=>{
-      h+=`<div class="f ${p.accepted?'low':'medium'}">
-        <div class="t"><span class="id">第${p.index+1}段</span>
-          <span class="tag">${p.lang==='en'?'EN':'中'}</span>
-          ${p.targets.join(' ')}
-          <span style="margin-left:auto;color:var(--${p.accepted?'lo':'md'})">
-            ${p.accepted?'已采纳':'已拒绝，保留原文'}</span></div>
-        <div class="e" style="margin-top:4px">${esc(p.reason)}</div>`;
-      if(p.accepted){
-        h+=`<div class="m" style="margin-top:7px"><s style="opacity:.55">${esc(p.original)}</s>
-          <div style="margin-top:6px">${esc(p.rewritten)}</div></div>`;
-      }
-      if(p.candidates&&p.candidates.length>1){
-        h+=`<div class="e" style="margin-top:5px">候选 ${p.candidates.length} 个：`
-          +p.candidates.map((c,i)=>`#${i+1} ${c.ok?('得分 '+c.score):'作废'}`).join(' · ')+'</div>';
-      }
-      h+=`</div>`;
-    });
-  }
-
-  h+=`<div class="note" style="margin-top:14px"><b>最终文本</b>（已写回左侧输入框）</div>
-      <div class="diffbox">${esc(r.text)}</div>
-      <div class="note"><b>两层都做完了，剩下的只能靠你。</b>
-      代码层做减法，LLM 层重写结构，但都不会凭空造事实——
-      模型只要多出一个原文没有的数字或文献，候选会被直接判废。
-      真正把 AI 率压到底的那一步是<b>恢复具体性</b>：把「效果显著」换成
-      「MAE 从 21.3 降到 19.8」。这个数字只有你知道。</div>`;
-  $('#out').innerHTML=h;
-  inp.value=r.text; inp.dispatchEvent(new Event('input'));
-  cur=r.after_full; curText=r.text;
-}
-
-// 逐字符收集覆盖该位置的发现，再合并成连续区间——这样重叠命中也能正确渲染
-function highlight(text,findings){
-  const N=text.length, cover=Array.from({length:N},()=>[]);
-  findings.forEach((f,i)=>{ for(let p=Math.max(0,f.start);p<Math.min(N,f.end);p++) cover[p].push(i); });
-  const SEV={high:3,medium:2,low:1};
-  let html='',run=null;
-  const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-  const flush=()=>{ if(!run) return;
-    const txt=esc(text.slice(run.s,run.e));
-    if(!run.ids.length){ html+=txt; }
-    else{ const sev=run.ids.map(i=>findings[i].severity)
-            .sort((a,b)=>SEV[b]-SEV[a])[0];
-          html+=`<mark class="s-${sev}" data-f="${run.ids.join(',')}">${txt}</mark>`; }
-    run=null; };
-  for(let p=0;p<N;p++){
-    const key=cover[p].join(',');
-    if(run && run.key===key){ run.e=p+1; } else { flush(); run={s:p,e:p+1,key,ids:cover[p]}; }
-  }
-  flush(); return html;
-}
-
-function fcard(f){ return whyCard(f); }
-
-function render(r,text){
-  renderNotices(r.notices);
-  const s=r.summary, mz=r.metrics, me=r.metrics_en;
-  const lang=s['语言构成'];
-  let h=`<div class="tabs">
-      <div class="tab on" data-t="doc">全文标注</div>
-      <div class="tab" data-t="list">全部发现 (${r.findings.length})</div>
-      <div class="tab" data-t="stat">统计指标</div></div>`;
-
-  h+=`<div class="stats">
-    <div class="stat"><div class="n">${s['总字数']}</div><div class="l">字数</div></div>
-    <div class="stat"><div class="n">${s['段落数']}</div><div class="l">段落</div></div>
-    <div class="stat"><div class="n hi">${s['高风险']}</div><div class="l">高风险</div></div>
-    <div class="stat"><div class="n md">${s['中风险']}</div><div class="l">中风险</div></div>
-    <div class="stat"><div class="n">${s['高风险段落']}</div><div class="l">高危段</div></div>
-    <div class="stat"><div class="n">${lang['中文段']}/${lang['英文段']}</div><div class="l">中/英段</div></div>
-  </div>`;
-
-  if(r.hard_limit_violations.length){
-    h+=`<div class="warn"><b>硬约束违反 ${r.hard_limit_violations.length} 项</b>
-      <ul>${r.hard_limit_violations.map(v=>
-        `<li>${v.para?('第'+v.para+'段'):'全文'}：${v.desc}（实际 ${v.actual}，上限 ${v.limit}）</li>`
-      ).join('')}</ul></div>`;
-  }
-
-  h+=renderOverall(r.overall);
-  h+=`<div id="pane-doc"><div id="doc">${highlight(text,r.findings)}</div>
-      <div class="note" id="detail">点击带下划线的文字，看它为什么被标记。</div></div>`;
-
-  h+=`<div id="pane-list" hidden>${
-    r.findings.length?r.findings.map(fcard).join(''):'<div class="empty">没有检出特征。</div>'}</div>`;
-
-  const f=(v)=>v===undefined||v===null?'—':v;
-  h+=`<div id="pane-stat" hidden><div class="mt">`;
-  if(lang['中文段']){
-    h+=`<b>中文部分</b><br>
-      句长均值 <b>${f(mz.sent_len_mean)}</b> · 变异系数 <b>${f(mz.sent_len_cv)}</b>
-      （人类通常 >0.25）<br>
-      具体性：数字密度 <b>${f(mz.digit_density)}</b>/百字 · 专名密度 <b>${f(mz.proper_density)}</b>/百字<br>
-      实词密度 ${f(mz.content_ratio)} · TTR ${f(mz.ttr)} · 4-gram 重复 ${f(mz.ngram_repeat)}<br><br>`;
-  }
-  if(me){
-    h+=`<b>English</b><br>
-      Sentence length <b>${f(me.sent_len_mean)}</b> words · CV <b>${f(me.sent_len_cv)}</b><br>
-      Passive voice <b>${f(me.passive_ratio)}</b> (human &lt;0.30) ·
-      Hedging <b>${f(me.hedge_density)}</b> (human &lt;0.03)<br>
-      TTR <b>${f(me.ttr)}</b> · Transitions ${f(me.transition_density)} ·
-      Digits ${f(me.digit_density)}/100w<br><br>`;
-  }
-  h+=`</div><div class="note">
-    <b>关于阈值。</b>规则层（上面的逐条命中）可直接核对原文，结论可证伪。
-    统计层的阈值抄自公开资料且无出处，因此默认<b>只记录不告警</b>——
-    在黑盒探测标定之前，拿未验证的阈值给你一个百分比，和编造没有区别。
-    目前只有「数字密度」经过对照实验初步验证。</div></div>`;
-
-  h+=`<div class="note"><b>段落一览</b>${r.paragraphs.map(p=>
-    `<div class="para" data-p="${p.index}">
-       <span class="dot ${p.level}"></span>
-       <span class="tag">${p.lang==='en'?'EN':'中'}</span>
-       <span class="p">第${p.index+1}段 · ${p.preview}…</span>
-       <span class="tag">${p.raw_score} 类</span></div>`).join('')}</div>`;
-
-  $('#out').innerHTML=h;
-  wire(r,text);
-}
-
-function wire(r,text){
-  $('#out').querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
-    $('#out').querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
-    ['doc','list','stat'].forEach(n=>$('#pane-'+n).hidden=(n!==t.dataset.t));
-  });
-  $('#doc').querySelectorAll('mark').forEach(m=>m.onclick=()=>{
-    $('#doc').querySelectorAll('mark').forEach(x=>x.classList.remove('sel'));
-    m.classList.add('sel');
-    const ids=m.dataset.f.split(',').map(Number);
-    $('#detail').innerHTML=ids.map(i=>fcard(r.findings[i])).join('');
-  });
-  $('#out').querySelectorAll('.para').forEach(p=>p.onclick=()=>{
-    const i=+p.dataset.p;
-    const first=r.findings.find(f=>f.para_index===i);
-    if(!first) return;
-    $('#out').querySelector('.tab[data-t="doc"]').click();
-    const mk=[...$('#doc').querySelectorAll('mark')]
-      .find(m=>m.dataset.f.split(',').map(Number).includes(r.findings.indexOf(first)));
-    if(mk){ mk.scrollIntoView({block:'center',behavior:'smooth'}); mk.click(); }
-  });
-}
-
-function renderFix(r){
-  renderNotices(r.notices);
-  const b=r.before,a=r.after;
-  const d=(k)=>`${b[k]} → <b>${a[k]}</b>`;
-  let h=`<div class="tabs"><div class="tab on">确定性修复结果</div></div>
-    <div class="stats">
-      <div class="stat"><div class="n">${b['检出特征总数']}→${a['检出特征总数']}</div><div class="l">特征总数</div></div>
-      <div class="stat"><div class="n hi">${b['高风险']}→${a['高风险']}</div><div class="l">高风险</div></div>
-      <div class="stat"><div class="n">${b['高风险段落']}→${a['高风险段落']}</div><div class="l">高危段</div></div>
-      <div class="stat"><div class="n">${b['硬约束违反']}→${a['硬约束违反']}</div><div class="l">硬约束</div></div>
-    </div>
-    <div class="note" style="border:0;margin:0 0 12px;padding:0"><b>改动明细</b></div>`;
-  h+=r.log.map(l=>`<div class="lg"><span><span class="id" style="font:11.5px ui-monospace,monospace">${l.rule_id}</span> ${l.name}</span><span>${l.count} 处</span></div>`).join('');
-  h+=`<div class="note" style="margin-top:14px"><b>修复后文本</b>（已复制到左侧输入框，可再次诊断）</div>
-      <div class="diffbox">${r.fixed_text.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</div>
-      <div class="note"><b>剩下的需要你来。</b>确定性修复只能做减法。
-      真正把 AI 率降下去最有效的一步是<b>恢复具体性</b>——把「效果显著」换成
-      「MAE 从 21.3 降到 19.8」。这类信息只能来自你本人，工具不应当替你编造。</div>`;
-  $('#out').innerHTML=h;
-  inp.value=r.fixed_text; inp.dispatchEvent(new Event('input'));
-  cur=r.after_full; curText=r.fixed_text;
-}
-</script></body></html>
+    *{box-sizing:border-box}
+    [hidden]{display:none!important}
+    html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
+    button,input,textarea,select{font:inherit}button{cursor:pointer}
+    .app{min-height:100vh;display:grid;grid-template-columns:var(--sidebar) minmax(0,1fr)}
+    .sidebar{position:sticky;top:0;height:100vh;background:#191c25;color:#fff;padding:22px 14px 16px;display:flex;flex-direction:column;z-index:20}
+    .brand{display:flex;align-items:center;gap:11px;padding:0 9px 24px}.mark{width:34px;height:34px;border-radius:11px;background:linear-gradient(145deg,#8896ff,#5265df 62%,#3c4fca);display:grid;place-items:center;box-shadow:0 7px 20px rgba(80,100,220,.32);font-weight:800}.brand b{display:block;font-size:15px;letter-spacing:.02em}.brand small{display:block;color:#9da5b5;font-size:11px;margin-top:2px}
+    .nav-label{padding:5px 12px 8px;color:#7e8698;font-size:10px;font-weight:700;letter-spacing:.11em;text-transform:uppercase}.nav{display:grid;gap:5px}.nav button{border:0;background:transparent;color:#aeb5c3;border-radius:10px;min-height:42px;display:flex;align-items:center;gap:11px;padding:0 12px;text-align:left;font-size:13px}.nav button.active{background:#292e3c;color:#fff}.nav button:not(.active):hover{background:#222632;color:#d7dbe3}.nav svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8}.soon{margin-left:auto;color:#71798b;font-size:10px;border:1px solid #3b4050;border-radius:10px;padding:2px 6px}.side-spacer{flex:1}
+    .privacy{margin:14px 5px 4px;padding:13px;border:1px solid #303544;background:#20242f;border-radius:12px;color:#aeb5c3;font-size:11px;line-height:1.6}.privacy b{display:flex;align-items:center;gap:6px;color:#e7eaf0;font-size:12px;margin-bottom:3px}
+    .main{min-width:0;display:flex;flex-direction:column;min-height:100vh}.topbar{height:64px;background:rgba(255,255,255,.9);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 28px;gap:10px;position:sticky;top:0;z-index:12}.crumb{font-size:13px;color:var(--muted)}.crumb b{color:var(--ink);font-weight:650}.top-spacer{flex:1}.status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;margin-right:4px}.dot{width:7px;height:7px;background:#b7bdc8;border-radius:50%}.dot.ok{background:#25a675;box-shadow:0 0 0 4px rgba(37,166,117,.09)}.dot.bad{background:#d85850}.top-btn{height:34px;border:1px solid var(--line);background:#fff;color:#4d5562;border-radius:9px;padding:0 12px;font-size:12px;white-space:nowrap}.top-btn:hover{border-color:var(--line-2);background:#fafafa}.credit-btn{color:#3f4fb0;background:#f5f6ff;border-color:#dfe2fb;font-weight:650}.credit-btn:hover{background:#eff1ff;border-color:#cbd1f6}.upgrade-btn{color:#fff;background:var(--accent);border-color:var(--accent);font-weight:650}.upgrade-btn:hover{color:#fff;background:#4357ca;border-color:#4357ca}
+    .content{padding:24px 28px 30px;max-width:1580px;width:100%;margin:0 auto}.headline{display:flex;align-items:flex-end;gap:18px;margin-bottom:18px}.headline h1{font-size:22px;letter-spacing:-.02em;margin:0 0 5px}.headline p{font-size:12px;color:var(--muted);margin:0}.engine{margin-left:auto;color:#7b8290;font-size:11px;white-space:nowrap}
+    .workspace{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(340px,.78fr);gap:18px;align-items:stretch;min-height:calc(100vh - 146px)}.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);min-width:0}.editor-card{display:flex;flex-direction:column;overflow:hidden;min-height:660px}.editor-head{height:58px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 17px;gap:12px}.file-title{font-size:13px;font-weight:650;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}.file-kind{font-size:10px;color:#8b919c;background:#f2f3f5;border:1px solid #e7e8eb;border-radius:5px;padding:2px 6px}
+    .view-tabs{margin-left:auto;background:#f1f2f5;border-radius:9px;padding:3px;display:flex;gap:2px}.view-tabs button{border:0;background:transparent;color:#747b88;border-radius:7px;padding:6px 11px;font-size:11px}.view-tabs button.active{background:#fff;color:#252934;box-shadow:0 1px 4px rgba(20,25,35,.09)}
+    .editor-wrap{flex:1;position:relative;display:flex;min-height:470px}textarea{border:0;outline:0;resize:none;width:100%;min-height:100%;padding:27px 31px 60px;font:14px/1.95 ui-serif,"Songti SC","STSong",serif;color:#282b32;background:#fff;letter-spacing:.015em}textarea::placeholder{color:#a9adb5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;line-height:1.8}.diff-view{display:none;width:100%;padding:23px 28px 70px;overflow:auto;background:#fff;font:13px/1.9 ui-serif,"Songti SC","STSong",serif;white-space:pre-wrap}.diff-view .del{background:#ffe6e2;color:#8d2c24;text-decoration:line-through;border-radius:3px;padding:1px 2px}.diff-view .ins{background:#ddf4e8;color:#116945;border-radius:3px;padding:1px 2px}.empty-diff{height:100%;display:grid;place-items:center;color:#9aa0aa;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;font-size:12px}.editor-meta{position:absolute;bottom:16px;right:22px;background:rgba(255,255,255,.9);color:#9096a1;font-size:10px;padding:4px 8px;border-radius:6px;pointer-events:none}
+    .notices{padding:0 18px}.notice{font-size:11px;line-height:1.55;border-radius:9px;padding:9px 11px;margin:9px 0 0;background:var(--blue-bg);color:var(--blue)}.notice.warn{background:var(--amber-bg);color:var(--amber)}.editor-foot{min-height:66px;border-top:1px solid var(--line);display:flex;align-items:center;padding:12px 16px;gap:8px;flex-wrap:wrap}.btn{height:38px;border:1px solid var(--line-2);background:#fff;color:#3f4651;border-radius:9px;padding:0 13px;font-size:12px;display:inline-flex;align-items:center;justify-content:center;gap:7px;transition:.15s}.btn:hover:not(:disabled){background:#f8f8fa;border-color:#c8ccd5}.btn:disabled{opacity:.42;cursor:not-allowed}.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:650}.btn.primary:hover:not(:disabled){background:#4357ca;border-color:#4357ca}.btn.ghost{border-color:transparent;background:transparent;color:#6d7480;padding:0 9px}.btn svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8}.file-input{display:none}.foot-spacer{flex:1}.count{color:#8b919c;font-size:11px;min-width:64px;text-align:right}
+    .inspector{display:flex;flex-direction:column;overflow:hidden;min-height:660px;max-height:calc(100vh - 147px);position:sticky;top:82px}.inspector-empty{flex:1;display:grid;place-items:center;padding:44px;text-align:center;color:#8c929d}.empty-icon{width:54px;height:54px;border:1px solid #e2e4e9;background:#f8f9fb;border-radius:18px;display:grid;place-items:center;margin:0 auto 16px;color:#7d87c8}.inspector-empty h3{font-size:14px;color:#454b56;margin:0 0 7px}.inspector-empty p{font-size:11px;line-height:1.65;margin:0;max-width:245px}.results{display:none;min-height:0;flex:1;flex-direction:column}.summary{padding:18px 18px 14px;border-bottom:1px solid var(--line)}.summary-top{display:flex;align-items:flex-start;gap:12px}.state-orb{width:42px;height:42px;flex:0 0 42px;border-radius:14px;display:grid;place-items:center;font-size:17px;font-weight:750}.state-orb.clear{background:var(--green-bg);color:var(--green)}.state-orb.review{background:var(--amber-bg);color:var(--amber)}.state-orb.needs_work{background:var(--red-bg);color:var(--red)}.summary h3{font-size:13px;margin:2px 0 4px}.summary .sub{font-size:10px;color:#858c97;line-height:1.5}.mini-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:14px}.mini{background:#f7f8fa;border:1px solid #edeef1;border-radius:9px;padding:9px 10px}.mini b{font-size:15px;display:block;margin-bottom:2px}.mini span{font-size:9px;color:#8a909b}
+    .result-tabs{height:47px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid var(--line);gap:19px}.result-tabs button{height:47px;border:0;border-bottom:2px solid transparent;background:transparent;color:#7e8590;font-size:11px;padding:0 1px}.result-tabs button.active{color:#323743;border-bottom-color:var(--accent);font-weight:650}.badge{font-size:9px;background:#eef0f4;color:#747c89;border-radius:10px;padding:2px 6px;margin-left:4px}.result-body{flex:1;overflow:auto;padding:12px 13px 20px;min-height:0}.issue{border:1px solid #e8e9ed;border-radius:11px;padding:12px 12px 11px;margin-bottom:9px;cursor:pointer;transition:.14s;background:#fff}.issue:hover{border-color:#cdd2ea;box-shadow:0 4px 13px rgba(53,62,105,.06)}.issue-top{display:flex;align-items:center;gap:7px;margin-bottom:8px}.pid{font-size:9px;font-weight:750;letter-spacing:.04em;color:#fff;background:#8a91a0;border-radius:5px;padding:3px 5px}.pid.high{background:var(--red)}.pid.medium{background:var(--amber)}.issue-name{font-size:11px;font-weight:650}.mode{margin-left:auto;font-size:9px;border-radius:8px;padding:3px 6px}.mode.safe{color:var(--green);background:var(--green-bg)}.mode.rewrite{color:var(--accent);background:var(--accent-2)}.mode.review{color:#69717e;background:#f0f2f4}.quote{font:12px/1.55 ui-serif,"Songti SC","STSong",serif;color:#4c515b;background:#f7f8fa;border-left:2px solid #c9cdd7;border-radius:0 6px 6px 0;padding:7px 9px;margin-bottom:7px;white-space:normal;overflow-wrap:anywhere}.issue p{font-size:10px;color:#777e89;line-height:1.55;margin:0}.issue p strong{color:#4b5260}.category{font-size:10px;color:#888f9b;margin:13px 3px 7px;display:flex;align-items:center;gap:7px}.category:after{content:"";height:1px;background:#eceef2;flex:1}.anchors{display:none}.anchor-note{font-size:10px;color:#757c88;line-height:1.6;background:#f6f7fa;border-radius:10px;padding:10px 11px;margin-bottom:12px}.anchor-group{margin-bottom:14px}.anchor-group h4{font-size:10px;color:#777e8a;margin:0 0 7px}.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{font-size:10px;color:#484f5d;background:#f5f6f8;border:1px solid #e5e7eb;border-radius:7px;padding:5px 7px}.chip.empty{color:#a0a5ad;font-style:italic}.guard-box{border:1px solid #cde7dc;background:#f2fbf7;color:#356956;border-radius:11px;padding:11px;margin-bottom:11px;font-size:10px;line-height:1.6}.guard-box.warn{border-color:#ead6ac;background:#fff9ed;color:#8c611e}.guard-box b{display:block;font-size:11px;margin-bottom:2px}
+    .actionbar{padding:13px;border-top:1px solid var(--line);background:#fbfbfc}.strength-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin-bottom:9px}.strength{border:1px solid #e1e3e8;background:#fff;color:#6f7682;border-radius:8px;height:31px;font-size:10px}.strength.active{border-color:#aeb8f5;background:#f2f3ff;color:#4053c2;font-weight:650}.action-grid{display:grid;grid-template-columns:.8fr 1.2fr;gap:7px}.action-grid .btn{width:100%}.fineprint{font-size:9px;color:#9298a1;line-height:1.45;margin-top:8px;text-align:center}
+    .progress{display:none;position:fixed;inset:0;background:rgba(22,25,32,.28);backdrop-filter:blur(3px);z-index:50;place-items:center}.progress-box{width:min(390px,calc(100vw - 34px));background:#fff;border-radius:17px;padding:23px;box-shadow:0 24px 70px rgba(18,22,32,.22)}.progress-box h3{font-size:14px;margin:0 0 6px}.progress-box p{font-size:11px;color:#747b86;margin:0 0 17px}.bar{height:6px;background:#eceef3;border-radius:6px;overflow:hidden}.bar i{display:block;width:8%;height:100%;background:linear-gradient(90deg,#6679e8,#4c60d6);border-radius:6px;transition:width .3s}.progress-meta{font-size:10px;color:#8a909a;margin-top:8px;display:flex}.progress-meta span:last-child{margin-left:auto}
+    .modal{display:none;position:fixed;inset:0;background:rgba(22,25,32,.35);z-index:60;place-items:center;padding:20px}.modal-card{width:min(510px,100%);background:#fff;border-radius:17px;box-shadow:0 24px 70px rgba(18,22,32,.25);overflow:hidden}.modal-card.pricing{width:min(920px,100%);max-height:calc(100vh - 40px);overflow:auto}.modal-head{height:56px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;position:sticky;top:0;background:#fff;z-index:2}.modal-head h3{font-size:14px;margin:0}.close{margin-left:auto;border:0;background:transparent;font-size:21px;color:#8a909a}.modal-body{padding:20px}.modal-body p{font-size:11px;color:#68707d;line-height:1.65;margin:0 0 12px}.code{background:#20232c;color:#dfe4f2;border-radius:10px;padding:13px 14px;font:11px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow:auto}.model-state{display:flex;align-items:center;gap:9px;padding:11px 12px;background:#f6f7f9;border-radius:10px;margin-bottom:13px;font-size:11px}.model-state b{font-weight:650}.billing-summary{display:flex;align-items:center;gap:14px;border:1px solid #dfe3f5;background:#f7f8ff;border-radius:12px;padding:13px 15px;margin-bottom:12px}.billing-summary strong{font-size:19px;color:#3548b3}.billing-summary span{display:block;color:#717888;font-size:10px;margin-top:2px}.billing-summary .summary-plan{margin-left:auto;text-align:right;font-size:11px;color:#535b69}.billing-note{background:var(--amber-bg);color:#85580f;border:1px solid #f0ddb7;border-radius:10px;padding:10px 12px;font-size:11px;line-height:1.55;margin-bottom:15px}.plan-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.plan-card{border:1px solid #e3e5eb;border-radius:12px;padding:14px;display:flex;flex-direction:column;min-height:196px;background:#fff;position:relative}.plan-card.current{border-color:#aeb8f5;box-shadow:0 0 0 2px #f0f2ff}.plan-card h4{font-size:13px;margin:0 0 4px}.plan-kind{font-size:9px;color:#777f8d;background:#f1f3f6;border-radius:8px;padding:3px 6px;position:absolute;top:13px;right:12px}.plan-price{font-size:23px;font-weight:750;margin:11px 0 1px;letter-spacing:-.03em}.plan-price small{font-size:10px;font-weight:500;color:#858c97;margin-left:3px}.plan-credit{font-size:11px;color:#515967;margin-bottom:7px}.plan-desc{font-size:10px;color:#7d8490;line-height:1.55;flex:1;margin-bottom:12px}.plan-card .btn{width:100%;height:34px}.plan-card .btn.current-plan{background:#f5f6f8;color:#777f8c}.toast{position:fixed;right:24px;bottom:24px;z-index:80;background:#252933;color:#fff;border-radius:10px;padding:11px 14px;font-size:11px;box-shadow:0 12px 35px rgba(20,24,32,.25);opacity:0;transform:translateY(8px);pointer-events:none;transition:.2s}.toast.show{opacity:1;transform:none}
+    @media(max-width:1000px){:root{--sidebar:74px}.brand{justify-content:center;padding-left:0;padding-right:0}.brand>div,.nav-label,.nav button span:not(.soon),.privacy{display:none}.nav button{justify-content:center;padding:0}.soon{display:none}.workspace{grid-template-columns:1fr}.inspector{position:relative;top:auto;max-height:none;min-height:530px}.content{padding:20px}.topbar{padding:0 20px}.plan-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:680px){.app{display:block}.sidebar{display:none}.content{padding:15px}.topbar{padding:0 15px;height:57px}.crumb,.status,#configBtn{display:none}.headline{align-items:flex-start;flex-direction:column;gap:5px}.engine{margin-left:0}.workspace{min-height:auto}.editor-card{min-height:590px}.editor-head{padding:0 12px}.file-title{max-width:160px}.view-tabs button{padding:6px 8px}.editor-foot{padding:10px}.btn{padding:0 10px}.inspector{min-height:520px}.count{display:none}.plan-grid{grid-template-columns:1fr}.billing-summary{align-items:flex-start}.modal-body{padding:15px}}
+  </style>
+  <style id="interaction-v2">
+    /* Interaction V2: the workflow and state are more important than decoration. */
+    button:focus-visible,[role="button"]:focus-visible,textarea:focus-visible{outline:3px solid rgba(79,99,216,.28);outline-offset:2px}
+    textarea:focus-visible{box-shadow:inset 0 0 0 2px var(--accent);outline:0}
+    .mobile-brand,.mobile-settings,.mobile-pane-tabs{display:none}
+    .workflow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;margin:0 0 16px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:8px;box-shadow:0 1px 2px rgba(25,30,40,.03)}
+    .flow-step{position:relative;display:grid;grid-template-columns:30px minmax(0,1fr);grid-template-rows:auto auto;column-gap:9px;padding:8px 14px;color:#717986;border-radius:10px;min-width:0}
+    .flow-step:not(:last-child):after{content:"";position:absolute;right:-1px;top:15px;width:1px;height:28px;background:#e8eaf0}
+    .flow-step>span{grid-row:1/3;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#f0f2f5;color:#737b88;font-size:12px;font-weight:750}
+    .flow-step b{font-size:12px;color:#59616f;align-self:end}.flow-step small{font-size:10px;margin-top:2px;color:#818894;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .flow-step.active{background:#f5f6ff}.flow-step.active>span{background:var(--accent);color:#fff;box-shadow:0 5px 14px rgba(79,99,216,.24)}.flow-step.active b{color:#3447b8}.flow-step.done>span{background:var(--green-bg);color:var(--green)}
+    .inline-status{display:flex;align-items:flex-start;gap:9px;padding:11px 13px;margin:0 0 14px;border:1px solid #d9e4f2;background:#f3f8fd;color:#355c7b;border-radius:11px;font-size:12px;line-height:1.55}
+    .inline-status.error{border-color:#f0c8c3;background:var(--red-bg);color:#8e342e}.inline-status.warn{border-color:#ead6ac;background:var(--amber-bg);color:#80540f}.inline-status.success{border-color:#c6e5d7;background:var(--green-bg);color:#176447}
+    .inline-status .status-copy{flex:1}.inline-status button{border:0;background:transparent;color:inherit;padding:0 2px;font-weight:700}
+    .document-state{font-size:10px;color:#69717e;background:#f2f4f7;border:1px solid #e5e7eb;border-radius:20px;padding:4px 8px}.document-state.ready{color:var(--green);background:var(--green-bg);border-color:#cce7db}.document-state.changed{color:var(--accent);background:var(--accent-2);border-color:#dce0fb}
+    .view-tabs[role="tablist"] button{min-height:32px}.view-tabs button[aria-selected="true"]{background:#fff;color:#252934;box-shadow:0 1px 4px rgba(20,25,35,.09)}
+    .editor-wrap.is-empty textarea{opacity:0;pointer-events:none}.editor-wrap.is-empty .editor-meta{display:none}
+    .empty-guide{position:absolute;inset:0;z-index:2;display:grid;place-items:center;padding:30px;background:linear-gradient(180deg,#fff 0%,#fbfbfd 100%)}
+    .empty-guide[hidden]{display:none}.empty-guide-inner{text-align:center;max-width:570px;width:100%}.empty-guide-icon{width:58px;height:58px;margin:0 auto 16px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(145deg,#f0f2ff,#e6eaff);color:#4054c6;font-size:23px;font-weight:800;box-shadow:inset 0 0 0 1px #dce0fb}
+    .empty-guide h2{font-size:20px;margin:0 0 8px;letter-spacing:-.02em}.empty-guide p{margin:0 auto 19px;max-width:440px;color:var(--muted);font-size:12px;line-height:1.7}.empty-actions{display:flex;justify-content:center;gap:9px;flex-wrap:wrap}.empty-actions .btn{height:44px;padding:0 18px}.empty-sample{margin-top:13px;border:0;background:transparent;color:#5868c8;font-size:12px;padding:7px 10px}.empty-meta{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-top:17px;color:#6c7480;font-size:11px}.empty-meta span:before{content:"\2713";color:var(--green);font-weight:800;margin-right:5px}.editor-wrap.dragging .empty-guide,.editor-wrap.dragging textarea{opacity:1;background:#f5f7ff}.editor-wrap.dragging{box-shadow:inset 0 0 0 2px var(--accent)}
+    .inspector-empty{padding:32px}.inspector-empty .empty-steps{display:grid;gap:10px;margin-top:20px;text-align:left}.inspector-empty .empty-step{display:grid;grid-template-columns:28px 1fr;gap:9px;align-items:center;padding:10px 11px;border:1px solid #eceef2;border-radius:10px;background:#fafbfc;color:#626b78;font-size:11px;line-height:1.45}.inspector-empty .empty-step i{width:28px;height:28px;border-radius:9px;background:#eef0ff;color:#485bc9;display:grid;place-items:center;font-style:normal;font-weight:750}
+    .loading-orb{animation:pulse 1.3s ease-in-out infinite}.skeleton{height:10px;border-radius:6px;background:linear-gradient(90deg,#eceef2 25%,#f7f8fa 50%,#eceef2 75%);background-size:200% 100%;animation:shimmer 1.4s infinite}.skeleton+.skeleton{margin-top:9px}.skeleton.short{width:68%}
+    @keyframes pulse{50%{transform:scale(.94);opacity:.65}}@keyframes shimmer{to{background-position:-200% 0}}
+    .issue-filters{display:flex;gap:6px;padding:10px 13px 0;overflow:auto}.issue-filter{flex:0 0 auto;border:1px solid #e2e5eb;background:#fff;color:#606977;border-radius:18px;min-height:30px;padding:0 10px;font-size:11px}.issue-filter.active{border-color:#bdc5f5;background:#f1f3ff;color:#3e52bd;font-weight:650}
+    .issue{display:block;width:100%;text-align:left;font-family:inherit}.issue.active{border-color:#9eaaee;box-shadow:0 0 0 2px #eef0ff;background:#fcfcff}.issue:focus-visible{outline:3px solid rgba(79,99,216,.24)}
+    .issue p,.category,.anchor-note,.anchor-group h4,.chip,.guard-box,.fineprint,.summary .sub,.mini span,.mode,.plan-desc,.billing-note,.model-state,.modal-body p{font-size:11px;color:#68707d}.pid{font-size:10px}.issue-name{font-size:12px}.result-tabs button{font-size:12px}.badge{font-size:10px}
+    .cost-preview{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 10px;margin:0 0 9px;border:1px solid #e5e7ee;background:#fff;border-radius:9px;color:#626b78;font-size:11px;line-height:1.4}.cost-preview strong{color:#2e3540;font-size:12px}.cost-preview .cost-balance{text-align:right}
+    .strength{height:38px;font-size:11px;position:relative}.strength.locked{border-style:dashed;color:#737b88;background:#f7f8fa}.strength.locked:after{content:"\1f512";font-size:9px;margin-left:3px}.strength[aria-pressed="true"]{border-color:#aeb8f5;background:#f2f3ff;color:#4053c2;font-weight:650}.action-hint{min-height:16px;margin-top:7px;text-align:center;color:#68707d;font-size:10px}.action-grid .btn{height:42px}.rewrite-success{margin:0 0 10px;padding:10px 11px;border:1px solid #cce7db;background:var(--green-bg);border-radius:9px;color:#266650;font-size:11px;line-height:1.5}
+    .confirm-summary{display:grid;grid-template-columns:repeat(2,1fr);gap:9px;margin:5px 0 13px}.confirm-item{padding:11px 12px;background:#f6f7fa;border:1px solid #e8eaf0;border-radius:10px}.confirm-item span{display:block;color:#68707d;font-size:10px;margin-bottom:3px}.confirm-item b{font-size:14px}.confirm-note{padding:10px 11px;border-radius:9px;background:var(--green-bg);color:#286650;font-size:11px;line-height:1.55}.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.modal-actions .btn{height:42px}
+    .close{width:44px;height:44px;display:grid;place-items:center;border-radius:10px}.close:hover{background:#f1f2f5;color:#343b47}.toast{font-size:12px;max-width:min(430px,calc(100vw - 32px));line-height:1.45}.progress-box p,.progress-meta{font-size:11px;color:#68707d}.progress-note{margin-top:13px;padding:9px 10px;background:#f6f7fa;border-radius:8px;color:#606977;font-size:10px;line-height:1.5}
+    .mobile-pane-tabs{background:#fff;border:1px solid var(--line);padding:4px;border-radius:11px;margin-bottom:10px}.mobile-pane-tabs button{flex:1;border:0;background:transparent;height:40px;border-radius:8px;color:#65707d;font-size:12px}.mobile-pane-tabs button.active{background:#eef0ff;color:#4053c2;font-weight:700}
+    .trial-user{display:flex;align-items:center;gap:9px;padding-left:4px}.trial-user-copy{min-width:0;line-height:1.15;text-align:right}.trial-user-copy b{display:block;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#303744}.trial-user-copy small{font-size:9px;color:#818895}
+    body.trial-mode #upgradeBtn,body.trial-mode #configBtn,body.trial-mode #mobileSettingsBtn,body.trial-mode #settings{display:none!important}
+    .open-access-note{display:flex;align-items:flex-start;gap:10px;margin:0 0 14px;padding:11px 13px;border:1px solid #ead6ac;border-radius:11px;background:#fff9ed;color:#704b13;font-size:11px;line-height:1.55}.open-access-note[hidden]{display:none}.open-access-note b{display:block;font-size:12px;margin-bottom:1px}.open-access-note i{font-style:normal;font-weight:800;color:#a16008}
+    .trial-credit-panel{grid-column:1/-1;display:grid;place-items:center;min-height:148px;padding:25px;border:1px dashed #cfd5e7;border-radius:12px;background:#fafbff;text-align:center;color:#555f70}.trial-credit-panel strong{display:block;color:#3548b3;font-size:14px;margin-bottom:6px}.trial-credit-panel span{font-size:11px;line-height:1.65}
+    .btn,.top-btn,.nav button,.view-tabs button,.result-tabs button,.strength{touch-action:manipulation}
+    @media(max-width:1000px){.workflow{margin-bottom:13px}.inspector{max-height:none}.flow-step{padding:7px 9px}}
+    @media(max-width:680px){
+      .topbar{gap:7px}.mobile-brand{display:grid;width:34px;height:34px;place-items:center;border-radius:10px;background:var(--accent);color:#fff;font-weight:800}.mobile-settings{display:grid;width:42px;min-width:42px;padding:0;place-items:center}.topbar #upgradeBtn{display:none}.credit-btn{max-width:145px;overflow:hidden;text-overflow:ellipsis}.trial-user-copy{display:none}.content{padding-top:12px}.headline{margin-bottom:12px}.headline h1{font-size:19px}.engine{display:none}
+      .workflow{grid-template-columns:repeat(4,1fr);padding:5px}.flow-step{display:flex;justify-content:center;padding:5px}.flow-step>span{width:28px;height:28px}.flow-step b,.flow-step small,.flow-step:after{display:none}.mobile-pane-tabs{display:flex}
+      .workspace{display:block}.workspace.mobile-editor .inspector{display:none}.workspace.mobile-results .editor-card{display:none}.editor-card,.inspector{min-height:calc(100vh - 224px)}.editor-head{height:auto;min-height:58px;flex-wrap:wrap;padding:9px 12px}.view-tabs{width:100%;order:3}.view-tabs button{flex:1;min-height:38px}.empty-guide{padding:22px 18px}.empty-guide h2{font-size:18px}.empty-actions{display:grid}.empty-actions .btn{width:100%}.editor-foot{position:sticky;bottom:0;background:#fff;z-index:5}.editor-foot .btn{min-height:44px}.inspector{position:relative;top:auto}.actionbar{position:sticky;bottom:0;z-index:5}.strength{min-height:44px}.modal{padding:0;align-items:end}.modal-card,.modal-card.pricing{width:100%;max-height:92vh;border-radius:18px 18px 0 0}.modal-head{height:58px}.plan-grid{grid-template-columns:1fr}.inline-status{font-size:11px}
+    }
+    @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+  </style>
+  <style id="visual-v3">
+    :root{
+      --bg:#f7f7f4;--panel:#fff;--panel-2:#f4f4f1;--ink:#0b0c0e;--muted:#69717b;
+      --line:#d7d9dc;--line-2:#bfc3c8;--accent:#2479f2;--accent-2:#dbeafe;
+      --green:#087c36;--green-bg:#dff8e5;--amber:#7b5700;--amber-bg:#fff0b8;
+      --red:#9d352e;--red-bg:#ffe0dc;--blue:#135dab;--blue-bg:#dfedff;
+      --signal:#ffd83f;--coral:#ffb38c;--stroke:#101113;
+      --shadow:5px 5px 0 var(--stroke);--radius:3px;--sidebar:0px;
+      --font-ui:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+      --font-doc:ui-serif,"Songti SC","STSong",serif;
+    }
+    html,body{background:var(--bg);color:var(--ink);font-family:var(--font-ui)}
+    body{overflow-x:hidden}
+    .app{display:block;min-height:100vh}
+    .sidebar{display:none}
+    .main{min-height:100vh}
+    .topbar{height:76px;padding:0 24px;gap:14px;background:#fff;border-bottom:2px solid var(--stroke);backdrop-filter:none;position:sticky;top:0;z-index:30}
+    .brand-plaque{flex:0 0 auto;background:var(--signal);border:2px solid var(--stroke);box-shadow:6px 6px 0 var(--stroke);padding:11px 16px;font-size:20px;font-weight:900;letter-spacing:-.03em;white-space:nowrap}
+    .header-document{min-width:0;display:flex;align-items:center;gap:8px;padding-left:18px;border-left:1px solid var(--stroke)}
+    .header-document b{display:block;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}
+    .file-kind{border:1px solid var(--stroke);border-radius:2px;background:#fff;padding:3px 6px;color:#4c535d;font:700 9px/1 var(--font-ui)}
+    .document-state{border:1px solid var(--stroke);border-radius:2px;background:#f1f2f2;padding:5px 8px;font-size:10px;font-weight:750;white-space:nowrap}
+    .document-state.ready{background:var(--green-bg);border-color:var(--green);color:var(--green)}
+    .document-state.changed{background:var(--blue-bg);border-color:var(--accent);color:#154d9a}
+    .status{font-size:11px;color:#353b43;margin:0;padding-left:4px}.dot{width:9px;height:9px;border-radius:50%;border:1px solid var(--stroke)}.dot.ok{background:#19a44c;box-shadow:none}.dot.bad{background:#e16457}
+    .top-btn{height:36px;border:1px solid var(--stroke);border-radius:2px;background:#fff;color:var(--ink);font-size:10px;font-weight:750;padding:0 10px;box-shadow:none}
+    .top-btn:hover{background:#f1f1ee;border-color:var(--stroke);transform:translateY(-1px)}
+    .credit-btn{background:#f5f5f1;color:#30353c;border-color:var(--stroke)}
+    .upgrade-btn{background:var(--signal);color:var(--ink);border-color:var(--stroke)}
+    .header-copy,.header-export{height:42px;padding:0 15px;background:var(--accent);color:#fff;border:2px solid var(--stroke);box-shadow:5px 5px 0 var(--stroke);font-size:12px}
+    .header-copy:hover,.header-export:hover{background:#116ae8;color:#fff;transform:translate(-1px,-1px);box-shadow:6px 6px 0 var(--stroke)}
+    .header-copy:disabled{background:#e7e7e3;color:#8c9198;box-shadow:3px 3px 0 #a9adb2}
+    .trial-user-copy b{color:var(--ink)}
+    .content{max-width:none;margin:0;padding:16px 18px;width:100%}
+    .headline{display:none}
+    .workflow{height:86px;margin:0 0 12px;padding:11px 72px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:110px;background:transparent;border:0;border-radius:0;box-shadow:none;position:relative}
+    .workflow:before{content:"";position:absolute;left:10%;right:10%;top:42px;height:2px;background:var(--stroke);z-index:0}
+    .flow-step{z-index:1;display:grid;grid-template-columns:34px minmax(0,1fr);grid-template-rows:auto auto;column-gap:10px;padding:9px 14px;background:#fff;border:2px solid var(--stroke);border-radius:2px;color:var(--ink);min-width:0}
+    .flow-step:not(:last-child):after{display:none}
+    .flow-step>span{grid-row:1/3;width:32px;height:32px;border:0;border-radius:50%;background:#e9e9e7;color:var(--ink);font-size:12px;box-shadow:none}
+    .flow-step b{font-size:13px;color:var(--ink)}.flow-step small{font-size:9px;color:#555e68}
+    .flow-step.active{background:var(--accent);border-color:var(--stroke);box-shadow:6px 6px 0 var(--stroke);color:#fff;transform:translate(-2px,-2px)}
+    .flow-step.active>span{background:#fff;color:#185ac0;box-shadow:none}.flow-step.active b,.flow-step.active small{color:#fff}
+    .flow-step.done{background:var(--green-bg)}.flow-step.done>span{background:var(--green);color:#fff}
+    .inline-status,.open-access-note{border:2px solid var(--stroke);border-radius:2px;box-shadow:3px 3px 0 var(--stroke);margin:0 0 10px;padding:7px 10px;background:#fff;font-size:10px;line-height:1.35}
+    .workspace{display:grid;grid-template-columns:minmax(0,2fr) minmax(350px,1fr);gap:10px;align-items:stretch;min-height:0}
+    .card{border:2px solid var(--stroke);border-radius:3px;box-shadow:none;background:#fff}
+    .editor-card{min-height:612px;max-height:calc(100vh - 312px);display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;overflow:hidden}
+    .document-pane{min-width:0;min-height:0;display:flex;flex-direction:column;background:#fff}
+    .source-pane{border-right:2px solid var(--stroke)}
+    .document-head,.editor-head{height:50px;min-height:50px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;gap:9px;background:#fff}
+    .document-head b,.pane-title{font-size:15px;font-weight:850;letter-spacing:-.02em}.document-head span,.current-count{margin-left:auto;color:#4d5560;font-size:10px}.current-delta{color:var(--green);font-size:11px;font-weight:800}.current-delta.negative{color:var(--red)}
+    .view-tabs{margin-left:4px;border:1px solid var(--stroke);border-radius:2px;background:#f2f2ef;padding:2px;gap:1px}
+    .view-tabs button{border-radius:1px;padding:5px 7px;font-size:9px;color:#525a64}.view-tabs button.active,.view-tabs button[aria-selected="true"]{background:#fff;color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent)}
+    .source-preview-wrap{min-height:0;flex:1;overflow:auto;background:#fff}
+    .source-preview{padding:13px 16px 32px 12px;color:#282d33;font:13px/1.8 var(--font-doc);counter-reset:docline}
+    .source-preview.is-empty{height:100%;display:grid;place-items:center;color:#9a9fa5;font:11px/1.6 var(--font-ui);text-align:center;padding:28px}
+    .doc-line{counter-increment:docline;display:grid;grid-template-columns:34px minmax(0,1fr);gap:7px;min-height:27px;padding:2px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+    .doc-line:before{content:counter(docline);color:#9aa1aa;font:10px/1.9 ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right;padding-right:4px;user-select:none}
+    .doc-line mark{background:#fff0b8;color:inherit;padding:1px 2px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+    .current-pane .notices{padding:0 12px}.notice{border:1px solid var(--stroke);border-radius:2px}
+    .editor-wrap{min-height:0;flex:1;display:flex}.current-pane textarea{min-height:0;padding:15px 18px 48px 44px;font:13px/1.8 var(--font-doc);background:#fff;box-shadow:inset 35px 0 0 #f5f5f2}.current-pane textarea:focus{outline:3px solid rgba(36,122,254,.42);outline-offset:-3px;box-shadow:inset 35px 0 0 #f5f5f2}
+    .diff-view{min-height:0;padding:15px 18px 48px 44px;font:13px/1.8 var(--font-doc);background:#fff}
+    .diff-view .del{border-radius:1px;background:#ffe0dc;color:#7f2e28}.diff-view .ins{border-radius:1px;background:#dff8e5;color:#126a34}
+    .editor-meta{right:13px;bottom:10px;border:1px solid var(--line);border-radius:2px;background:#fff;color:#6e7680}
+    .empty-guide{background:#fff;padding:20px}.empty-guide-icon{border:2px solid var(--stroke);border-radius:2px;background:var(--signal);color:var(--ink);box-shadow:4px 4px 0 var(--stroke)}
+    .empty-guide h2{font-size:17px}.empty-guide p{font-size:11px}.empty-meta span:before{color:var(--green)}
+    .editor-foot{grid-column:1/-1;min-height:54px;border-top:2px solid var(--stroke);padding:8px 10px;background:#f7f7f4}
+    .btn{height:36px;border:1px solid var(--stroke);border-radius:2px;background:#fff;color:var(--ink);font-size:10px;font-weight:750}
+    .btn:hover:not(:disabled){background:#efefeb;border-color:var(--stroke)}.btn.primary{background:var(--accent);border-color:var(--stroke);color:#fff}.btn.primary:hover:not(:disabled){background:#126be5;border-color:var(--stroke)}
+    .inspector{min-height:612px;max-height:calc(100vh - 312px);position:relative;top:auto;display:flex;overflow:hidden}
+    #persistentMessage:not([hidden])~.workspace .editor-card,#persistentMessage:not([hidden])~.workspace .inspector{max-height:calc(100vh - 366px)}
+    #openAccessNotice:not([hidden])~.workspace .editor-card,#openAccessNotice:not([hidden])~.workspace .inspector{max-height:calc(100vh - 414px)}
+    .inspector-titlebar{height:50px;min-height:50px;padding:0 13px;display:flex;align-items:center;border-bottom:1px solid var(--line)}
+    .inspector-titlebar b{font-size:15px;font-weight:850}.inspector-titlebar span{margin-left:auto;color:#505863;font-size:10px}.inspector-titlebar strong{font-size:12px;color:var(--ink)}
+    .inspector-empty{padding:24px}.empty-icon{border:2px solid var(--stroke);border-radius:2px;background:var(--signal);color:var(--ink)}
+    .inspector-empty .empty-step{border:1px solid var(--stroke);border-radius:2px;background:#fff}.inspector-empty .empty-step i{border-radius:1px;background:var(--blue-bg);color:#124f9a}
+    .results{min-height:0}.summary{padding:10px;border-bottom:1px solid var(--line);background:#fafaf8}.summary-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.summary-head b{font-size:11px}.summary-head span{font-size:9px;color:#636b75}
+    .metric-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.metric{min-height:58px;padding:8px 5px;border:1px solid var(--stroke);background:#fff;text-align:center;display:flex;flex-direction:column;justify-content:center}.metric:nth-child(2){background:var(--coral)}.metric:nth-child(3){background:var(--signal)}.metric:nth-child(4){background:var(--green-bg);border-color:var(--green)}.metric b{font-size:17px;line-height:1}.metric span{font-size:8px;line-height:1.3;margin-top:5px;color:#30363d}
+    .result-tabs{height:42px;padding:0 11px;border-bottom:1px solid var(--line);gap:16px}.result-tabs button{height:42px;font-size:10px}.result-tabs button.active{border-bottom:3px solid var(--accent);color:var(--ink)}
+    .issue-filters{padding:8px 10px 0;gap:5px}.issue-filter{min-height:26px;padding:0 8px;border:1px solid var(--stroke);border-radius:2px;font-size:9px;background:#fff}.issue-filter.active{background:var(--stroke);color:#fff;border-color:var(--stroke)}
+    .result-body{padding:8px 9px 16px}.category{margin:8px 2px 6px;font-size:9px;color:#555e67}.category:after{background:var(--line)}
+    .issue{border:1px solid var(--line-2);border-radius:2px;padding:0;margin-bottom:6px;background:#fff;box-shadow:none;overflow:hidden}
+    .issue:hover{border-color:var(--stroke);box-shadow:none}.issue.active{border:2px solid var(--accent);box-shadow:none;background:#fff}
+    .issue-top{min-height:44px;margin:0;padding:8px 9px;display:flex;align-items:center}.issue.active .issue-top{background:var(--blue-bg);border-bottom:1px solid var(--line)}
+    .pid{border-radius:1px;background:#eceeed;color:var(--ink);font-size:9px}.pid.high{background:var(--red);color:#fff}.pid.medium{background:var(--amber-bg);color:#5d4300}.issue-name{font-size:10px}.mode{border-radius:1px;border:1px solid transparent;font-size:8px}.mode.safe{border-color:var(--green)}.mode.rewrite{border-color:var(--accent)}.mode.review{border-color:#8f969e}
+    .issue-detail{display:none;padding:10px 11px 11px;gap:7px}.issue.active .issue-detail{display:grid}.evidence-row{display:grid;grid-template-columns:66px minmax(0,1fr);gap:8px;align-items:start;font-size:9px;line-height:1.5}.evidence-row b{background:#f0f1f2;padding:3px 5px;font-size:8px}.evidence-row span{color:#4b535d;overflow-wrap:anywhere}.issue .quote{margin:0;border:0;border-radius:0;background:transparent;padding:0;font:10px/1.55 var(--font-doc);color:#333a42}.issue p{margin:0;font-size:9px}
+    .anchor-note,.guard-box{border:1px solid var(--stroke);border-radius:2px;background:#f7f7f3}.chip{border:1px solid var(--stroke);border-radius:2px;background:#fff}
+    .actionbar{grid-column:1/-1;display:grid;grid-template-columns:auto minmax(360px,1.25fr) minmax(160px,.45fr) minmax(300px,.8fr);grid-template-rows:auto auto;align-items:center;gap:7px 14px;padding:10px 12px;border:1px solid var(--line);border-radius:3px;background:#fff;min-width:0}
+    .actionbar-label{min-width:88px}.actionbar-label b{display:block;font-size:12px}.actionbar-label span{display:block;margin-top:3px;color:#737b85;font-size:8px;white-space:nowrap}.actionbar .rewrite-success{grid-column:1/-1;margin:0;border-radius:2px}
+    .actionbar .strength-row{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:0}.strength{height:50px;border:1px solid var(--stroke);border-radius:2px;background:#fff;color:var(--ink);font-size:11px;text-align:left;padding:6px 9px}.strength span{display:block;margin-top:3px;color:#68717b;font-size:8px;font-weight:500}.strength.active,.strength[aria-checked="true"]{border:2px solid var(--accent);background:var(--blue-bg);color:#103f85}.strength.locked{border-style:dashed;background:#f3f3f0}
+    .actionbar .cost-preview{height:50px;margin:0;padding:6px 8px;border:1px solid var(--stroke);border-radius:2px;background:#f7f7f3;display:grid;grid-template-columns:1fr;gap:2px;font-size:8px}.cost-preview>div,.cost-preview .cost-balance{text-align:left;display:flex;justify-content:space-between;gap:6px}.cost-preview strong{font-size:9px}.cost-preview br{display:none}
+    .actionbar .action-grid{display:grid;grid-template-columns:1fr 1.05fr;gap:10px}.action-grid .btn{height:50px;border:2px solid var(--stroke);box-shadow:5px 5px 0 var(--stroke);font-size:13px;justify-content:center;padding:0 14px}.action-grid #safeBtn{background:var(--signal);color:var(--ink)}.action-grid #rewriteBtn{background:var(--accent);color:#fff}.action-grid .btn:disabled{box-shadow:3px 3px 0 #9da2a8;background:#e8e8e4;color:#7b8189}
+    .strength.locked:after{display:none!important;content:""!important}
+    .action-hint{grid-column:4;text-align:left;margin:0;min-height:0;color:#616973;font-size:8px}.fineprint{grid-column:1/4;margin:0;text-align:left;font-size:8px;color:#7a818a}
+    .progress{backdrop-filter:none;background:rgba(11,12,14,.48)}.progress-box{border:2px solid var(--stroke);border-radius:3px;box-shadow:8px 8px 0 var(--stroke)}.bar{border:1px solid var(--stroke);border-radius:1px}.bar i{border-radius:0;background:var(--accent)}
+    .modal{backdrop-filter:none}.modal-card{border:2px solid var(--stroke);border-radius:6px;box-shadow:8px 8px 0 var(--stroke)}.modal-head{border-bottom:2px solid var(--stroke)}
+    .toast{border:2px solid var(--stroke);border-radius:2px;background:#fff;color:var(--ink);box-shadow:5px 5px 0 var(--stroke)}
+    @media(max-width:1279px){
+      .topbar{gap:9px;padding:0 16px}.brand-plaque{font-size:17px;padding:10px 12px}.header-document b{max-width:160px}.topbar #upgradeBtn,.topbar #configBtn{display:none}.mobile-settings{display:grid}
+      .workflow{padding-left:24px;padding-right:24px;gap:38px}
+      .workspace{grid-template-columns:1fr}.editor-card,.inspector{max-height:none}.inspector{min-height:520px}.actionbar{grid-template-columns:auto minmax(250px,1.2fr) minmax(120px,.45fr) minmax(230px,.8fr)}
+    }
+    @media(max-width:820px){
+      .topbar{height:64px}.brand-plaque{font-size:15px;box-shadow:4px 4px 0 var(--stroke)}.header-document,.document-state,.status,.topbar #billingBtn{display:none}.header-copy,.header-export{height:38px;margin-left:auto}.content{padding:12px}
+      .workflow{height:66px;margin-bottom:9px;padding:8px 0;gap:8px}.workflow:before{display:none}.flow-step{grid-template-columns:27px 1fr;padding:7px}.flow-step>span{width:26px;height:26px}.flow-step small{display:none}
+      .editor-card{grid-template-columns:1fr;max-height:none}.source-pane{display:none}.current-pane{min-height:560px}.editor-foot{grid-column:1}.inspector{min-height:560px}
+      .actionbar{grid-template-columns:1fr 1fr;gap:9px}.actionbar-label{grid-column:1/-1}.actionbar .strength-row{grid-column:1/-1}.actionbar .cost-preview{grid-column:1}.actionbar .action-grid{grid-column:2}.action-hint{grid-column:2}.fineprint{grid-column:1}.metric-grid{grid-template-columns:repeat(4,1fr)}
+    }
+    @media(max-width:680px){
+      .topbar{height:58px;padding:0 10px}.brand-plaque{font-size:13px;padding:9px 10px}.header-copy{display:flex;height:36px;padding:0 9px;font-size:9px}.header-export{height:36px;padding:0 10px;font-size:10px}.mobile-settings{display:grid}.content{padding:9px}
+      .workflow{height:50px;padding:4px;background:#fff;border:1px solid var(--stroke)}.flow-step{display:flex;justify-content:center;border:0;background:transparent;padding:4px}.flow-step b,.flow-step small{display:none}.flow-step.active{transform:none;box-shadow:none;border:1px solid var(--stroke)}
+      .mobile-pane-tabs{display:flex;border:1px solid var(--stroke);border-radius:2px}.mobile-pane-tabs button{border-radius:1px}.mobile-pane-tabs button.active{background:var(--stroke);color:#fff}
+      .workspace{display:block}.workspace.mobile-editor .inspector,.workspace.mobile-editor .actionbar{display:none}.workspace.mobile-results .editor-card{display:none}.workspace.mobile-results .inspector,.workspace.mobile-results .actionbar{display:flex}.workspace.mobile-results .actionbar{display:grid;margin-top:9px}
+      .current-pane,.editor-card,.inspector{min-height:calc(100vh - 200px)}.editor-head{height:auto;min-height:50px;padding:8px;flex-wrap:wrap}.view-tabs{width:100%;order:3}.view-tabs button{flex:1;min-height:34px}.current-pane textarea,.diff-view{padding-left:18px}.editor-foot{position:sticky;bottom:0;z-index:5;background:#fff}.editor-foot .btn{min-height:42px}
+      .actionbar{grid-template-columns:1fr;padding:8px;gap:6px}.actionbar-label{display:none}.actionbar .strength-row,.actionbar .cost-preview,.actionbar .action-grid,.action-hint,.fineprint{grid-column:1}.actionbar .action-grid{position:sticky;bottom:0}.actionbar .cost-preview,.actionbar .action-grid .btn{height:44px}.action-hint{display:none}.fineprint{font-size:7px;line-height:1.35}.strength{height:40px;padding:5px}.strength span{display:none}.metric-grid{grid-template-columns:repeat(2,1fr)}
+      .modal-card,.modal-card.pricing{border-radius:5px 5px 0 0}
+    }
+    @media(prefers-reduced-motion:reduce){.flow-step.active,.header-copy:hover,.header-export:hover{transform:none!important}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><div class="mark">文</div><div><b>中英文学术助手</b><small>Local MVP</small></div></div>
+    <div class="nav-label">Workspace</div>
+    <nav class="nav">
+      <button class="active"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4zM8 4v16M8 9h12"/></svg><span>文本优化</span></button>
+      <button id="navDocs"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6"/></svg><span>文档处理</span></button>
+      <button disabled><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>历史记录</span><i class="soon">SaaS</i></button>
+    </nav>
+    <div class="side-spacer"></div>
+    <div class="privacy"><b>⌑ 本地优先</b>规则分析在本机完成。启用模型改写时，文本会发送到平台托管的模型服务。</div>
+    <nav class="nav"><button id="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1A7 7 0 0 0 15 6l-.3-2.5h-4L10.4 6a7 7 0 0 0-1.7 1.1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1A7 7 0 0 0 10.4 18l.3 2.5h4L15 18a7 7 0 0 0 1.7-1.1l2.3 1 2-3.4-2-1.5a7 7 0 0 0 0-1z"/></svg><span>AI 服务</span></button></nav>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="brand-plaque">保真优化工作台</div>
+      <div class="header-document"><b id="fileTitle">未命名文本</b><span class="file-kind" id="fileKind">TEXT</span></div>
+      <span class="document-state" id="documentState">待导入</span>
+      <div class="status" role="status" aria-live="polite"><i class="dot" id="connDot"></i><span id="connText">连接中…</span></div>
+      <div class="top-spacer"></div>
+      <button class="top-btn credit-btn" id="billingBtn">额度载入中…</button>
+      <button class="top-btn upgrade-btn" id="upgradeBtn">升级</button>
+      <button class="top-btn" id="configBtn">AI 服务检查中</button>
+      <button class="top-btn mobile-settings" id="mobileSettingsBtn" aria-label="查看 AI 服务状态">状态</button>
+      <button class="top-btn header-copy" id="copyBtn" disabled>复制当前稿</button>
+      <button class="top-btn header-export" id="exportBtn" hidden>导出 DOCX</button>
+      <div class="trial-user" id="trialUser" hidden><div class="trial-user-copy"><b id="trialUserName">匿名访客</b><small id="trialUserMode">匿名试用</small></div></div>
+    </header>
+    <section class="content">
+      <div class="headline"><div><h1>保真优化工作台</h1><p>中英文逐段识别，保护事实边界，审阅每一次修改。</p></div><div class="engine" id="engineVersion">Humanizer 中英双语 · 44 项规则覆盖</div></div>
+      <nav class="workflow" id="workflow" aria-label="优化流程">
+        <div class="flow-step active" data-flow="input" aria-current="step"><span>1</span><b>导入</b><small>上传文档并解析</small></div>
+        <div class="flow-step" data-flow="analyze"><span>2</span><b>分析</b><small>完成中英双语检查</small></div>
+        <div class="flow-step" data-flow="optimize"><span>3</span><b>优化</b><small>安全清理或改写</small></div>
+        <div class="flow-step" data-flow="review"><span>4</span><b>审阅</b><small>确认并导出</small></div>
+      </nav>
+      <div class="open-access-note" id="openAccessNotice" role="note" hidden><i aria-hidden="true">◇</i><div><b>匿名试用 · 每个浏览器独立会话</b><span>无需登录；清除 Cookie 后会成为新访客，原访客的任务与额度无法自动找回。</span></div></div>
+      <div class="inline-status" id="persistentMessage" role="status" aria-live="polite" hidden><div class="status-copy" id="persistentText"></div><button id="dismissStatus" aria-label="关闭提示">×</button></div>
+      <div class="mobile-pane-tabs" role="tablist" aria-label="移动端工作区"><button class="active" role="tab" aria-selected="true" data-mobile-pane="editor">文本</button><button role="tab" aria-selected="false" data-mobile-pane="results">问题 <span id="mobileIssueCount">0</span></button></div>
+      <div class="workspace mobile-editor" id="workspace">
+        <section class="card editor-card" aria-label="原稿与当前稿对照区">
+          <section class="document-pane source-pane" aria-label="原始稿件">
+            <div class="document-head"><b>原始稿件</b><span id="sourceCount">0 字</span></div>
+            <div class="source-preview-wrap" id="sourcePreviewWrap"><div class="source-preview is-empty" id="sourcePreview">原稿会在导入后显示在这里。</div></div>
+          </section>
+          <section class="document-pane current-pane" aria-label="当前稿件">
+            <div class="editor-head"><div class="pane-title">当前稿件</div><span class="current-count" id="currentCount">0 字</span><span class="current-delta" id="currentDelta">±0</span><div class="view-tabs" role="tablist" aria-label="当前稿视图"><button class="active" role="tab" aria-selected="true" data-view="source">编辑</button><button role="tab" aria-selected="false" data-view="result">当前稿</button><button role="tab" aria-selected="false" data-view="diff">修改对照</button></div></div>
+            <div class="notices" id="notices"></div>
+            <div class="editor-wrap is-empty" id="editorWrap"><textarea id="editor" aria-label="论文文本编辑器" spellcheck="false" placeholder="在这里粘贴正文。按 ⌘ / Ctrl + Enter 开始免费分析。"></textarea><div class="empty-guide" id="emptyGuide"><div class="empty-guide-inner"><div class="empty-guide-icon">文</div><h2>先放入你要优化的正文</h2><p>先做免费表达分析，再决定是否改写。数字、引用、专名和否定关系会单独保护。</p><div class="empty-actions"><button class="btn primary" id="startPasteBtn">直接粘贴文本</button><button class="btn" id="emptyUploadBtn">选择 DOCX / PDF / TXT</button></div><button class="empty-sample" id="emptySampleBtn">没有文本？先用示例看看</button><div class="empty-meta"><span>分析不扣额度</span><span>PDF 只提取文本</span><span>DOCX 可导出</span></div></div></div><div class="diff-view" id="diffView" role="region" aria-label="修改对照"></div><div class="editor-meta" id="editorMeta">0 字 · 0 段</div></div>
+          </section>
+          <div class="editor-foot"><button class="btn primary" id="analyzeBtn" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h10M4 19h7M18 15v6M15 18h6"/></svg><span id="analyzeBtnText">请先导入文本</span></button><button class="btn" id="uploadBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4M5 14v6h14v-6"/></svg>上传文档</button><input class="file-input" id="fileInput" type="file" accept=".docx,.pdf,.txt"><button class="btn" id="sampleBtn">载入示例</button><button class="btn ghost" id="restoreBtn" hidden>恢复原稿</button><div class="foot-spacer"></div><span class="count" id="count">0 字</span></div>
+        </section>
+        <aside class="card inspector" aria-label="证据与优化建议">
+          <div class="inspector-titlebar"><b>证据与提示</b><span><strong id="inspectorIssueCount">0</strong> 条可核对问题</span></div>
+          <div class="inspector-empty" id="inspectorEmpty"><div><div class="empty-icon">◎</div><h3 id="inspectorTitle">先分析，再决定怎么改</h3><p id="inspectorDescription">分析不消耗改写额度，每条结论都可回到原文复核。</p><div class="empty-steps" id="inspectorSteps"><div class="empty-step"><i>1</i><span>先定位模板化、空泛和需人工判断的表达</span></div><div class="empty-step"><i>2</i><span>确认数字、引用、专名与语义边界</span></div><div class="empty-step"><i>3</i><span>只在需要时选择安全清理或保真改写</span></div></div></div></div>
+          <div class="results" id="results"><div class="summary" id="summary" tabindex="-1"></div><div class="result-tabs" role="tablist" aria-label="分析结果"><button class="active" role="tab" aria-selected="true" data-panel="issues">问题清单 <span class="badge" id="issueCount">0</span></button><button role="tab" aria-selected="false" data-panel="anchors">已保护内容</button></div><div class="issue-filters" id="issueFilters" aria-label="筛选问题"><button class="issue-filter active" aria-pressed="true" data-filter="all">全部</button><button class="issue-filter" aria-pressed="false" data-filter="rewrite">需改写</button><button class="issue-filter" aria-pressed="false" data-filter="review">人工判断</button><button class="issue-filter" aria-pressed="false" data-filter="safe">安全清理</button></div><div class="result-body"><div id="issues"></div><div class="anchors" id="anchors"></div></div></div>
+        </aside>
+        <section class="actionbar" aria-label="优化策略与操作"><div class="actionbar-label"><b>优化策略</b><span>所有模式都受事实守卫约束</span></div><div id="rewriteSuccess" class="rewrite-success" hidden></div><div class="strength-row" role="radiogroup" aria-label="改写强度" title="所有模式都受同一事实守卫约束"><button class="strength active" role="radio" aria-checked="true" data-strength="conservative">保守<span>更稳妥，改动较小</span></button><button class="strength" role="radio" aria-checked="false" data-strength="balanced">平衡<span>兼顾表达与修改</span></button><button class="strength" role="radio" aria-checked="false" data-strength="deep">深度<span>更充分的优化建议</span></button></div><div class="cost-preview" id="costPreview"><div><span>本稿预计</span><strong id="costEstimate">0 字额度</strong></div><div class="cost-balance">余额 <strong id="costBalance">—</strong><span id="costMode">保守模式 · 1×</span></div></div><div class="action-grid"><button class="btn" id="safeBtn" disabled>安全清理</button><button class="btn primary" id="rewriteBtn" disabled>请先分析</button></div><div class="action-hint" id="actionHint">分析完成后再选择优化方式</div><div class="fineprint">不承诺任何检测器百分比；事实守卫不通过的候选不会覆盖原稿。</div></section>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="progress" id="progress" role="dialog" aria-modal="true" aria-labelledby="progressTitle" aria-live="polite"><div class="progress-box"><h3 id="progressTitle">正在保真改写</h3><p>生成候选并检查数字、引用、否定、条件和完成状态。</p><div class="bar"><i id="progressBar"></i></div><div class="progress-meta"><span id="progressStep">准备任务…</span><span id="progressTime">0s</span></div><div class="progress-note">任务期间已预占额度；若任务失败或零候选被采纳，系统会自动退回。</div></div></div>
+<div class="modal" id="configModal" role="dialog" aria-modal="true" aria-labelledby="configTitle" tabindex="-1"><div class="modal-card"><div class="modal-head"><h3 id="configTitle">AI 服务状态</h3><button class="close" id="closeModal" aria-label="关闭 AI 服务状态">×</button></div><div class="modal-body"><div class="model-state"><i class="dot" id="modelDot"></i><span id="modelText">检查中</span></div><p>改写模型由平台统一配置，使用者不需要填写 API Key 或选择模型。密钥只保存在服务端，不会返回浏览器。</p><p>规则分析与安全清理在本机完成；只有点击“保真改写”时，当前文本才会发送到平台模型服务。</p></div></div></div>
+<div class="modal" id="billingModal" role="dialog" aria-modal="true" aria-labelledby="billingTitle" tabindex="-1"><div class="modal-card pricing"><div class="modal-head"><h3 id="billingTitle">套餐与文字额度</h3><button class="close" id="closeBilling" aria-label="关闭套餐弹窗">×</button></div><div class="modal-body"><div class="billing-summary" id="billingSummary"><div><strong>—</strong><span>可用改写额度</span></div><div class="summary-plan">正在载入…</div></div><div class="billing-note" id="billingNotice">本地演示使用模拟支付，点击购买不会扣款。Stripe 或易支付待正式上线前配置。</div><div class="plan-grid" id="planGrid"><div class="anchor-note">正在载入套餐…</div></div></div></div></div>
+<div class="modal" id="rewriteConfirmModal" role="dialog" aria-modal="true" aria-labelledby="rewriteConfirmTitle" tabindex="-1"><div class="modal-card"><div class="modal-head"><h3 id="rewriteConfirmTitle">确认本次保真改写</h3><button class="close" id="closeRewriteConfirm" aria-label="关闭改写确认">×</button></div><div class="modal-body"><div class="confirm-summary"><div class="confirm-item"><span>原文字数</span><b id="confirmChars">0 字</b></div><div class="confirm-item"><span>改写模式</span><b id="confirmMode">保守 · 1 候选</b></div><div class="confirm-item"><span>预计预占</span><b id="confirmRequired">0 字额度</b></div><div class="confirm-item"><span>当前余额</span><b id="confirmBalance">—</b></div></div><div class="confirm-note">这里是前端预估，最终以服务端归一化计数为准。任务失败或零候选采纳时，预占额度会自动退回。</div><div class="modal-actions"><button class="btn" id="cancelRewriteConfirm">返回检查</button><button class="btn primary" id="confirmRewriteBtn">确认并开始</button></div></div></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="text/plain" id="legacy-script">
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],editor=$('#editor');
+const state={source:'',current:'',report:null,view:'source',panel:'issues',strength:'conservative',config:null,doc:null,notices:[],documentNotices:[],guard:null,rewriteRunning:false,billing:null,plans:[],paymentInfo:null,billingBusy:false};
+const SAMPLE=`在数字化技术不断快速发展的时代背景下，人工智能写作工具逐渐进入高校学习场景。本文将深入探讨一个至关重要的问题：学生应当如何合理使用这些工具。\n\n这不仅是一次工具更新，更是学习方式的深刻变革。系统可以提供资料整理、语句润色和格式检查。部分未具名的专家认为，这些功能可能在一定程度上或许能够提升写作效率，充分彰显了技术赋能教育的重要价值。\n\n本次调查共收到 126 份问卷，其中 18 份没有完成全部题目。数据只说明受访者的使用情况，不能代表所有高校学生。后续研究计划在获得新的授权后扩大样本，目前尚未开始。\n\n总而言之，让我们拭目以待，期待更多可能。`;
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove('show'),2200)}
+function bytesToB64(buf){let s='',a=new Uint8Array(buf);for(let i=0;i<a.length;i+=0x8000)s+=String.fromCharCode(...a.subarray(i,i+0x8000));return btoa(s)}
+async function responseJson(r){let data;try{data=await r.json()}catch(e){const err=new Error(`服务返回异常（HTTP ${r.status}）`);err.status=r.status;err.data=null;throw err}if(!r.ok){const err=new Error(data.error||`请求失败（HTTP ${r.status}）`);err.status=r.status;err.data=data;throw err}return data}
+async function api(path,body){let r;try{r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}catch(e){const err=new Error('无法连接本地服务');err.status=0;err.data=null;throw err}return responseJson(r)}
+async function getApi(path){let r;try{r=await fetch(path,{cache:'no-store'})}catch(e){const err=new Error('无法连接本地服务');err.status=0;err.data=null;throw err}return responseJson(r)}
+let initRetry=null;
+async function init(){try{const [health,config,plans,summary]=await Promise.all([getApi('/health'),getApi('/api/config'),getApi('/api/billing/plans'),getApi('/api/billing/summary')]);clearTimeout(initRetry);initRetry=null;state.config=config;setPlans(plans);updateBilling(summary);$('#connDot').className='dot ok';$('#connText').textContent='本地服务已连接';$('#configBtn').textContent=config.llm_configured?(config.llm_model||'模型已配置'):'模型未配置';$('#modelDot').className='dot '+(config.llm_configured?'ok':'');$('#modelText').innerHTML=config.llm_configured?`模型已连接：<b>${esc(config.llm_model)}</b>`:'<b>未配置改写模型</b>';$('#engineVersion').textContent=`${config.policy||'Humanizer-zh'} · 31 项上下文检查`}catch(e){$('#connDot').className='dot bad';$('#connText').textContent='正在重连本地服务…';clearTimeout(initRetry);initRetry=setTimeout(init,2000)}}
+function billingSummary(data){return(data&&data.summary)||(data&&data.billing)||data||{}}
+function setPlans(data){const list=Array.isArray(data)?data:(data.plans||data.products||data.catalog||[]);state.plans=Array.isArray(list)?list:[];state.paymentInfo=Array.isArray(data)?{}:(data.payment||data);const provider=state.paymentInfo.provider||state.paymentInfo.payment_provider||'mock',notice=state.paymentInfo.notice||'本地演示使用模拟支付，点击购买不会扣款。Stripe 或易支付待正式上线前配置。';$('#billingNotice').innerHTML=`${esc(notice)}<br>按归一化后的非空白原文字数计费；保守/平衡 1×，深度 1.5×。任务失败或零候选采纳时，预占额度会自动退回。${provider!=='mock'?` 当前支付通道：${esc(provider)}。`:''}`;renderPlans()}
+function allowedStrengths(){const a=state.billing&&state.billing.allowed_strengths;return Array.isArray(a)&&a.length?a:['conservative']}
+function syncEntitlements(){const allowed=allowedStrengths();if(!allowed.includes(state.strength))state.strength='conservative';$$('.strength').forEach(b=>{const ok=allowed.includes(b.dataset.strength);b.disabled=!ok;b.classList.toggle('active',b.dataset.strength===state.strength);b.title=ok?'候选会继续经过事实守卫':`当前套餐不支持${b.textContent.split('·')[0].trim()}模式，点击“升级”解锁`});syncRewriteButton()}
+function syncRewriteButton(){const hasFindings=state.report&&state.report.summary&&state.report.summary.findings,allowed=allowedStrengths().includes(state.strength);$('#rewriteBtn').disabled=state.rewriteRunning||!(state.config&&state.config.llm_configured)||!hasFindings||!allowed}
+function updateBilling(data){const next=billingSummary(data);if(!next||typeof next!=='object')return;state.billing={...(state.billing||{}),...next};const balance=Number(state.billing.balance||0),limit=Number(state.billing.max_chars_per_job||0);$('#billingBtn').textContent=`剩余 ${balance.toLocaleString('zh-CN')} 字`;$('#billingSummary').innerHTML=`<div><strong>${balance.toLocaleString('zh-CN')} 字</strong><span>可用改写额度</span></div><div class="summary-plan">${esc(state.billing.plan_name||'免费体验')}<br>单次上限 ${limit.toLocaleString('zh-CN')} 字</div>`;syncEntitlements();renderPlans()}
+function formatPrice(fen){return`¥${(Number(fen||0)/100).toFixed(Number(fen||0)%100?2:0)}`}
+function renderPlans(){const box=$('#planGrid');if(!state.plans.length){box.innerHTML='<div class="anchor-note">暂未读取到套餐，请稍后重试。</div>';return}const active=state.billing&&state.billing.plan_id;box.innerHTML=state.plans.map(p=>{const free=p.id==='free'||p.kind==='free',current=active===p.id,kind=free?'体验':p.kind==='subscription'?'月卡':'字数包',price=free?'¥0':formatPrice(p.price_fen),suffix=p.kind==='subscription'?'/ 30天':' / 份';let action;if(free)action=`<button class="btn current-plan" disabled>${current?'当前基础权益':'已包含'}</button>`;else action=`<button class="btn ${current?'':'primary'}" data-buy="${esc(p.id)}" ${state.billingBusy?'disabled':''}>${state.billingBusy?'处理中…':current?(p.kind==='subscription'?'模拟续一期':'再购一份'):'模拟购买'}</button>`;return`<section class="plan-card ${current?'current':''}"><h4>${esc(p.name)}</h4><span class="plan-kind">${kind}</span><div class="plan-price">${price}<small>${free?'':suffix}</small></div><div class="plan-credit">${Number(p.credits||0).toLocaleString('zh-CN')} 字额度 · 单次 ${Number(p.max_chars_per_job||0).toLocaleString('zh-CN')} 字</div><div class="plan-desc">${esc(p.description||'')}</div>${action}</section>`}).join('');$$('[data-buy]').forEach(b=>b.onclick=()=>buyPlan(b.dataset.buy))}
+function requestId(prefix){if(globalThis.crypto&&crypto.randomUUID)return prefix+'_'+crypto.randomUUID().replaceAll('-','');return prefix+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2)}
+async function refreshBilling(quiet=false){try{const summary=await getApi('/api/billing/summary');updateBilling(summary);return state.billing}catch(e){if(!quiet)toast(e.message);return null}}
+async function openBilling(){$('#billingModal').style.display='grid';try{const [plans,summary]=await Promise.all([getApi('/api/billing/plans'),getApi('/api/billing/summary')]);setPlans(plans);updateBilling(summary)}catch(e){toast(e.message)}}
+async function buyPlan(productId){if(state.billingBusy)return;state.billingBusy=true;renderPlans();try{const result=await api('/api/billing/checkout',{product_id:productId,idempotency_key:requestId('checkout')});if(result&&result.summary)updateBilling(result.summary);await refreshBilling(true);toast('模拟支付完成，额度已到账')}catch(e){toast(e.message)}finally{state.billingBusy=false;renderPlans()}}
+function updateCounts(){const t=state.view==='source'?state.source:state.current,chars=(t.match(/\S/g)||[]).length,paras=t.split(/\n\s*\n|\n/).filter(x=>x.trim()).length;$('#count').textContent=`${chars.toLocaleString()} 字`;$('#editorMeta').textContent=`${chars.toLocaleString()} 字 · ${paras} 段`;$('#copyBtn').disabled=!t.trim();$('#restoreBtn').hidden=state.source===state.current}
+function setTexts(text,{reset=true}={}){state.source=text;state.current=text;if(reset){state.report=null;state.guard=null}state.view='source';$$('.view-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.view==='source'));editor.style.display='block';$('#diffView').style.display='none';editor.value=text;updateCounts()}
+function switchView(view){if(state.view!=='diff'&&!editor.hidden){if(state.view==='source'){state.source=editor.value;if(!state.report)state.current=editor.value}else state.current=editor.value}state.view=view;$$('.view-tabs button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));if(view==='diff'){editor.style.display='none';$('#diffView').style.display='block';$('#diffView').innerHTML=state.source===state.current?'<div class="empty-diff">产生修改后，这里会逐字显示差异。</div>':diffHtml(state.source,state.current)}else{editor.style.display='block';$('#diffView').style.display='none';editor.value=view==='source'?state.source:state.current}updateCounts()}
+function diffCore(a,b){const n=a.length,m=b.length;if(!a)return b?[[1,b]]:[];if(!b)return[[-1,a]];if(n*m>1800000)return[[-1,a],[1,b]];const dp=Array.from({length:n+1},()=>new Uint32Array(m+1));for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)dp[i][j]=a[i]===b[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);let i=0,j=0,out=[];const push=(op,ch)=>{let x=out[out.length-1];if(x&&x[0]===op)x[1]+=ch;else out.push([op,ch])};while(i<n&&j<m){if(a[i]===b[j]){push(0,a[i++]);j++}else if(dp[i+1][j]>=dp[i][j+1])push(-1,a[i++]);else push(1,b[j++])}while(i<n)push(-1,a[i++]);while(j<m)push(1,b[j++]);return out}
+function greedyTokenDiff(a,b){const positions=new Map();b.forEach((t,i)=>{if(!positions.has(t))positions.set(t,[]);positions.get(t).push(i)});let last=-1,anchors=[];for(let i=0;i<a.length;i++){const arr=positions.get(a[i]);if(!arr)continue;let lo=0,hi=arr.length;while(lo<hi){const mid=(lo+hi)>>1;if(arr[mid]<=last)lo=mid+1;else hi=mid}if(lo<arr.length){last=arr[lo];anchors.push([i,last])}}let ai=0,bi=0,out=[];const push=(op,t)=>{if(!t)return;const x=out[out.length-1];if(x&&x[0]===op)x[1]+=t;else out.push([op,t])};for(const[i,j]of anchors){push(-1,a.slice(ai,i).join(''));push(1,b.slice(bi,j).join(''));push(0,a[i]);ai=i+1;bi=j+1}push(-1,a.slice(ai).join(''));push(1,b.slice(bi).join(''));return out}
+function diffTokens(a,b){const n=a.length,m=b.length;if(n*m>180000)return greedyTokenDiff(a,b);const dp=Array.from({length:n+1},()=>new Uint32Array(m+1));for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)dp[i][j]=a[i]===b[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);let i=0,j=0,out=[];const push=(op,t)=>{let x=out[out.length-1];if(x&&x[0]===op)x[1]+=t;else out.push([op,t])};while(i<n&&j<m){if(a[i]===b[j]){push(0,a[i++]);j++}else if(dp[i+1][j]>=dp[i][j+1])push(-1,a[i++]);else push(1,b[j++])}while(i<n)push(-1,a[i++]);while(j<m)push(1,b[j++]);return out}
+function diff(a,b){let p=0;while(p<a.length&&p<b.length&&a[p]===b[p])p++;let s=0;while(s<a.length-p&&s<b.length-p&&a[a.length-1-s]===b[b.length-1-s])s++;const pre=a.slice(0,p),post=s?a.slice(a.length-s):'',am=a.slice(p,a.length-s),bm=b.slice(p,b.length-s);let mid;if(am.length*bm.length<=1800000)mid=diffCore(am,bm);else{const split=x=>x.match(/[^。！？；\n]+[。！？；]?|\n+/g)||[],coarse=diffTokens(split(am),split(bm));if(!coarse)mid=[[-1,am],[1,bm]];else{mid=[];let del='',ins='';const flush=()=>{if(del||ins){mid.push(...diffCore(del,ins));del='';ins=''}};for(const[op,t]of coarse){if(op===0){flush();mid.push([0,t])}else if(op<0)del+=t;else ins+=t}flush()}}return(pre?[[0,pre]]:[]).concat(mid,post?[[0,post]]:[])}
+function diffHtml(a,b){return diff(a,b).map(([op,t])=>op<0?`<span class="del">${esc(t)}</span>`:op>0?`<span class="ins">${esc(t)}</span>`:esc(t)).join('')}
+function mergeNotices(...lists){const seen=new Set();return lists.flat().filter(n=>{const k=(n.level||'info')+'|'+n.text;if(seen.has(k))return false;seen.add(k);return true})}
+function renderNotices(list=[]){state.notices=list;$('#notices').innerHTML=list.map(n=>`<div class="notice ${n.level==='warn'?'warn':''}">${esc(n.text)}</div>`).join('')}
+function statusLetter(s){return s==='clear'?'✓':s==='review'?'!':'↗'}
+function renderReport(report){state.report=report;$('#inspectorEmpty').style.display='none';$('#results').style.display='flex';const s=report.summary;$('#summary').innerHTML=`<div class="summary-top"><div class="state-orb ${esc(s.status)}">${statusLetter(s.status)}</div><div><h3>${esc(s.status_label)}</h3><div class="sub">完成 ${s.checks} 项上下文检查；这是表达观察，不是 AI 百分比。</div></div></div><div class="mini-stats"><div class="mini"><b>${s.findings}</b><span>可核对问题</span></div><div class="mini"><b>${s.safe_fixes}</b><span>可安全清理</span></div><div class="mini"><b>${s.affected_paragraphs}</b><span>涉及段落</span></div></div>`;$('#issueCount').textContent=s.findings;renderIssues(report.findings);renderAnchors(report.anchors);$('#safeBtn').disabled=!s.safe_fixes;syncRewriteButton();renderNotices(report.notices||state.notices||[])}
+function renderIssues(findings){const groups={};for(const f of findings)(groups[f.category_name]??=[]).push(f);let html='';for(const[cat,items]of Object.entries(groups)){html+=`<div class="category">${esc(cat)} · ${items.length}</div>`;for(const f of items){const mode=f.handling==='safe'?['可安全清理','safe']:f.handling==='rewrite'?['需要改写','rewrite']:['人工判断','review'];html+=`<article class="issue" data-start="${f.start}" data-end="${f.end}"><div class="issue-top"><span class="pid ${esc(f.severity)}">${esc(f.pattern_id)}</span><span class="issue-name">${esc(f.name)}</span><span class="mode ${mode[1]}">${mode[0]}</span></div><div class="quote">${esc(f.matched)}</div><p><strong>建议：</strong>${esc(f.suggestion)}</p></article>`}}if(!html)html='<div class="anchor-note">没有发现明显的模板化表达。不要为了产生改动而强行重写已经清楚的文字。</div>';$('#issues').innerHTML=html;$$('.issue').forEach(el=>el.onclick=()=>focusSpan(+el.dataset.start,+el.dataset.end))}
+function renderAnchors(a){const rows=[['数字与范围',a.numbers],['引用',a.citations],['专名与术语',a.proper_names],['否定／条件／状态',a.constraints]];$('#anchors').innerHTML=`<div class="anchor-note">这些内容是改写硬边界。候选若新增、删除或改变关键关系，将被拦截或标记复核。</div>`+rows.map(([k,v])=>`<div class="anchor-group"><h4>${k} · ${v.length}</h4><div class="chips">${v.length?v.slice(0,30).map(x=>`<span class="chip">${esc(x)}</span>`).join(''):'<span class="chip empty">未提取到</span>'}</div></div>`).join('')+(state.guard?guardHtml(state.guard):'')}
+function guardHtml(g){const bad=g.status==='review'||g.fabricated;return`<div class="guard-box ${bad?'warn':''}"><b>${bad?'需要人工复核':'机械检查未发现冲突'}</b>${esc(g.detail||'未发现数字、引用、专名或已知语义边界变化；请仍按修改对照人工确认。')}${(g.warnings||[]).map(x=>`<br>${esc(x)}`).join('')}</div>`}
+function focusSpan(start,end){switchView(state.current!==state.source?'result':'source');requestAnimationFrame(()=>{editor.focus();editor.setSelectionRange(start,end);const before=editor.value.slice(0,start);editor.scrollTop=Math.max(0,(before.split('\n').length-3)*27)})}
+async function analyze(){if(state.view!=='diff'){if(state.view==='source'){state.source=editor.value;state.current=editor.value}else state.current=editor.value}const text=state.current.trim();if(!text)return toast('请先粘贴或上传文本');state.guard=null;const btn=$('#analyzeBtn');btn.disabled=true;btn.textContent='分析中…';try{const r=await api('/api/v1/analyze',{text:state.current});r.notices=mergeNotices(state.documentNotices,r.notices||[]);state.current=r.text;renderReport(r);switchView(state.current===state.source?'source':'result')}catch(e){toast(e.message)}finally{btn.disabled=false;btn.innerHTML='<svg viewBox="0 0 24 24"><path d="M4 5h16M4 12h10M4 19h7M18 15v6M15 18h6"/></svg>分析表达'}}
+async function safeFix(){const btn=$('#safeBtn');btn.disabled=true;btn.textContent='清理中…';try{const r=await api('/api/v1/autofix',{text:state.current});state.current=r.text;state.guard={status:(r.guard.semantic_changed||r.guard.n_removed)?'review':'passed',detail:r.guard.fabricated||r.guard.n_removed||r.guard.semantic_changed?'候选触碰事实边界，相关修改已回滚。':'机械检查未发现事实冲突；请在修改对照中人工确认。',warnings:[]};r.after.notices=mergeNotices(state.documentNotices,r.notices||[]);renderReport(r.after);switchView('diff');toast(r.changed?'已完成安全清理':'没有可安全自动修改的内容')}catch(e){toast(e.message)}finally{btn.textContent='安全清理';btn.disabled=!(state.report&&state.report.summary.safe_fixes)}}
+function localBillableChars(text){return Array.from(String(text||'').normalize('NFC')).filter(c=>!/^\s$/u.test(c)).length}
+function needsUpgrade(error){const data=error&&error.data||{},details=data.details||data;return error&&error.status===402||details.upgrade_required===true}
+async function rewrite(){if(state.rewriteRunning)return toast('已有改写任务正在运行');if(!(state.config&&state.config.llm_configured)){openConfig();return}if(!allowedStrengths().includes(state.strength)){toast('当前套餐未解锁该改写模式');openBilling();return}const chars=localBillableChars(state.current),required=Math.ceil(chars*(state.strength==='deep'?1.5:1)),limit=Number(state.billing&&state.billing.max_chars_per_job||0),balance=Number(state.billing&&state.billing.balance||0);if(limit&&chars>limit){toast(`本次 ${chars.toLocaleString('zh-CN')} 字超过当前单次上限`);openBilling();return}if(state.billing&&required>balance){toast(`需要 ${required.toLocaleString('zh-CN')} 字额度，当前不足`);openBilling();return}state.rewriteRunning=true;syncRewriteButton();try{const x=await api('/api/v1/rewrite-jobs',{text:state.current,strength:state.strength,request_id:requestId('rewrite')});showProgress(true);await pollJob(x.job||x.job_id)}catch(e){showProgress(false);if(needsUpgrade(e))await openBilling();toast(e.message)}finally{state.rewriteRunning=false;syncRewriteButton()}}
+async function pollJob(id){if(!id)throw new Error('服务未返回任务编号');let t0=Date.now();for(;;){await new Promise(r=>setTimeout(r,850));const j=await getApi('/api/job/'+encodeURIComponent(id));const elapsed=Math.round((Date.now()-t0)/1000);if(!['running','done','error'].includes(j.state))throw new Error('任务返回未知状态');$('#progressTime').textContent=elapsed+'s';const total=j.total||0,done=j.done||0,p=total?Math.max(7,done/total*100):7;$('#progressBar').style.width=p+'%';$('#progressStep').textContent=total?`正在处理 ${done} / ${total} 个文本块`:'正在生成候选…';if(j.state==='error'){await refreshBilling(true);throw new Error(j.error||'改写失败')}if(j.state==='done'){showProgress(false);const x=j.result;state.current=x.text;state.guard=x.guard;x.after.notices=mergeNotices(state.documentNotices,x.notices||[]);renderReport(x.after);switchView('diff');await refreshBilling(true);toast(`已采纳 ${x.n_accepted} / ${x.n_chunks} 个候选`);return}}}
+function showProgress(on){$('#progress').style.display=on?'grid':'none';if(on){$('#progressBar').style.width='7%';$('#progressStep').textContent='准备任务…';$('#progressTime').textContent='0s'}}
+async function onFile(file){if(!file)return;const ext=file.name.split('.').pop().toLowerCase();$('#fileTitle').textContent=file.name;$('#fileKind').textContent=ext.toUpperCase();try{if(ext==='txt'){const text=await file.text();state.doc=null;state.documentNotices=[];renderNotices([]);$('#exportBtn').hidden=true;setTexts(text);await analyze();return}if(!['docx','pdf'].includes(ext))throw new Error('目前支持 DOCX、PDF 和 TXT');const data=bytesToB64(await file.arrayBuffer()),r=await api(ext==='pdf'?'/api/pdf/extract':'/api/docx/extract',{file:data});state.doc={name:file.name,kind:ext,data,meta:r.meta};state.documentNotices=r.notices||[];setTexts(r.text);renderNotices(state.documentNotices);$('#exportBtn').hidden=ext!=='docx';await analyze()}catch(e){toast(e.message)}finally{$('#fileInput').value=''}}
+async function exportDocx(){if(!state.doc||state.doc.kind!=='docx')return;try{const r=await api('/api/docx/export',{file:state.doc.data,text:state.current}),a=document.createElement('a');a.href='data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,'+r.file;a.download=state.doc.name.replace(/\.docx$/i,'')+'-优化稿.docx';a.click();toast('DOCX 已导出')}catch(e){toast(e.message)}}
+function openConfig(){$('#configModal').style.display='grid'}
+editor.addEventListener('input',()=>{if(state.view==='source'){state.source=editor.value;state.current=editor.value}else state.current=editor.value;state.report=null;state.guard=null;$('#results').style.display='none';$('#inspectorEmpty').style.display='grid';updateCounts()});editor.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();analyze()}});$$('.view-tabs button').forEach(b=>b.onclick=()=>switchView(b.dataset.view));$$('.result-tabs button').forEach(b=>b.onclick=()=>{state.panel=b.dataset.panel;$$('.result-tabs button').forEach(x=>x.classList.toggle('active',x===b));$('#issues').style.display=state.panel==='issues'?'block':'none';$('#anchors').style.display=state.panel==='anchors'?'block':'none'});$$('.strength').forEach(b=>b.onclick=()=>{if(!allowedStrengths().includes(b.dataset.strength)){openBilling();return}state.strength=b.dataset.strength;syncEntitlements()});$('#analyzeBtn').onclick=analyze;$('#safeBtn').onclick=safeFix;$('#rewriteBtn').onclick=rewrite;$('#fileInput').onchange=e=>onFile(e.target.files[0]);$('#sampleBtn').onclick=()=>{$('#fileTitle').textContent='保真测试示例';$('#fileKind').textContent='TEXT';state.doc=null;state.documentNotices=[];$('#exportBtn').hidden=true;setTexts(SAMPLE);renderNotices([]);analyze()};$('#copyBtn').onclick=async()=>{try{await navigator.clipboard.writeText(state.view==='source'?state.source:state.current);toast('已复制当前文本')}catch(e){toast('复制失败，请手动选择文本')}};$('#restoreBtn').onclick=()=>{state.current=state.source;state.guard=null;switchView('source');analyze();toast('已恢复原稿')};$('#exportBtn').onclick=exportDocx;$('#configBtn').onclick=openConfig;$('#settings').onclick=openConfig;$('#billingBtn').onclick=openBilling;$('#upgradeBtn').onclick=openBilling;$('#closeModal').onclick=()=>$('#configModal').style.display='none';$('#closeBilling').onclick=()=>$('#billingModal').style.display='none';$('#configModal').onclick=e=>{if(e.target===$('#configModal'))$('#configModal').style.display='none'};$('#billingModal').onclick=e=>{if(e.target===$('#billingModal'))$('#billingModal').style.display='none'};document.addEventListener('keydown',e=>{if(e.key==='Escape'){$('#configModal').style.display='none';$('#billingModal').style.display='none'}});$('#navDocs').onclick=()=>$('#fileInput').click();syncEntitlements();init();updateCounts();
+</script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -49,6 +49,15 @@ def make_docx(paragraphs, split_runs=False):
     return buf.getvalue()
 
 
+def make_docx_xml(document_xml):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", _CT)
+        z.writestr("_rels/.rels", _RELS)
+        z.writestr("word/document.xml", document_xml)
+    return buf.getvalue()
+
+
 def t_extract_joins_runs():
     """Word 会把一句话切成多个 run，取文本必须拼回来。"""
     data = make_docx(["研究表明该方法有效。", "", "第二段内容在这里。"], split_runs=True)
@@ -78,11 +87,95 @@ def t_roundtrip_keeps_formatting_run():
     with zipfile.ZipFile(io.BytesIO(out)) as z:
         xml = z.read("word/document.xml").decode()
     assert "<w:b" in xml, "加粗格式丢了"          # ET 输出成 <w:b />，带空格
-    assert "换成完全不同的内容。" in xml
+    rewritten, _ = docx_io.extract(out)
+    assert rewritten == "换成完全不同的内容。"
     # 命名空间前缀必须原样保留。ET 默认会把 w: 重写成 ns0:，语义等价但
     # 真实论文根节点带 mc:Ignorable="w14 wp14" 这类按前缀名引用的属性，
     # 前缀一改 Word 可能直接判定文档损坏。
     assert "<w:document" in xml and "ns0:" not in xml, "命名空间前缀被 ET 改写了"
+    root = docx_io.ET.fromstring(xml)
+    run_texts = [n.text or "" for n in root.iter(docx_io.W + "t")]
+    assert all(run_texts), f"改写把局部格式 run 清空了: {run_texts}"
+
+
+def t_unchanged_roundtrip_does_not_flatten_runs():
+    text = "前半部分加粗，后半部分正常。"
+    data = make_docx([text], split_runs=True)
+    _, meta = docx_io.extract(data)
+    out = docx_io.replace(data, [text], meta)
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        root = docx_io.ET.fromstring(z.read("word/document.xml"))
+    parts = [n.text or "" for n in root.iter(docx_io.W + "t")]
+    assert len(parts) == 2 and "" not in parts
+    assert "".join(parts) == text
+
+
+def t_tracked_changes_keep_inserted_current_text():
+    doc = (f'<?xml version="1.0" encoding="UTF-8"?>'
+           f'<w:document xmlns:w="{W}"><w:body><w:p>'
+           f'<w:del><w:r><w:delText>旧结论无效。</w:delText></w:r></w:del>'
+           f'<w:ins><w:r><w:t>新结论有效。</w:t></w:r></w:ins>'
+           f'</w:p><w:p><w:r><w:t>第二段。</w:t></w:r></w:p>'
+           f'<w:sectPr/></w:body></w:document>')
+    text, meta = docx_io.extract(make_docx_xml(doc))
+    assert text == "新结论有效。\n\n第二段。"
+    assert meta["has_tracked_changes"] is True
+    assert meta["n_paragraphs"] == 2
+
+
+def t_unused_ignorable_namespaces_survive_export():
+    mc = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+    w14 = "http://schemas.microsoft.com/office/word/2010/wordml"
+    wp14 = "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+    doc = (f'<?xml version="1.0" encoding="UTF-8"?>'
+           f'<w:document xmlns:w="{W}" xmlns:mc="{mc}" xmlns:w14="{w14}" '
+           f'xmlns:wp14="{wp14}" mc:Ignorable="w14 wp14"><w:body>'
+           f'<w:p><w:r><w:t>正文内容。</w:t></w:r></w:p><w:sectPr/>'
+           f'</w:body></w:document>')
+    data = make_docx_xml(doc)
+    text, meta = docx_io.extract(data)
+    out = docx_io.replace(data, [text], meta)
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        xml = z.read("word/document.xml")
+    assert b'mc:Ignorable="w14 wp14"' in xml
+    assert b'xmlns:w14=' in xml and b'xmlns:wp14=' in xml
+
+
+def t_table_cells_and_body_paragraphs_keep_their_structure():
+    doc = (f'<?xml version="1.0" encoding="UTF-8"?>'
+           f'<w:document xmlns:w="{W}"><w:body>'
+           f'<w:p><w:r><w:t>正文前。</w:t></w:r></w:p>'
+           f'<w:tbl><w:tr><w:tc><w:p><w:r><w:t>表格单元格。</w:t></w:r></w:p>'
+           f'</w:tc></w:tr></w:tbl>'
+           f'<w:p><w:r><w:t>正文后。</w:t></w:r></w:p>'
+           f'<w:sectPr/></w:body></w:document>')
+    data = make_docx_xml(doc)
+    _, meta = docx_io.extract(data)
+    assert meta["has_tables"] is True
+    out = docx_io.replace(data, ["改后正文前。", "改后单元格。", "改后正文后。"], meta)
+    extracted, _ = docx_io.extract(out)
+    assert extracted == "改后正文前。\n\n改后单元格。\n\n改后正文后。"
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        root = docx_io.ET.fromstring(z.read("word/document.xml"))
+    assert len(list(root.iter(docx_io.W + "tbl"))) == 1
+    assert len(list(root.iter(docx_io.W + "tc"))) == 1
+
+
+def t_hyperlink_container_and_bold_run_survive_rewrite():
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    doc = (f'<?xml version="1.0" encoding="UTF-8"?>'
+           f'<w:document xmlns:w="{W}" xmlns:r="{rel}"><w:body><w:p>'
+           f'<w:r><w:rPr><w:b/></w:rPr><w:t>参见</w:t></w:r>'
+           f'<w:hyperlink r:id="rId9"><w:r><w:t>研究来源</w:t></w:r></w:hyperlink>'
+           f'</w:p><w:sectPr/></w:body></w:document>')
+    data = make_docx_xml(doc)
+    _, meta = docx_io.extract(data)
+    out = docx_io.replace(data, ["请参见研究来源"], meta)
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        root = docx_io.ET.fromstring(z.read("word/document.xml"))
+    links = list(root.iter(docx_io.W + "hyperlink"))
+    assert len(links) == 1 and links[0].get("{" + rel + "}id") == "rId9"
+    assert list(root.iter(docx_io.W + "b"))
 
 
 def t_paragraph_count_mismatch_refused():

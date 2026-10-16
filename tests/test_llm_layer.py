@@ -4,7 +4,12 @@
 复述指令、语言跑偏、输出空、把提示词回显出来、编造事实。
 这些都必须被拦住或清理，不能污染最终文本。
 """
+import io
+import json
 import sys
+import threading
+import time
+import urllib.error
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -12,7 +17,8 @@ sys.path.insert(0, str(ROOT / "engine"))
 sys.path.insert(0, str(ROOT / "probe"))
 
 import rewrite
-from llm import MockClient
+import llm as llm_module
+from llm import Client, LLMError, MockClient, _LLMHTTPError
 
 SRC = open(ROOT / "samples/ai_sample.txt", encoding="utf-8").read()
 FAILS = []
@@ -132,3 +138,183 @@ def test_report_only_rules_excluded_from_objective():
     assert r["score"] <= 0, (
         f"打散合法技术枚举拿到了正分 {r['score']}，"
         f"说明只提示类规则仍在目标函数里")
+
+
+def test_unsupported_n_400_falls_back_to_parallel_calls():
+    """端点明确拒绝 n 时，当前请求并发降级，后续直接走降级路径。"""
+    class FakeResponse:
+        def __init__(self, content):
+            self._body = json.dumps({
+                "choices": [{"message": {"content": content}}]
+            }).encode("utf-8")
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEndpoint:
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.calls = []
+            self.active = 0
+            self.max_active = 0
+
+        def open(self, req, timeout=None):
+            payload = json.loads(req.data.decode("utf-8"))
+            with self.lock:
+                self.calls.append(payload)
+                call_no = len(self.calls)
+            if "n" in payload:
+                body = json.dumps({
+                    "error": {
+                        "message": "Unsupported parameter: 'n' is not supported.",
+                        "param": "n",
+                        "code": "unsupported_parameter",
+                    }
+                }).encode("utf-8")
+                raise urllib.error.HTTPError(
+                    req.full_url, 400, "Bad Request", {}, io.BytesIO(body))
+
+            with self.lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            time.sleep(0.03)
+            with self.lock:
+                self.active -= 1
+            return FakeResponse(f"candidate-{call_no}")
+
+    endpoint = FakeEndpoint()
+    original = llm_module.urllib.request.build_opener
+    llm_module.urllib.request.build_opener = lambda *args, **kwargs: endpoint
+    try:
+        client = Client(base_url="https://compat.example/v1", api_key="test")
+        got = client.complete("system", "user", n=3)
+        assert len(got) == 3
+        assert endpoint.calls[0]["n"] == 3
+        assert all("n" not in p for p in endpoint.calls[1:])
+        assert endpoint.max_active >= 2, "降级后应并发请求候选"
+        assert client._ignores_n
+
+        previous = len(endpoint.calls)
+        assert len(client.complete("system", "user", n=2)) == 2
+        assert len(endpoint.calls) == previous + 2
+        assert all("n" not in p for p in endpoint.calls[previous:])
+    finally:
+        llm_module.urllib.request.build_opener = original
+
+
+def test_non_n_errors_are_not_retried():
+    """认证、配额、其他 400 与网络错误都不得被误当成 n 降级。"""
+    cases = [
+        _LLMHTTPError(401, '{"error":{"code":"invalid_api_key"}}'),
+        _LLMHTTPError(429, '{"error":{"code":"insufficient_quota"}}'),
+        _LLMHTTPError(400, "Unsupported parameter: 'max_tokens'"),
+        LLMError("LLM 调用失败: connection reset"),
+    ]
+
+    for expected in cases:
+        class FailingClient(Client):
+            def __init__(self):
+                super().__init__(base_url="https://compat.example/v1", api_key="test")
+                self.calls = 0
+
+            def _call(self, payload, timeout):
+                self.calls += 1
+                raise expected
+
+        client = FailingClient()
+        try:
+            client.complete("system", "user", n=3)
+        except LLMError as actual:
+            assert actual is expected
+        else:
+            raise AssertionError(f"{expected!r} 未上抛")
+        assert client.calls == 1, f"{expected!r} 被错误重试"
+        assert not client._ignores_n
+
+
+def test_parallel_candidate_error_is_not_swallowed():
+    """降级并发中任一请求失败，整个调用必须失败而非返回部分候选。"""
+    class PartiallyFailingClient(Client):
+        def __init__(self):
+            super().__init__(base_url="https://compat.example/v1", api_key="test")
+            self._ignores_n = True
+            self.lock = threading.Lock()
+            self.calls = 0
+
+        def _call(self, payload, timeout):
+            with self.lock:
+                self.calls += 1
+                call_no = self.calls
+            if call_no == 1:
+                raise LLMError("LLM 调用失败: timeout")
+            return [f"candidate-{call_no}"]
+
+    client = PartiallyFailingClient()
+    try:
+        client.complete("system", "user", n=3)
+    except LLMError as exc:
+        assert "timeout" in str(exc)
+    else:
+        raise AssertionError("并发请求的 LLMError 被吞掉")
+    assert client.calls == 3, "候选请求只应各发一次"
+
+
+def test_empty_choices_is_an_operational_error():
+    """HTTP 200 但 choices=[] 不得被上层误报为 0 个候选的成功任务。"""
+    class EmptyClient(Client):
+        def __init__(self):
+            super().__init__(base_url="https://compat.example/v1", api_key="test")
+            self.calls = 0
+
+        def _call(self, payload, timeout):
+            self.calls += 1
+            return []
+
+    client = EmptyClient()
+    try:
+        client.complete("system", "user", n=1)
+    except LLMError as exc:
+        assert "没有候选文本" in str(exc)
+    else:
+        raise AssertionError("choices=[] 被误报为成功")
+    assert client.calls == 1
+
+
+def test_blank_choice_content_is_an_operational_error():
+    """choices 占位但 content 为 null/空串也不是成功候选。"""
+    class FakeResponse:
+        def __init__(self, content):
+            self.content = content
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": self.content}}]}).encode()
+
+    original = llm_module.urllib.request.build_opener
+    try:
+        for bad in (None, "", "   \n"):
+            class FakeOpener:
+                def open(self, req, timeout=None):
+                    return FakeResponse(bad)
+
+            llm_module.urllib.request.build_opener = lambda *args, **kwargs: FakeOpener()
+            client = Client(base_url="https://compat.example/v1", api_key="test")
+            try:
+                client.complete("system", "user", n=1)
+            except LLMError as exc:
+                assert "没有候选文本" in str(exc)
+            else:
+                raise AssertionError(f"content={bad!r} 被误报为成功")
+    finally:
+        llm_module.urllib.request.build_opener = original

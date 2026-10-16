@@ -21,6 +21,13 @@ __pycache__/
 .venv/
 venv/
 .env
+platform-ui/node_modules/
+platform-ui/dist/
+rightthesis-ui-prototype/node_modules/
+rightthesis-ui-prototype/dist/
+data/*.sqlite3*
+data/trial_session_secret
+data/auth_session_secret
 engine/weights.draft.json
 probe/out/_range/
 probe/out/range.csv

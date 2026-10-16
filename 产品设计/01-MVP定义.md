@@ -1,4 +1,6 @@
-# MVP 定义
+# MVP 定义（早期方案，已归档）
+
+> 本文保留了项目早期假设，不再代表当前产品。现行本地 MVP、实际 API 和商业化边界以 [02-本地MVP与商业化接口.md](02-本地MVP与商业化接口.md) 与根目录 `README.md` 为准。例如，当前版本已支持 DOCX / PDF 输入，也并不采用本文早期设想的 FastAPI + React + PostgreSQL 外壳。
 
 参考对象：[Pangram](https://www.pangram.com/)（纯检测，机构侧）、
 [Phrasly](https://phrasly.ai/zh)（学生侧全家桶，中文本地化）

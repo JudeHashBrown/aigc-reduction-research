@@ -26,7 +26,8 @@ T1 = [
 T2 = [
     "crucial", "enduring", "leverage", "leveraging", "robust", "nuanced",
     "comprehensive", "novel", "paramount", "facilitate", "facilitates",
-    "utilize", "utilizing", "utilization", "demonstrate", "demonstrates",
+    "utilize", "utilizes", "utilized", "utilizing", "utilization",
+    "demonstrate", "demonstrates",
     "significantly", "effectively", "enhance", "enhances", "enhancing",
     "foster", "fosters", "fostering", "align with", "aligns with",
     "aligned with", "highlight", "highlights", "highlighting",
@@ -57,7 +58,8 @@ PARA_VOCAB_LIMIT = 2
 
 # 维基 §Signs of human writing：人类更常用朴素动词，AI 偏好文绉绉的同义词
 SUGGEST = {
-    "utilize": "use", "utilizing": "using", "utilization": "use",
+    "utilize": "use", "utilizes": "uses", "utilized": "used",
+    "utilizing": "using", "utilization": "use",
     "facilitate": "help", "facilitates": "helps",
     "demonstrate": "show", "demonstrates": "shows",
     "leverage": "use", "leveraging": "using",

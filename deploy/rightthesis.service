@@ -1,0 +1,22 @@
+[Unit]
+Description=RightThesis application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+WorkingDirectory=/home/admin/rightthesis
+ExecStart=/home/admin/rightthesis/.venv/bin/python web/server.py 8877
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/admin/rightthesis/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

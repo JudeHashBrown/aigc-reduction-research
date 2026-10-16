@@ -37,6 +37,12 @@ def detect_lang(text: str) -> str:
     zh, en = len(CJK.findall(text)), len(LATIN.findall(text))
     if zh + en == 0:
         return "zh"
+    # Chinese academic prose often contains long runs of model/dataset names
+    # (BERT, GPT, Transformer, ResNet-50).  Raw character ratios can then label
+    # an otherwise Chinese sentence as English and skip every Chinese rule.
+    # Strong Chinese prose markers are a better signal than acronym length.
+    if zh >= 4 and re.search(r'[，。！？；]|本文|本研究|研究|方法|结果|分析|探讨', text):
+        return "zh"
     return "zh" if zh / (zh + en) > 0.30 else "en"
 
 

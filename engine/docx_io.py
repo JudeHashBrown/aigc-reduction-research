@@ -9,6 +9,7 @@
 整篇重新生成 docx 会丢掉这些东西，对毕业论文来说不可接受。
 """
 
+import difflib
 import io
 import re
 import zipfile
@@ -80,10 +81,6 @@ def _para_text(p: ET.Element) -> str:
     return "".join(parts)
 
 
-def _is_deleted(p: ET.Element) -> bool:
-    return any(n.tag == W + "delText" for n in p.iter())
-
-
 def extract(data: bytes) -> Tuple[str, Dict]:
     """取出正文。返回 (文本, 元信息)。
 
@@ -100,8 +97,6 @@ def extract(data: bytes) -> Tuple[str, Dict]:
 
     paras, para_map = [], []
     for idx, p in enumerate(body.iter(W + "p")):
-        if _is_deleted(p):
-            continue
         t = _para_text(p).strip()
         if not t:
             continue
@@ -117,23 +112,100 @@ def extract(data: bytes) -> Tuple[str, Dict]:
         "n_chars": len(text),
         "para_map": para_map,
         "has_tables": body.find(f".//{W}tbl") is not None,
+        "has_tracked_changes": (body.find(f".//{W}ins") is not None
+                                or body.find(f".//{W}del") is not None),
     }
 
 
-def _set_para_text(p: ET.Element, new_text: str) -> None:
-    """把整段文字塞回第一个 run，其余 run 的文字清空。
+def _restore_root_namespaces(original: bytes, serialized: bytes) -> bytes:
+    """Restore unused xmlns declarations referenced by mc:Ignorable.
 
-    保留第一个 run 是为了继承这一段的字体与格式；清空而不是删除其余 run，
-    是因为 run 上可能挂着书签、批注锚点、域代码，删掉会破坏文档。
+    ElementTree drops namespace declarations that are not attached to an
+    element.  Word still requires declarations such as w14/wp14 when their
+    prefixes appear only inside the string value of ``mc:Ignorable``.
+    """
+    root_start = re.search(rb'<(?:[A-Za-z0-9_.-]+:)?document\b', serialized)
+    if not root_start:
+        return serialized
+    root_end = serialized.find(b">", root_start.start())
+    if root_end < 0:
+        return serialized
+    root_tag = serialized[root_start.start():root_end]
+    additions = []
+    for prefix, uri in _NS_DECL.findall(original[:8192]):
+        marker = b"xmlns:" + prefix + b"="
+        if marker not in root_tag:
+            additions.append(b' xmlns:' + prefix + b'="' + uri + b'"')
+    if not additions:
+        return serialized
+    return serialized[:root_end] + b"".join(additions) + serialized[root_end:]
+
+
+def _set_para_text(p: ET.Element, new_text: str) -> None:
+    """Patch text across existing runs without flattening local formatting.
+
+    Equal text stays in its original run.  Replacements spanning multiple runs
+    are distributed in proportion to the old run lengths, so mixed bold,
+    italics, hyperlinks and field anchors remain local instead of making the
+    entire paragraph inherit the first run's style.
     """
     ts = [n for n in p.iter() if n.tag == W + "t"]
     if not ts:
         return
-    ts[0].text = new_text
-    # xml:space="preserve"，否则 Word 会吃掉首尾空格
-    ts[0].set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-    for n in ts[1:]:
-        n.text = ""
+    old_parts = [n.text or "" for n in ts]
+    old_text = "".join(old_parts)
+    if old_text == new_text:
+        return
+    if any(n.tag in (W + "tab", W + "br", W + "cr") for n in p.iter()):
+        raise DocxError("段落含制表符或手动换行，修改后无法安全保持 run 格式；请复制文本后手工替换。")
+
+    starts, pos = [], 0
+    for part in old_parts:
+        starts.append((pos, pos + len(part)))
+        pos += len(part)
+    buffers = [""] * len(ts)
+
+    def append_equal(i1: int, i2: int, segment: str) -> None:
+        cursor = 0
+        for idx, (start, end) in enumerate(starts):
+            left, right = max(i1, start), min(i2, end)
+            if right > left:
+                length = right - left
+                buffers[idx] += segment[cursor:cursor + length]
+                cursor += length
+
+    def append_replacement(i1: int, i2: int, segment: str) -> None:
+        if not segment:
+            return
+        covered = [(idx, max(0, min(i2, end) - max(i1, start)))
+                   for idx, (start, end) in enumerate(starts)
+                   if min(i2, end) > max(i1, start)]
+        if not covered:  # pure insertion: inherit the nearest surrounding run
+            idx = next((idx for idx, (_start, end) in enumerate(starts) if end >= i1),
+                       len(ts) - 1)
+            buffers[idx] += segment
+            return
+        total = sum(weight for _, weight in covered)
+        consumed = 0
+        cumulative = 0
+        for n, (idx, weight) in enumerate(covered):
+            cumulative += weight
+            end = len(segment) if n == len(covered) - 1 else round(
+                len(segment) * cumulative / total)
+            buffers[idx] += segment[consumed:end]
+            consumed = end
+
+    matcher = difflib.SequenceMatcher(None, old_text, new_text)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            append_equal(i1, i2, new_text[j1:j2])
+        elif tag in ("replace", "insert"):
+            append_replacement(i1, i2, new_text[j1:j2])
+
+    for node, value in zip(ts, buffers):
+        node.text = value
+        if value[:1].isspace() or value[-1:].isspace():
+            node.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
 
 
 def replace(data: bytes, new_paragraphs: List[str], meta: Dict) -> bytes:
@@ -153,6 +225,7 @@ def replace(data: bytes, new_paragraphs: List[str], meta: Dict) -> bytes:
             _set_para_text(p, wanted[idx])
 
     new_doc = ET.tostring(root, encoding="UTF-8", xml_declaration=True)
+    new_doc = _restore_root_namespaces(raw, new_doc)
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zo:
         for item in zf.infolist():

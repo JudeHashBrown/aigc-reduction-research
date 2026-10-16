@@ -30,14 +30,19 @@ from llm import Client, LLMError
 CODE_HANDLED = {
     "zh": {"V-T1", "V-T2", "S03", "S05", "S07", "S08", "F01", "F02",
            "L01", "L05", "L07", "L09", "L10"},
-    "en": {"V-T1", "V-T2", "S04", "S05", "S07", "S08", "P02", "F01"},
+    "en": set(),
 }
 # 需要理解语义才能改好的。注意 S01（三元并列）两种语言都归这里：
 # 代码修法是删掉第三项，那是信息丢失，不可接受。
 SEMANTIC = {
     "zh": {"S02", "S04", "S06", "S09", "S10", "P01", "P02",
            "L02", "L03", "L04", "L06", "L08"},
-    "en": {"S01", "S02", "S03", "S09", "S11", "S12", "P03"},
+    # S11 is the only English LLM edit with a mechanically verifiable output:
+    # the model may remove the fixed passive shell, but the remainder must be
+    # copied word for word.  Other English structure rules remain useful
+    # diagnostics, but an unrestricted paragraph rewrite can add or delete
+    # ordinary factual words without tripping a noun/number guard.
+    "en": {"S11"},
 }
 
 # 只报告、不自动修的规则。放在这里是为了让覆盖审计能区分
@@ -47,7 +52,11 @@ SEMANTIC = {
 # F04 中英引号：属低危噪声，由噪声预算保留。
 # S01 顿号罗列：实测 85% 误报（合法技术枚举），自动修会破坏正确内容。
 # L11 句中连接词：效应量无人测过，且换词会让学术文体口语化。
-REPORT_ONLY = {"zh": {"F03", "F04", "S01", "L11"}, "en": set()}
+REPORT_ONLY = {
+    "zh": {"F03", "F04", "S01", "L11"},
+    "en": {"V-T1", "V-T2", "S01", "S02", "S03", "S04", "S05",
+           "S07", "S08", "S09", "S12", "P02", "P03", "F01"},
+}
 
 LEN_RANGE = (0.70, 1.35)        # 允许的长度浮动
 NOISE_FLOOR_PER_1K = 2          # 每千字期望保留的轻微特征数（噪声预算）
@@ -231,9 +240,30 @@ def _clean_output(raw: str) -> str:
 
 
 def _semantic_findings(rep: Dict, pi: int, lang: str) -> List[Dict]:
+    paragraph_findings = [f for f in rep["findings"] if f["para_index"] == pi]
+    # EN-S01 is intentionally review-only because real variable/data lists are
+    # frequent and deleting one item is silent information loss.  If a
+    # paragraph also contains another free-form rewrite signal, sending the
+    # whole paragraph to the model would still expose that list.  EN-S11 is the
+    # exception: its fixed passive shell can be removed deterministically while
+    # copying the rest of every sentence byte-for-byte, so an unrelated S01 in
+    # the same paragraph must not suppress that safe edit.
+    if lang == "en" and any(f["rule_id"] == "S01" for f in paragraph_findings):
+        return [f for f in paragraph_findings if f["rule_id"] == "S11"]
     want = SEMANTIC[lang]
-    return [f for f in rep["findings"]
-            if f["para_index"] == pi and f["rule_id"] in want]
+    return [f for f in paragraph_findings if f["rule_id"] in want]
+
+
+def _english_auto_findings(rep: Dict, pi: int) -> List[Dict]:
+    """Opt-in model targets, excluding ambiguous enumerations.
+
+    If a paragraph contains S01, only the byte-verifiable S11 shell removal
+    may run. This prevents a model from silently dropping a real list item.
+    """
+    paragraph_findings = [f for f in rep["findings"] if f["para_index"] == pi]
+    if any(f["rule_id"] == "S01" for f in paragraph_findings):
+        return [f for f in paragraph_findings if f["rule_id"] == "S11"]
+    return paragraph_findings
 
 
 def _weighted(rep: Dict, pi: Optional[int] = None) -> float:
@@ -264,6 +294,17 @@ def _build_user_sweep(para: str, lang: str) -> str:
 
 def _build_user(para: str, findings: List[Dict], lang: str) -> str:
     if lang == "en":
+        if {item["rule_id"] for item in findings} == {"S11"}:
+            return (
+                "Remove only the leading passive shell (for example, "
+                "\"It was found that\"). Copy every word after that shell "
+                "unchanged, including qualifiers, technical terms, and the "
+                "final punctuation. Preserve capitalization exactly, except "
+                "that an initial common article or pronoun (such as \"the\" "
+                "or \"this\") may be capitalized. Output "
+                "only the resulting text.\n\n"
+                "Text to rewrite:\n<<<TEXT>>>\n" + para + "\n<<<END>>>"
+            )
         head = "Fix these specific issues:\n"
         tail = "\n\nText to rewrite:\n<<<TEXT>>>\n{t}\n<<<END>>>"
     else:
@@ -280,9 +321,64 @@ def _build_user(para: str, findings: List[Dict], lang: str) -> str:
     return head + "\n".join(lines) + tail.format(t=para)
 
 
+_EN_S11_SHELL = re.compile(
+    r"^(\s*)it\s+(?:was|is|has\s+been|should\s+be|must\s+be|can\s+be)\s+"
+    r"(?:found|noted|observed|shown|argued|emphasized|considered|concluded)\s+"
+    r"that\s+",
+    re.I,
+)
+
+
+def _strip_en_s11_shell(text: str) -> Optional[str]:
+    """Return the one English semantic edit we can verify mechanically."""
+    match = _EN_S11_SHELL.match(text)
+    if not match:
+        return None
+    body = text[match.end():]
+    # Do not blindly uppercase the first ASCII character: miRNA, k-means,
+    # t-SNE, eGFR and pH are case-sensitive identifiers.  Capitalization is
+    # allowed only for an explicit whitelist of ordinary sentence starters.
+    first = re.match(r"(\s*)(the|this|these|those|we|our|they)(\b)", body)
+    if first:
+        word_start = len(first.group(1))
+        body = body[:word_start] + body[word_start].upper() + body[word_start + 1:]
+    return match.group(1) + body
+
+
+def _strip_en_s11_sentences(text: str,
+                            findings: Optional[List[Dict]] = None) -> Optional[str]:
+    """Remove only verified S11 shells, including later sentences.
+
+    ``S11`` is diagnosed sentence by sentence, while ``_strip_en_s11_shell``
+    intentionally matches only the beginning of the value it receives.  Apply
+    each diagnosed start from right to left so offsets stay valid and every
+    byte after the fixed shell remains unchanged.  ``None`` means a diagnostic
+    span no longer matches the mechanical transformation and must not be used.
+    """
+    items = findings
+    if items is None:
+        items = diagnose(text).get("findings", [])
+    starts = sorted({int(item["start"]) for item in items
+                     if item.get("rule_id") == "S11"}, reverse=True)
+    if not starts:
+        return None
+
+    out = text
+    for start in starts:
+        if start < 0 or start >= len(out):
+            return None
+        stripped = _strip_en_s11_shell(out[start:])
+        if stripped is None:
+            return None
+        out = out[:start] + stripped
+    return out
+
+
 def _score_candidate(orig: str, cand: str, lang: str,
                      base_rep: Dict, weights_path: Optional[str],
-                     sweep: bool = False) -> Dict:
+                     sweep: bool = False,
+                     target_rule_ids: Optional[set] = None,
+                     english_auto: bool = False) -> Dict:
     """给候选打分。硬性不合格直接作废，其余按加权分排序。"""
     cand = _clean_output(cand)
     res = {"text": cand, "ok": False, "reason": "", "score": -1e9}
@@ -291,8 +387,38 @@ def _score_candidate(orig: str, cand: str, lang: str,
         res["reason"] = "空输出"
         return res
 
+    # English content words cannot be protected reliably by a generic noun
+    # list: a one-off word such as "deployment" or "auditability" may be the
+    # paragraph's key fact.  Therefore English LLM output is accepted only for
+    # the exact, deterministic S11 transformation.  In coverage="all" mode an
+    # English paragraph with no verified target must remain byte-for-byte the
+    # same (apart from wrapper whitespace removed by _clean_output).
+    if lang == "en" and not english_auto:
+        target_ids = set(target_rule_ids or ())
+        if sweep:
+            if cand.strip() != orig.strip():
+                res["reason"] = "英文无明确目标，拒绝未验证改写"
+                return res
+            cand = orig
+            res["text"] = cand
+        elif target_ids == {"S11"}:
+            expected = _strip_en_s11_sentences(orig, base_rep.get("findings", []))
+            if expected is None or cand.strip() != expected.strip():
+                res["reason"] = "英文被动壳之外的正文发生变化"
+                return res
+            cand = expected
+            res["text"] = cand
+        else:
+            res["reason"] = "英文改写不在可机械验证的白名单内"
+            return res
+
     ratio = len(cand) / max(1, len(orig))
-    if not (LEN_RANGE[0] <= ratio <= LEN_RANGE[1]):
+    # Removing an English passive shell ("It was found that …") can safely
+    # shorten a short sentence by more than 30%.  The factual/semantic guards
+    # below are the real safety boundary, so allow the same conservative lower
+    # bound used by the Chinese product engine for English candidates.
+    min_ratio = 0.55 if lang == "en" else LEN_RANGE[0]
+    if not (min_ratio <= ratio <= LEN_RANGE[1]):
         res["reason"] = f"长度偏离过大（{ratio:.2f}×）"
         return res
 
@@ -311,8 +437,24 @@ def _score_candidate(orig: str, cand: str, lang: str,
         res["guard"] = g
         return res
 
+    # A candidate that changes a qualifier, negation, plan/completion state,
+    # condition, comparison or causal relation is not a style improvement.
+    # Reject it outright; a score penalty can still let a fact-changing
+    # candidate win when its style score drops enough.
+    if g.get("semantic_changed"):
+        res["reason"] = "语义边界改变：" + guard.describe(g)
+        res["guard"] = g
+        return res
+    if g["n_removed"]:
+        res["reason"] = "丢失事实：" + guard.describe(g)
+        res["guard"] = g
+        return res
+
     if lang == "zh" and re.search(r'[A-Za-z]{40,}', cand):
         res["reason"] = "输出语言异常"
+        return res
+    if lang == "en" and detect_lang(cand) != "en":
+        res["reason"] = "输出语言异常：英文段落被改成了其他语言"
         return res
 
     crep = diagnose(cand, weights_path=weights_path)
@@ -322,7 +464,11 @@ def _score_candidate(orig: str, cand: str, lang: str,
     # 评分却照旧给「删掉它们」加分，等于用一条我们自己不信的指标
     # 去驱动模型破坏正确内容。上面那段石墨烯材料属性就是典型：
     # 全部权重都来自 S01，删掉它就能拿满分。
-    ro = REPORT_ONLY.get(lang, set())
+    # In the opt-in automatic English lane, review-only findings become
+    # candidate targets. S01 remains excluded: real technical enumerations
+    # are too often misclassified, and removing an item can lose a fact.
+    ro = ({"S01"} if lang == "en" and english_auto
+          else REPORT_ONLY.get(lang, set()))
     eff = lambda fs: sum(f["weight"] for f in fs if f["rule_id"] not in ro)  # noqa: E731
     base_w = eff(base_rep["findings"])
     cand_w = eff(crep["findings"])
@@ -361,7 +507,7 @@ def rewrite(text: str, client: Client, n_candidates: int = 3,
             max_paragraphs: Optional[int] = None,
             coverage: str = "targeted",
             workers: int = 6,
-            progress=None) -> Dict:
+            progress=None, english_auto: bool = False) -> Dict:
     """对段落做 best-of-N 改写。
 
     coverage="targeted"：只改规则命中的段落（诊断工具的做法，最小干预）
@@ -376,7 +522,9 @@ def rewrite(text: str, client: Client, n_candidates: int = 3,
         # 规则覆盖率上。实测：一篇 4.8 万字论文 108 段里只有 12 段命中语义规则。
         targets = list(range(len(paras)))
     else:
-        targets = [pi for pi in range(len(paras)) if _semantic_findings(rep, pi, langs[pi])]
+        targets = [pi for pi in range(len(paras)) if (
+            _english_auto_findings(rep, pi) if english_auto and langs[pi] == "en"
+            else _semantic_findings(rep, pi, langs[pi]))]
     if max_paragraphs:
         targets = sorted(targets,
                          key=lambda pi: -_weighted(rep, pi))[:max_paragraphs]
@@ -386,21 +534,34 @@ def rewrite(text: str, client: Client, n_candidates: int = 3,
 
     def work(pi):
         para, lang = paras[pi].text, langs[pi]
-        fs = _semantic_findings(rep, pi, lang)
+        fs = (_english_auto_findings(rep, pi) if english_auto and lang == "en"
+              else _semantic_findings(rep, pi, lang))
         sweep = not fs
         pr = ParaResult(pi, lang, para, para, False, "", [f["rule_id"] for f in fs])
 
         sub = diagnose(para, weights_path=weights_path)
-        try:
-            cands = client.complete(
-                SYS_EN if lang == "en" else SYS_ZH,
-                _build_user_sweep(para, lang) if sweep else _build_user(para, fs, lang),
-                n=n_candidates)
-        except LLMError as e:
-            pr.reason = f"调用失败：{e}"
-            return pr, None
+        target_ids = {item["rule_id"] for item in fs}
+        if lang == "en" and target_ids == {"S11"}:
+            # S11 is a mechanically verifiable deletion.  Performing it here
+            # avoids paying an LLM to reproduce text and, crucially, keeps a
+            # review-only S01 elsewhere in the paragraph entirely untouched.
+            deterministic = _strip_en_s11_sentences(
+                para, sub.get("findings", []))
+            cands = [deterministic] if deterministic is not None else []
+        else:
+            try:
+                cands = client.complete(
+                    SYS_EN if lang == "en" else SYS_ZH,
+                    _build_user_sweep(para, lang) if sweep else _build_user(para, fs, lang),
+                    n=n_candidates)
+            except LLMError as e:
+                pr.reason = f"调用失败：{e}"
+                return pr, None
 
-        scored = [_score_candidate(para, c, lang, sub, weights_path, sweep)
+        scored = [_score_candidate(
+            para, c, lang, sub, weights_path, sweep,
+            target_rule_ids=target_ids, english_auto=english_auto,
+        )
                   for c in cands]
         pr.candidates = [{k: v for k, v in x.items() if k != "guard"} for x in scored]
         # 有可测量改善的优先；没有的（全覆盖模式）只要「没改坏」也收

@@ -82,7 +82,9 @@ DANGLING = [
     (r'[，,、：]\s*$', "段尾悬空逗号"),
     (r'很[的了着]', "很+虚词"),
     (r'是，', "是后紧跟逗号"),
-    (r'\s{3,}', "连续空格"),
+    # Paragraph separators, indentation and whitespace-only input are layout,
+    # not broken prose.  Only flag a long whitespace run inside visible text.
+    (r'(?<=\S)[ \t]{3,}(?=\S)', "正文内连续空格"),
     (r'[a-z]\s+[.,;]', "英文标点前空格"),
 ]
 
@@ -376,7 +378,12 @@ def test_overall_never_reports_a_percentage():
     from diagnose import diagnose
     o = diagnose("本文深入探讨了该问题，研究表明其具有重要的理论意义。")["overall"]
     blob = str(o)
-    for pat in (r'AI\s*率', r'AI[- ]?rate', r'概率', r'置信度'):
+    # 可以在诚实声明里出现“不提供 AI 率百分比”；禁止的是
+    # 把一个数值包装成 AI 率/概率/置信度。旧测试同时禁止“AI率”字样
+    # 又强制 disclaimer 明说不给百分比，逻辑上自相矛盾。
+    for pat in (r'AI\s*率\s*[:：]?\s*\d+(?:\.\d+)?\s*%',
+                r'AI[- ]?rate\s*[:=]?\s*\d+(?:\.\d+)?\s*%',
+                r'(?:概率|置信度)\s*[:：]?\s*\d+(?:\.\d+)?\s*%'):
         assert not re.search(pat, blob, re.I), f"整体评估里出现了 {pat}：{blob[:200]}"
     assert "百分比" in o["disclaimer"], "必须明确声明不给百分比"
     # 声明必须跟数据一起下发，换个前端也不能丢

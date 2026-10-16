@@ -32,14 +32,28 @@ SAFE_ZH = ["L10",
            "S08", "S05", "S07", "S03",
            "L01", "L09", "L05", "L07",
            "V-T1", "V-T2", "F01", "F02"]
-SAFE_EN = ["S08", "S05", "S07", "S04", "P02", "V-T1", "V-T2", "F01"]
+# English clause deletion is much riskier than a literal vocabulary/format
+# substitution.  In particular S05/S08/P02 can silently erase the only
+# occurrence of an ordinary content word (``auditability``, ``deployment``),
+# which the generic term guard cannot reliably classify as a technical term.
+# S07 removes attribution and S04 can change a temporary role ("acts as")
+# into identity ("is").  Keep those findings visible for review, but do not
+# present them as deterministic fixes.
+# English findings are analysis-only at this layer.  Even a seemingly literal
+# global replacement can alter a quoted sentence, code literal, definition or
+# domain term.  The narrowly verifiable S11 edit lives in rewrite.py.
+SAFE_EN = []
 
 
 def _tidy_en(text: str) -> str:
     text = re.sub(r'\s+([.,;:!?])', r'\1', text)
     text = re.sub(r'([.,;:])\s*\1+', r'\1', text)
     text = re.sub(r'\s{2,}', ' ', text)
-    text = re.sub(r'(^|[.!?]\s+)([a-z])', lambda m: m.group(1) + m.group(2).upper(), text)
+    text = re.sub(
+        r'^((?:(?:[-*•]|\d+[.)])\s+)?)([a-z])',
+        lambda m: m.group(1) + m.group(2).upper(), text)
+    text = re.sub(r'([.!?]\s+)([a-z])',
+                  lambda m: m.group(1) + m.group(2).upper(), text)
     return text.strip()
 
 
@@ -90,10 +104,14 @@ def codefix(text: str) -> Tuple[str, List[Dict]]:
         # 消融函数内部那套 \n\n 切分在这里永远只看到一段，判不出首段，
         # 所以首段豁免必须在这一层做。
         first_para, seen_nonempty = not seen_nonempty, True
-        lang = detect_lang(para)
+        leading = re.match(r'^[ \t]*', para).group(0)
+        trailing = re.search(r'[ \t]*$', para).group(0)
+        end = len(para) - len(trailing) if trailing else len(para)
+        body = para[len(leading):end]
+        lang = detect_lang(body)
         table = ABLATIONS_EN if lang == "en" else ABLATIONS
         safe = SAFE_EN if lang == "en" else SAFE_ZH
-        cur = para
+        cur = body
         touched = False
         for rid in safe:
             if rid not in table or rid in exempt:
@@ -120,11 +138,9 @@ def codefix(text: str) -> Tuple[str, List[Dict]]:
         # 没改过的段落一个字符都不碰——收尾规则本身也可能误伤作者原文
         if touched:
             cur = tidy_zh(cur) if lang == "zh" else _tidy_en(cur)
-        out_paras.append(cur)
+        out_paras.append(leading + cur + trailing)
 
     fixed = "\n".join(out_paras)
-    fixed = re.sub(r'[ \t]+\n', '\n', fixed)
-    fixed = re.sub(r'\n{3,}', '\n\n', fixed).strip()
     log = [{"rule_id": k[0], "name": k[1], "lang": k[2], "count": v}
            for k, v in sorted(tally.items(), key=lambda kv: -kv[1])]
     for rid, terms in sorted(reverted.items()):
@@ -133,4 +149,16 @@ def codefix(text: str) -> Tuple[str, List[Dict]]:
     if exempt:
         log.append({"rule_id": "—", "lang": "—",
                     "name": f"按噪声预算保留：{'、'.join(sorted(exempt))}", "count": 0})
+    # 旧规则的某些句尾删除会在 CRLF 或极短段落上吞掉整段。
+    # 不再依赖每条规则的启发式判断：整文任何事实丢失、新增或语义
+    # 边界变化都整体回滚。新客户端使用 humanizer_cn.autofix，这里只为旧
+    # API/旧测试保留安全兼容。
+    final_guard = guard.compare(text, fixed)
+    if (final_guard["fabricated"] or final_guard["n_removed"]
+            or final_guard.get("semantic_changed")):
+        log.append({"rule_id": "GUARD", "lang": "—", "count": 0,
+                    "name": "整体事实守卫未通过，已保留原文："
+                            + guard.describe(final_guard)})
+        # 仅保留旧 codefix 既有的 CRLF→LF 输入归一化；正文不改。
+        return text.replace("\r\n", "\n").replace("\r", "\n"), log
     return fixed, log

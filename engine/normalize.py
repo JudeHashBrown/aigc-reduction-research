@@ -11,7 +11,6 @@
 所以这里不只是清掉，还要**告诉用户清掉了什么**。
 """
 import re
-import unicodedata
 from typing import Dict, Tuple
 
 # 零宽与格式控制字符：肉眼不可见，但会打断所有正则匹配
@@ -66,8 +65,9 @@ def normalize_text(text: str) -> Tuple[str, Dict]:
     report["odd_space"] = len(_ODD_SPACE_RE.findall(text))
     text = _ODD_SPACE_RE.sub(" ", text)
 
-    # 全角字母数字 → 半角。Word 粘贴常见，且会打断英文规则的 \b 边界。
-    text = unicodedata.normalize("NFKC", text) if report["invisible"] else text
+    # 不做全文 NFKC。它会把 x² 变成 x2、① 变成 1，还会改变中文
+    # 标点；这些都可能是公式或原稿格式。宁可少匹配一个全角英文词，
+    # 也不能在用户只要求清除隐藏字符时静默改写数学内容。
 
     report["traditional"] = looks_traditional(text)
     report["changed"] = any((report["invisible"], report["variation"],
