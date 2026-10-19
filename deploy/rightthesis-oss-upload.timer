@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily off-server upload of the encrypted RightThesis database backup
+
+[Timer]
+OnCalendar=*-*-* 02:50:00
+Persistent=true
+Unit=rightthesis-oss-upload.service
+
+[Install]
+WantedBy=timers.target

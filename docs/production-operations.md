@@ -11,6 +11,33 @@ python3 scripts/backup_database.py backup --database /home/admin/rightthesis/dat
 
 `init-key` 在密钥已存在时拒绝覆盖。备份程序使用 SQLite 在线备份 API、AES-GCM 加密，且在发布档案前进行解密及 `PRAGMA integrity_check`。档案和密钥必须分别保存在服务器之外；复制后再次运行 `verify`。不要把密钥、数据库或备份加入 Git。服务器定时任务配置在 `deploy/rightthesis-backup.service` 和 `.timer`，每天 02:35 运行；检查 `systemctl status rightthesis-backup.timer` 与 `journalctl -u rightthesis-backup.service`。还需要另行配置云端异地目标或定期拉取，**定时备份本身不是异地备份**。
 
+### 加密备份上传阿里云 OSS
+
+`deploy/rightthesis-oss-upload.service` 和 `.timer` 将在每天 02:50 上传 6 小时内的最新加密备份到香港私有 Bucket `rightthesis-backup-jude-2026` 的 `rightthesis-backups/` 前缀。上传前再次解密校验，不上传原始 SQLite 或 `backup.key`。与主服务器同在香港地域不构成跨地域容灾；务必把解密密钥另存于安全地点，并定期进行下载及还原演练。
+
+在阿里云 RAM 中创建仅供程序使用的用户 `rightthesis-backup-uploader`，不要授予控制台登录或 `AliyunOSSFullAccess`。创建自定义权限策略并只授予该用户：
+
+```json
+{
+  "Version": "1",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "oss:PutObject",
+    "Resource": "acs:oss:*:*:rightthesis-backup-jude-2026/rightthesis-backups/*"
+  }]
+}
+```
+
+为该用户创建程序访问 AccessKey，并仅在服务器私有文件 `/home/admin/.config/rightthesis/oss.env` 中填写 `OSS_ACCESS_KEY_ID=...` 和 `OSS_ACCESS_KEY_SECRET=...` 两行，文件权限 `0600`。**不要把密钥发到聊天、写进 Git、放进网页或截图。**配置好后先手动启动并检查日志：
+
+```sh
+sudo systemctl start rightthesis-oss-upload.service
+sudo systemctl status rightthesis-oss-upload.service --no-pager
+sudo journalctl -u rightthesis-oss-upload.service -n 30 --no-pager
+```
+
+只有看到上传成功，并在 OSS 控制台确认 `rightthesis-backups/` 中存在对应 `.rtbk` 对象后，才运行 `sudo systemctl enable --now rightthesis-oss-upload.timer`。后续检查 `systemctl list-timers rightthesis-oss-upload.timer`。此写入专用凭据没有读取或删除权限；独立校验云端对象必须使用有读取权限的管理员身份，通过控制台下载后用**另一份**备份密钥运行 `verify` 和 `restore`。Bucket 版本控制及保留策略需结合隐私删除申请、存储费用和恢复要求单独制定。
+
 恢复演练只写入一个不存在的新路径，不替换在线数据库：
 
 ```sh

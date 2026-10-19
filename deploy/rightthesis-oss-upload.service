@@ -1,0 +1,18 @@
+[Unit]
+Description=Verify and upload the newest encrypted RightThesis backup to private OSS
+After=network-online.target rightthesis-backup.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=admin
+Group=admin
+WorkingDirectory=/home/admin/rightthesis
+EnvironmentFile=/home/admin/.config/rightthesis/oss.env
+ExecStart=/home/admin/rightthesis/.venv/bin/python scripts/upload_oss_backup.py --backup-dir /home/admin/rightthesis-backups --key-file /home/admin/.config/rightthesis/backup.key
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/admin/rightthesis-backups
+PrivateTmp=true
