@@ -626,3 +626,7 @@ export function usePlatform() {
   if (!context) throw new Error("usePlatform must be used inside PlatformProvider");
   return context;
 }
+
+export function useOptionalPlatform() {
+  return useContext(PlatformContext);
+}

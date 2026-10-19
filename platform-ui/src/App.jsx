@@ -473,6 +473,13 @@ export function App() {
   useEffect(() => {
     if (!accountSignInRequired) return;
     try {
+      if (path === "/checkout/pro") {
+        const query = new URLSearchParams(window.location.hash.split("?", 2)[1] || "");
+        const planId = query.get("plan");
+        if (planId && /^[A-Za-z0-9_-]{1,64}$/.test(planId)) {
+          window.sessionStorage.setItem("rightthesis-checkout-plan", planId);
+        }
+      }
       window.sessionStorage.setItem("rightthesis-auth-return", path.startsWith("/admin") ? "/app" : path);
     } catch {
       // The default post-login destination remains /app if storage is blocked.

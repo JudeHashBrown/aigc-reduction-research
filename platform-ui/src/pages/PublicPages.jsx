@@ -26,7 +26,7 @@ import {
 } from '@phosphor-icons/react';
 import './public-pages.css';
 import { LanguageToggle, useLocale } from '../locale.jsx';
-import { usePlatform } from '../platform.jsx';
+import { useOptionalPlatform, usePlatform } from '../platform.jsx';
 import { AuthPage as AccountAuthPage } from './AuthPage.jsx';
 
 const go = (navigate, path) => () => navigate(path);
@@ -58,6 +58,8 @@ function Brand({ navigate }) {
 function PublicHeader({ navigate, active }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { isEnglish } = useLocale();
+  const session = useOptionalPlatform()?.session;
+  const signedIn = session?.authMode === 'accounts' && session?.authenticated && session?.kind !== 'guest';
   const items = [
     ['首页', 'Home', '/'],
     ['产品', 'Product', 'section:product'],
@@ -93,10 +95,18 @@ function PublicHeader({ navigate, active }) {
             </button>
           ))}
           <div className="rtp-nav-actions">
-            <button className="rtp-btn rtp-btn-ghost" onClick={() => jump('/auth')}>{isEnglish ? 'Sign in' : '登录'}</button>
-            <button className="rtp-btn rtp-btn-blue rtp-btn-sm" onClick={() => jump('/auth')}>
-              {isEnglish ? 'Start free' : '免费开始'} <ArrowRight weight="bold" />
-            </button>
+            {signedIn ? (
+              <button className="rtp-btn rtp-btn-blue rtp-btn-sm" onClick={() => jump('/app')}>
+                {isEnglish ? 'My workspace' : '我的工作台'} <ArrowRight weight="bold" />
+              </button>
+            ) : (
+              <>
+                <button className="rtp-btn rtp-btn-ghost" onClick={() => jump('/auth')}>{isEnglish ? 'Sign in' : '登录'}</button>
+                <button className="rtp-btn rtp-btn-blue rtp-btn-sm" onClick={() => jump('/auth')}>
+                  {isEnglish ? 'Start free' : '免费开始'} <ArrowRight weight="bold" />
+                </button>
+              </>
+            )}
           </div>
         </nav>
         <LanguageToggle className="rtp-language-toggle" />
@@ -403,7 +413,7 @@ function planTone(plan) {
 
 export function PricingPage({ navigate }) {
   const { isEnglish } = useLocale();
-  const { plans, config, loading, error, refresh } = usePlatform();
+  const { plans, config, session, loading, error, refresh } = usePlatform();
   const stripeReady = config?.payment?.provider === 'stripe' && config.payment.checkout_enabled === true;
   const stripeLive = stripeReady && config.payment.live === true;
   const [kind, setKind] = useState('month');
@@ -412,6 +422,20 @@ export function PricingPage({ navigate }) {
     pack: plans.filter((plan) => plan.kind !== 'subscription'),
   }), [plans]);
   const visiblePlans = groupedPlans[kind];
+  const openPlan = (plan) => {
+    if (plan.kind === 'free') return navigate('/app');
+    const target = `/checkout/pro?plan=${encodeURIComponent(plan.id)}`;
+    if (session?.authMode === 'accounts' && !session?.authenticated) {
+      try {
+        window.sessionStorage.setItem('rightthesis-auth-return', '/checkout/pro');
+        window.sessionStorage.setItem('rightthesis-checkout-plan', plan.id);
+      } catch {
+        // Sign-in still works if browser storage is unavailable.
+      }
+      return navigate('/auth');
+    }
+    return navigate(target);
+  };
   return (
     <Shell navigate={navigate} active="定价">
       <main className="rtp-inner-main">
@@ -445,8 +469,8 @@ export function PricingPage({ navigate }) {
                   <li><Check weight="bold" />{isFree ? (isEnglish ? 'Conservative rewrite mode' : '开放保守改写模式') : (isEnglish ? 'Conservative, balanced, and deep modes' : '保守、平衡与深度模式')}</li>
                 </ul>
                 <p>{planDescription(plan, isEnglish)}</p>
-                <button className={`rtp-btn ${tone === 'blue' ? 'rtp-btn-yellow' : 'rtp-btn-blue'}`} onClick={go(navigate, isFree ? '/app' : `/checkout/pro?plan=${encodeURIComponent(plan.id)}`)}>
-                  {isFree ? (isEnglish ? 'Open workspace' : '进入工作台') : (isEnglish ? 'View checkout' : '查看结账')} <ArrowRight weight="bold" />
+                <button className={`rtp-btn ${tone === 'blue' ? 'rtp-btn-yellow' : 'rtp-btn-blue'}`} onClick={() => openPlan(plan)} disabled={loading || !session?.ready}>
+                  {isFree ? (isEnglish ? 'Open workspace' : '进入工作台') : session?.authMode === 'accounts' && !session?.authenticated ? (isEnglish ? 'Sign in to buy' : '登录后购买') : (isEnglish ? 'View checkout' : '查看结账')} <ArrowRight weight="bold" />
                 </button>
               </article>
             );

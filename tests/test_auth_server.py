@@ -148,6 +148,21 @@ def run():
             }
             first_cookie = cookie_value(jar)
 
+            # A pre-auth browser may inspect prices, but cannot enter any
+            # account billing flow or create a Checkout Session.
+            checkout_body = {
+                "product_id": "student_month",
+                "idempotency_key": "guest_checkout_must_be_denied_001",
+            }
+            code, denied, _ = request(
+                browser, base, "/api/billing/checkout", checkout_body,
+                auth_headers(base, session["csrf_token"]),
+            )
+            assert code == 401 and denied["code"] == "authentication_required"
+            for billing_path in ("/api/billing/summary", "/api/billing/orders"):
+                code, denied, _ = request(browser, base, billing_path)
+                assert code == 401 and denied["code"] == "authentication_required"
+
             # Every account-mode POST requires both exact Origin and CSRF.
             register_body = {
                 "email": "http-user@example.com",

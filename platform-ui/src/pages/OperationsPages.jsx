@@ -47,7 +47,7 @@ import {
   XCircle,
 } from "@phosphor-icons/react";
 import { useLocale } from "../locale.jsx";
-import { getApi, postApi, logoutSession, usePlatform } from "../platform.jsx";
+import { ensureSession, getApi, postApi, logoutSession, usePlatform } from "../platform.jsx";
 import "./operations-pages.css";
 
 const OPS_EN = {
@@ -1595,19 +1595,29 @@ export function OrdersPage({ navigate }) {
 
 export function CheckoutPage({ navigate }) {
   const { number, money } = useOpsLocale();
-  const { plans: catalog = [], billing, config, loading, refreshBilling } = usePlatform();
+  const { plans: catalog = [], billing, config, session, loading, refresh, refreshBilling } = usePlatform();
   const query = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams((window.location.hash.split("?")[1] || ""));
   const requestedPlanId = query.get("plan") || "";
   const returnedOrderId = query.get("order") || "";
   const returnResult = query.get("result") || "";
   const paidCatalog = catalog.filter((plan) => Number(plan.price_fen) > 0);
-  const [selectedId, setSelectedId] = useState(requestedPlanId);
+  const [selectedId, setSelectedId] = useState(() => {
+    if (requestedPlanId) return requestedPlanId;
+    try {
+      const saved = window.sessionStorage.getItem("rightthesis-checkout-plan") || "";
+      window.sessionStorage.removeItem("rightthesis-checkout-plan");
+      return saved;
+    } catch {
+      return "";
+    }
+  });
   const [busy, setBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
   const [returnedOrder, setReturnedOrder] = useState(null);
   const selected = paidCatalog.find((plan) => plan.id === selectedId) || paidCatalog[0];
   const payment = billing?.payment || config?.payment || {};
-  const canPay = payment.provider === "stripe" && payment.checkout_enabled === true;
+  const signedIn = session?.authMode === "accounts" && session?.authenticated && session?.kind !== "guest";
+  const canPay = signedIn && payment.provider === "stripe" && payment.checkout_enabled === true;
   const isLive = payment.live === true;
 
   useEffect(() => { if (requestedPlanId) setSelectedId(requestedPlanId); }, [requestedPlanId]);
@@ -1639,6 +1649,18 @@ export function CheckoutPage({ navigate }) {
     setBusy(true);
     setCheckoutError("");
     try {
+      const currentSession = await ensureSession(true);
+      if (currentSession.authMode !== "accounts" || !currentSession.authenticated || currentSession.kind === "guest") {
+        try {
+          window.sessionStorage.setItem("rightthesis-auth-return", "/checkout/pro");
+          window.sessionStorage.setItem("rightthesis-checkout-plan", selected.id);
+        } catch {
+          // A user can still sign in and reselect the plan without storage.
+        }
+        await refresh();
+        navigate("/auth");
+        return;
+      }
       const idempotencyKey = `checkout_${crypto.randomUUID().replaceAll("-", "")}`;
       const result = await postApi("/api/billing/checkout", {
         product_id: selected.id, idempotency_key: idempotencyKey,
@@ -1649,7 +1671,19 @@ export function CheckoutPage({ navigate }) {
       }
       window.location.assign(target.href);
     } catch (nextError) {
-      setCheckoutError(nextError.message || "无法创建订单");
+      if (nextError.status === 401 || nextError.data?.code === "authentication_required") {
+        try {
+          window.sessionStorage.setItem("rightthesis-auth-return", "/checkout/pro");
+          window.sessionStorage.setItem("rightthesis-checkout-plan", selected.id);
+        } catch {
+          // Authentication remains available even without browser storage.
+        }
+        await refresh();
+        navigate("/auth");
+      } else {
+        setCheckoutError(nextError.message || "无法创建订单");
+      }
+    } finally {
       setBusy(false);
     }
   };
@@ -1672,6 +1706,7 @@ export function CheckoutPage({ navigate }) {
           <h2>{selected?.name || "正在加载套餐"}</h2>
           <div className="ops-checkout-credit"><strong>{selected ? number(selected.credits) : "—"}</strong><span>字可用额度</span></div>
           <dl>
+            <div><dt>购买账号</dt><dd>{session?.user?.email || session?.user?.display_name || "请先登录"}</dd></div>
             <div><dt>产品金额</dt><dd>{selected ? money(Number(selected.price_fen) / 100) : "—"}</dd></div>
             <div><dt>付款方式</dt><dd>银行卡 / 微信 / 支付宝</dd></div>
             <div className="ops-total"><dt>应付</dt><dd>{selected ? money(Number(selected.price_fen) / 100) : "—"}</dd></div>
@@ -1683,7 +1718,7 @@ export function CheckoutPage({ navigate }) {
           {returnedOrderId && returnedOrder?.status !== "paid" && returnedOrder?.status !== "refunded" && <div className="ops-payment-result ops-payment-result--pending"><Clock size={30} weight="fill" /><b>{returnResult === "cancel" ? "已返回平台；订单未付款" : "等待服务端确认付款"}</b><p>只有 Stripe 签名回调确认成功后才会发放额度。</p></div>}
           <Button tone="blue" icon={CreditCard} className="ops-full-button" disabled={!canPay || !selected || busy || loading} onClick={beginCheckout}>{busy ? "正在前往 Stripe…" : isLive ? "前往 Stripe 安全收银台" : "前往 Stripe 测试收银台"}</Button>
           <Button tone="plain" icon={Receipt} onClick={() => go(navigate, "/app/billing/orders")}>查看订单</Button>
-          {!canPay && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>完成服务端密钥和 Webhook 配置后，购买按钮才会开放。</span></div>}
+          {!canPay && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{!signedIn ? "请先登录账户再购买。" : "完成服务端密钥和 Webhook 配置后，购买按钮才会开放。"}</span></div>}
         </aside>
       </div>
     </Page>
