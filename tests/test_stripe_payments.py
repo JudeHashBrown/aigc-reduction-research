@@ -106,7 +106,8 @@ def test_provider_modes_and_checkout_options():
             assert result["status"] == "pending"
             assert result["live"] is False
             assert captured["params"]["mode"] == "payment"
-            assert captured["params"]["payment_method_types"] == ["card", "wechat_pay", "alipay"]
+            assert captured["params"]["allowed_payment_method_types"] == ["card", "wechat_pay", "alipay"]
+            assert "payment_method_types" not in captured["params"]
             assert captured["params"]["line_items"][0]["price_data"]["unit_amount"] == 990
             assert "#/checkout/pro?order=" in captured["params"]["success_url"]
             assert captured["options"]["idempotency_key"].startswith("rightthesis-ord_")
@@ -160,7 +161,8 @@ def test_live_mode_requires_opt_in_https_and_matching_webhook():
             result = provider.checkout("buyer", "pack_3k", "checkout_live_001",
                                        origin="https://rightthesis.com")
             assert result["live"] is True
-            assert captured["params"]["payment_method_types"] == ["card", "wechat_pay", "alipay"]
+            assert captured["params"]["allowed_payment_method_types"] == ["card", "wechat_pay", "alipay"]
+            assert "payment_method_types" not in captured["params"]
             assert store.order("buyer", result["order_id"])["live"] is True
             event = {"id": "evt_live123", "livemode": True,
                      "type": "checkout.session.completed", "data": {"object": {

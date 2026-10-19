@@ -125,7 +125,10 @@ class StripePaymentProvider(PaymentProvider):
         back = f"{origin}/#/checkout/pro?order={quote(order['id'], safe='')}"
         params = {
             "mode": "payment",
-            "payment_method_types": ["card", "wechat_pay", "alipay"],
+            # Stripe now computes eligible methods dynamically. Keep checkout
+            # limited to our advertised methods without using the removed
+            # payment_method_types request parameter.
+            "allowed_payment_method_types": ["card", "wechat_pay", "alipay"],
             "line_items": [{"price_data": {
                 "currency": order["currency"].lower(),
                 "unit_amount": order["amount_fen"],
