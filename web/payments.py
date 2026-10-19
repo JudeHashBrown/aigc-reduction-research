@@ -5,6 +5,7 @@ import hashlib
 import importlib
 import json
 import os
+import re
 from typing import Dict
 from urllib.parse import quote, urlparse
 
@@ -170,19 +171,58 @@ class StripePaymentProvider(PaymentProvider):
             raise BillingError("Stripe 回调签名无效", 400) from exc
         if hasattr(event, "to_dict"):
             event = event.to_dict()
+        if not isinstance(event, dict) or not isinstance(event.get("data"), dict):
+            raise BillingError("Stripe 回调结构无效", 400)
         if event.get("livemode") is not self.live:
             raise BillingError("Stripe 回调环境与收银台环境不一致", 400)
         event_type = event.get("type")
         if event_type in {"refund.created", "refund.updated"}:
+            refund = event.get("data", {}).get("object", {})
+            if not isinstance(refund, dict):
+                raise BillingError("Stripe 退款回调结构无效", 400)
+            if self.live:
+                refund = self._retrieve_live_object("refund", refund.get("id"))
             return self.store.apply_stripe_succeeded_refund(
                 event.get("id"), hashlib.sha256(raw_body).hexdigest(),
-                event.get("data", {}).get("object", {}))
+                refund)
         if event_type not in {
                 "checkout.session.completed", "checkout.session.async_payment_succeeded"}:
             return {"status": "ignored"}
         session = event.get("data", {}).get("object", {})
+        if not isinstance(session, dict):
+            raise BillingError("Stripe 收银台回调结构无效", 400)
+        if self.live:
+            session = self._retrieve_live_object("session", session.get("id"))
         return self.store.apply_stripe_checkout_event(
             event.get("id"), hashlib.sha256(raw_body).hexdigest(), session)
+
+    def _retrieve_live_object(self, kind: str, object_id: str) -> Dict:
+        """Never grant or revoke credits from a live webhook payload alone.
+
+        A leaked signing secret can authenticate a forged payload.  Fetching the
+        actual object with the server's separate API key makes Stripe's current
+        payment/refund state authoritative instead of the event body.
+        """
+        prefix = "cs_live_" if kind == "session" else "re_"
+        if (not isinstance(object_id, str) or not object_id.startswith(prefix)
+                or not re.fullmatch(r"[A-Za-z0-9_]+", object_id)):
+            raise BillingError("Stripe 回调对象 ID 无效", 400)
+        try:
+            client = self.stripe.StripeClient(self.secret_key)
+            if kind == "session":
+                obj = client.v1.checkout.sessions.retrieve(object_id)
+            else:
+                obj = client.v1.refunds.retrieve(object_id)
+        except Exception as exc:
+            raise BillingError("暂时无法向 Stripe 核验支付状态", 502) from exc
+        if hasattr(obj, "to_dict"):
+            obj = obj.to_dict()
+        expected_type = "checkout.session" if kind == "session" else "refund"
+        if (not isinstance(obj, dict) or obj.get("id") != object_id
+                or obj.get("object") != expected_type
+                or (kind == "session" and obj.get("livemode") is not True)):
+            raise BillingError("Stripe 实时核验结果与正式环境不一致", 409)
+        return obj
 
 
 class EpayPaymentProvider(PaymentProvider):

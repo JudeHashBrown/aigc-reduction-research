@@ -138,7 +138,10 @@ def test_live_mode_requires_opt_in_https_and_matching_webhook():
 
         fake = SimpleNamespace(
             StripeClient=lambda _key: SimpleNamespace(v1=SimpleNamespace(
-                checkout=SimpleNamespace(sessions=SimpleNamespace(create=create)))),
+                checkout=SimpleNamespace(sessions=SimpleNamespace(
+                    create=create,
+                    retrieve=lambda _id: captured["retrieved_session"])),
+                refunds=SimpleNamespace(retrieve=lambda _id: captured["retrieved_refund"]))),
             Webhook=SimpleNamespace(construct_event=lambda raw, sig, secret: json.loads(raw)),
             error=SimpleNamespace(SignatureVerificationError=ValueError),
         )
@@ -167,8 +170,38 @@ def test_live_mode_requires_opt_in_https_and_matching_webhook():
                          "payment_status": "paid", "payment_intent": "pi_live_123"}}}
             expect_error(lambda: provider.webhook(json.dumps({**event, "livemode": False}).encode(),
                                                   "fake-signature"), 400)
+            captured["retrieved_session"] = {
+                **event["data"]["object"], "object": "checkout.session", "livemode": True,
+                "payment_status": "unpaid",
+            }
+            forged = {**event, "id": "evt_liveforged123"}
+            assert provider.webhook(json.dumps(forged).encode(), "fake-signature")["status"] == "pending"
+            assert store.summary("buyer")["balance"] == 800
+            captured["retrieved_session"]["id"] = "cs_live_other"
+            expect_error(lambda: provider.webhook(json.dumps(forged).encode(),
+                                                  "fake-signature"), 409)
+            assert store.summary("buyer")["balance"] == 800
+            captured["retrieved_session"] = {
+                **event["data"]["object"], "object": "checkout.session", "livemode": True,
+            }
             assert provider.webhook(json.dumps(event).encode(), "fake-signature")["status"] == "paid"
             assert store.summary("buyer")["balance"] == 3800
+            captured["retrieved_refund"] = {
+                "id": "re_live123", "object": "refund",
+                "payment_intent": "pi_live_123", "amount": 990,
+                "status": "pending", "currency": "cny",
+            }
+            refund_event = {"id": "evt_liverefund123", "livemode": True,
+                            "type": "refund.updated", "data": {"object": {
+                                **captured["retrieved_refund"], "status": "succeeded"}}}
+            assert provider.webhook(json.dumps(refund_event).encode(),
+                                    "fake-signature")["status"] == "refund_not_succeeded"
+            assert store.summary("buyer")["balance"] == 3800
+            captured["retrieved_refund"]["status"] = "succeeded"
+            refund_event["id"] = "evt_liverefund456"
+            assert provider.webhook(json.dumps(refund_event).encode(),
+                                    "fake-signature")["status"] == "refunded"
+            assert store.summary("buyer")["balance"] == 800
 
         with patch.dict(os.environ, {
             "STRIPE_SECRET_KEY": "sk_live_not_real", "STRIPE_WEBHOOK_SECRET": "whsec_not_real",
