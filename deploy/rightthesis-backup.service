@@ -12,5 +12,7 @@ UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/admin/rightthesis-backups
+# SQLite WAL may need to create transient -shm/-wal sidecars while taking a
+# consistent online snapshot, even when the database URI uses mode=ro.
+ReadWritePaths=/home/admin/rightthesis-backups /home/admin/rightthesis/data
 PrivateTmp=true
