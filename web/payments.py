@@ -176,6 +176,17 @@ class StripePaymentProvider(PaymentProvider):
         if event.get("livemode") is not self.live:
             raise BillingError("Stripe 回调环境与收银台环境不一致", 400)
         event_type = event.get("type")
+        supported = {"refund.created", "refund.updated",
+                     "checkout.session.completed", "checkout.session.async_payment_succeeded"}
+        if event_type not in supported:
+            return {"status": "ignored"}
+        if self.live:
+            event = self._retrieve_live_event(event)
+            event_type = event["type"]
+            payload_hash = hashlib.sha256(json.dumps(
+                event, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        else:
+            payload_hash = hashlib.sha256(raw_body).hexdigest()
         if event_type in {"refund.created", "refund.updated"}:
             refund = event.get("data", {}).get("object", {})
             if not isinstance(refund, dict):
@@ -183,18 +194,39 @@ class StripePaymentProvider(PaymentProvider):
             if self.live:
                 refund = self._retrieve_live_object("refund", refund.get("id"))
             return self.store.apply_stripe_succeeded_refund(
-                event.get("id"), hashlib.sha256(raw_body).hexdigest(),
+                event.get("id"), payload_hash,
                 refund)
-        if event_type not in {
-                "checkout.session.completed", "checkout.session.async_payment_succeeded"}:
-            return {"status": "ignored"}
         session = event.get("data", {}).get("object", {})
         if not isinstance(session, dict):
             raise BillingError("Stripe 收银台回调结构无效", 400)
         if self.live:
             session = self._retrieve_live_object("session", session.get("id"))
         return self.store.apply_stripe_checkout_event(
-            event.get("id"), hashlib.sha256(raw_body).hexdigest(), session)
+            event.get("id"), payload_hash, session)
+
+    def _retrieve_live_event(self, signed_event: Dict) -> Dict:
+        event_id = signed_event.get("id")
+        signed_object = signed_event.get("data", {}).get("object")
+        if (not isinstance(event_id, str)
+                or not re.fullmatch(r"evt_[A-Za-z0-9]+", event_id)
+                or not isinstance(signed_object, dict)
+                or not isinstance(signed_object.get("id"), str)):
+            raise BillingError("Stripe 回调事件字段无效", 400)
+        try:
+            event = self.stripe.StripeClient(self.secret_key).v1.events.retrieve(event_id)
+        except Exception as exc:
+            raise BillingError("暂时无法向 Stripe 核验事件", 502) from exc
+        if hasattr(event, "to_dict"):
+            event = event.to_dict()
+        data = event.get("data") if isinstance(event, dict) else None
+        obj = data.get("object") if isinstance(data, dict) else None
+        if (not isinstance(event, dict) or event.get("object") != "event"
+                or event.get("id") != event_id or event.get("livemode") is not True
+                or event.get("type") != signed_event.get("type")
+                or not isinstance(obj, dict)
+                or obj.get("id") != signed_object["id"]):
+            raise BillingError("Stripe 事件实时核验不匹配", 409)
+        return event
 
     def _retrieve_live_object(self, kind: str, object_id: str) -> Dict:
         """Never grant or revoke credits from a live webhook payload alone.

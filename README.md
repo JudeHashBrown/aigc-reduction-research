@@ -68,7 +68,7 @@ BILLING_DB=data/billing.sqlite3
 3. 仅在本机未提交的 `.env` 中设置 `AUTH_MODE=accounts`、`PAYMENT_PROVIDER=stripe`、`STRIPE_SECRET_KEY=sk_test_...`、`STRIPE_WEBHOOK_SECRET=whsec_...`、`STRIPE_LIVE_ENABLED=0`、`PUBLIC_ORIGIN=http://127.0.0.1:8877`，并启动 `python3 web/server.py 8877`。
 4. 登录账户，从“额度与订单”进入收银台。Stripe 返回平台后，页面从服务端读取订单状态；只有验签通过、订单号/金额/币种/账户核对无误的回调才能增加额度。测试卡、微信及支付宝的实际可见性受 Stripe 测试账户设置和收银台条件影响。
 
-公网正式收款必须另行完成：在 Stripe **正式模式**创建 HTTPS Webhook 端点 `https://rightthesis.com/api/billing/stripe/webhook`，订阅 `checkout.session.completed`、`checkout.session.async_payment_succeeded`、`refund.created` 和 `refund.updated`；把正式模式的 `rk_live_`（至少需要创建和读取 Checkout Session、读取 Refund 的权限；`sk_live_` 也可用）与此端点的 `whsec_` 仅写入服务器私有 `.env`；确认 `PUBLIC_ORIGIN=https://rightthesis.com` 后再设置 `STRIPE_LIVE_ENABLED=1` 并重启服务。缺任一条件时收银台保持关闭。Webhook 通过签名、环境核验后，正式模式还会用独立 API 密钥从 Stripe 实时读取收银台或退款对象，再核对订单号、账户、商品、金额和币种；无法读取时不会发放或撤销额度。成功退款累计达到整单金额时撤销未使用额度。部分退款和银行卡争议仍需人工对账处理，不能把测试付款当作正式验收。**目前公网尚未配置正式密钥，不能真实收款。**
+公网正式收款必须另行完成：在 Stripe **正式模式**创建 HTTPS Webhook 端点 `https://rightthesis.com/api/billing/stripe/webhook`，订阅 `checkout.session.completed`、`checkout.session.async_payment_succeeded`、`refund.created` 和 `refund.updated`；把正式模式的 `rk_live_`（至少需要创建和读取 Checkout Session、读取 Event 与 Refund 的权限；`sk_live_` 也可用）与此端点的 `whsec_` 仅写入服务器私有 `.env`；确认 `PUBLIC_ORIGIN=https://rightthesis.com` 后再设置 `STRIPE_LIVE_ENABLED=1` 并重启服务。缺任一条件时收银台保持关闭。Webhook 通过签名、环境核验后，正式模式还会用独立 API 密钥从 Stripe 实时读取事件及收银台或退款对象，再核对订单号、账户、商品、金额和币种；无法读取时不会发放或撤销额度。成功退款累计达到整单金额时撤销未使用额度。部分退款和银行卡争议仍需人工对账处理，不能把测试付款当作正式验收。**目前公网尚未配置正式密钥，不能真实收款。**
 
 ## 文稿保存与恢复
 

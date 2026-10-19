@@ -141,7 +141,8 @@ def test_live_mode_requires_opt_in_https_and_matching_webhook():
                 checkout=SimpleNamespace(sessions=SimpleNamespace(
                     create=create,
                     retrieve=lambda _id: captured["retrieved_session"])),
-                refunds=SimpleNamespace(retrieve=lambda _id: captured["retrieved_refund"]))),
+                refunds=SimpleNamespace(retrieve=lambda _id: captured["retrieved_refund"]),
+                events=SimpleNamespace(retrieve=lambda _id: captured["retrieved_event"]))),
             Webhook=SimpleNamespace(construct_event=lambda raw, sig, secret: json.loads(raw)),
             error=SimpleNamespace(SignatureVerificationError=ValueError),
         )
@@ -175,8 +176,13 @@ def test_live_mode_requires_opt_in_https_and_matching_webhook():
                 "payment_status": "unpaid",
             }
             forged = {**event, "id": "evt_liveforged123"}
+            captured["retrieved_event"] = {**forged, "object": "event"}
             assert provider.webhook(json.dumps(forged).encode(), "fake-signature")["status"] == "pending"
             assert store.summary("buyer")["balance"] == 800
+            captured["retrieved_event"] = {**event, "object": "event"}
+            expect_error(lambda: provider.webhook(json.dumps(forged).encode(),
+                                                  "fake-signature"), 409)
+            captured["retrieved_event"] = {**forged, "object": "event"}
             captured["retrieved_session"]["id"] = "cs_live_other"
             expect_error(lambda: provider.webhook(json.dumps(forged).encode(),
                                                   "fake-signature"), 409)
@@ -184,6 +190,7 @@ def test_live_mode_requires_opt_in_https_and_matching_webhook():
             captured["retrieved_session"] = {
                 **event["data"]["object"], "object": "checkout.session", "livemode": True,
             }
+            captured["retrieved_event"] = {**event, "object": "event"}
             assert provider.webhook(json.dumps(event).encode(), "fake-signature")["status"] == "paid"
             assert store.summary("buyer")["balance"] == 3800
             captured["retrieved_refund"] = {
@@ -194,11 +201,13 @@ def test_live_mode_requires_opt_in_https_and_matching_webhook():
             refund_event = {"id": "evt_liverefund123", "livemode": True,
                             "type": "refund.updated", "data": {"object": {
                                 **captured["retrieved_refund"], "status": "succeeded"}}}
+            captured["retrieved_event"] = {**refund_event, "object": "event"}
             assert provider.webhook(json.dumps(refund_event).encode(),
                                     "fake-signature")["status"] == "refund_not_succeeded"
             assert store.summary("buyer")["balance"] == 3800
             captured["retrieved_refund"]["status"] = "succeeded"
             refund_event["id"] = "evt_liverefund456"
+            captured["retrieved_event"] = {**refund_event, "object": "event"}
             assert provider.webhook(json.dumps(refund_event).encode(),
                                     "fake-signature")["status"] == "refunded"
             assert store.summary("buyer")["balance"] == 800
