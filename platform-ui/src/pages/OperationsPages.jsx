@@ -47,6 +47,7 @@ import {
   XCircle,
 } from "@phosphor-icons/react";
 import { useLocale } from "../locale.jsx";
+import { localizedPlanDescription, localizedPlanName } from "../plan-copy.js";
 import { ensureSession, getApi, postApi, logoutSession, usePlatform } from "../platform.jsx";
 import "./operations-pages.css";
 
@@ -54,6 +55,7 @@ const OPS_EN = {
   "已支付": "Paid",
   "确认中": "Confirming",
   "已退款": "Refunded",
+  "部分退款": "Partially refunded",
   "失败": "Failed",
   "已结算": "Settled",
   "已预占": "Reserved",
@@ -86,7 +88,7 @@ const OPS_EN = {
   "180 天有效": "Valid for 180 days",
   "内测赠送": "Beta bonus",
   "赠送额度": "Bonus credits",
-  "月卡额度": "Monthly-pass credits",
+  "月卡额度": "One-time pass credits",
   "独立字数包": "Standalone character packs",
   "深度保真改写": "Deep faithful rewrite",
   "4,812 字 × 1.5": "4,812 characters × 1.5",
@@ -840,7 +842,9 @@ const go = (navigate, path) => {
 const STATUS = {
   paid: ["已支付", "green"],
   pending: ["确认中", "yellow"],
+  expired: ["已过期", "gray"],
   refunded: ["已退款", "gray"],
+  partially_refunded: ["部分退款", "yellow"],
   failed: ["失败", "red"],
   settled: ["已结算", "green"],
   reserved: ["已预占", "blue"],
@@ -1292,7 +1296,7 @@ function formatPlatformTime(value, isEnglish) {
 function platformPlanKind(kind, isEnglish) {
   const labels = {
     free: ["免费方案", "Free plan"],
-    subscription: ["订阅额度", "Subscription credits"],
+    subscription: ["月卡额度", "One-time pass credits"],
     pack: ["独立字数包", "Standalone credit pack"],
     trial: ["体验额度", "Trial credits"],
   };
@@ -1307,10 +1311,10 @@ function LivePlanCard({ plan, onSelect, selected = false }) {
     <Tag className={`ops-plan${selected ? " is-selected" : ""}`} type={onSelect ? "button" : undefined} onClick={onSelect} aria-pressed={onSelect ? selected : undefined}>
       <span className="ops-plan-radio"><Package size={16} weight="fill" /></span>
       <span className="ops-plan-copy">
-        <span className="ops-plan-titleline"><b>{plan.name}</b><em>{platformPlanKind(plan.kind, isEnglish)}</em></span>
+        <span className="ops-plan-titleline"><b>{localizedPlanName(plan, isEnglish)}</b><em>{platformPlanKind(plan.kind, isEnglish)}</em></span>
         <span className="ops-plan-price"><strong>{money(price)}</strong>{plan.kind === "subscription" && <small>/ {plan.valid_days || 30}{isEnglish ? " days" : "天"}</small>}</span>
         <span>{number(plan.credits)} {isEnglish ? "character credits" : "字额度"}</span>
-        {plan.description && <small>{plan.description}</small>}
+        {plan.description && <small>{localizedPlanDescription(plan, isEnglish)}</small>}
         <small>{plan.valid_days ? (isEnglish ? `Valid for ${plan.valid_days} days` : `${plan.valid_days} 天有效`) : (isEnglish ? "No expiry returned" : "后端未返回有效期")}</small>
       </span>
     </Tag>
@@ -1348,7 +1352,13 @@ function ledgerDetail(entry, isEnglish) {
     if (metadata.llm_requests !== undefined) parts.push(isEnglish ? `${metadata.llm_requests} requests` : `${metadata.llm_requests} 次请求`);
     return parts.join(" · ") || (isEnglish ? "Reservation settled" : "预占已结算");
   }
-  if (entry.kind === "release") return metadata.reason || (isEnglish ? "Reservation returned" : "预占已归还");
+  if (entry.kind === "release") {
+    const unavailable = Number(metadata.expired_or_revoked_credits || 0);
+    if (unavailable > 0) return isEnglish
+      ? `${entry.delta} credits returned; ${unavailable} expired or revoked credits stayed unavailable`
+      : `归还 ${entry.delta} 字；${unavailable} 字已过期或退款撤销，不再可用`;
+    return isEnglish ? "Reserved credits returned" : "预占额度已归还";
+  }
   if (entry.kind === "grant") return metadata.product_id || metadata.provider || (isEnglish ? "Credits added" : "额度已入账");
   return "—";
 }
@@ -1361,11 +1371,15 @@ export function BillingPage({ navigate }) {
   const balance = Number(billing?.balance || 0);
   const grants = Array.isArray(billing?.grants) ? billing.grants.filter((grant) => Number(grant.remaining) > 0) : [];
   const planLookup = useMemo(() => new Map(catalog.map((plan) => [plan.id, plan])), [catalog]);
+  const currentPlan = billing?.plan_id ? (planLookup.get(billing.plan_id)
+    || { id: billing.plan_id, name: billing.plan_name || billing.plan_id }) : null;
   const buckets = grants.map((grant, index) => ({
     ...grant,
     id: `${grant.product_id || grant.kind || "grant"}-${grant.expires_at || index}`,
     priority: index + 1,
-    source: planLookup.get(grant.product_id)?.name || grant.product_id || platformPlanKind(grant.kind, isEnglish),
+    source: planLookup.get(grant.product_id)
+      ? localizedPlanName(planLookup.get(grant.product_id), isEnglish)
+      : (grant.product_id || platformPlanKind(grant.kind, isEnglish)),
     kindLabel: platformPlanKind(grant.kind, isEnglish),
     expiresLabel: grant.expires_at ? formatPlatformTime(grant.expires_at, isEnglish) : t("不过期", "No expiry"),
   }));
@@ -1397,7 +1411,7 @@ export function BillingPage({ navigate }) {
 
       <div className="ops-metrics ops-metrics--4">
         <Metric label="当前可用" value={billing ? `${number(balance)} 字` : "—"} note={billing ? `${buckets.length} 个有效额度桶` : "等待账本响应"} tone="yellow" icon={Wallet} />
-        <Metric label="当前方案" value={billing?.plan_name || "—"} note={billing?.plan_id || "来自后端权益摘要"} icon={Receipt} />
+        <Metric label="当前方案" value={currentPlan ? localizedPlanName(currentPlan, isEnglish) : "—"} note={billing?.plan_id || "来自后端权益摘要"} icon={Receipt} />
         <Metric label="单任务上限" value={billing?.max_chars_per_job ? `${number(billing.max_chars_per_job)} 字` : "—"} note={(billing?.allowed_strengths || []).join(" / ") || "等待后端返回"} tone="blue" icon={Gauge} />
         <Metric label="最近到期" value={nextExpiry ? `${number(nextExpiry.remaining)} 字` : "—"} note={nextExpiry ? formatPlatformTime(nextExpiry.expires_at, isEnglish) : "没有有期限额"} tone="green" icon={CalendarBlank} />
       </div>
@@ -1413,7 +1427,7 @@ export function BillingPage({ navigate }) {
           <Section title="可用额度构成" kicker="LIVE ENTITLEMENTS" className="ops-shadow-card">
             <div className="ops-balance-hero">
               <div><span>账本可用余额</span><strong>{billing ? number(balance) : "—"}</strong><small>字</small></div>
-              <p>{billing ? `${billing.plan_name || billing.plan_id || "当前权益"} · 账户 ${billing.account_id || "—"}` : "正在等待账本摘要"}</p>
+              <p>{billing ? `${currentPlan ? localizedPlanName(currentPlan, isEnglish) : (isEnglish ? "Current credits" : "当前权益")} · ${isEnglish ? "account" : "账户"} ${billing.account_id || "—"}` : "正在等待账本摘要"}</p>
             </div>
             <div className="ops-rule-list">
               {buckets.map((bucket) => (
@@ -1427,7 +1441,7 @@ export function BillingPage({ navigate }) {
             </div>
           </Section>
           <Section title="账本规则" kicker="BACKEND CONTRACT">
-            <div className="ops-note ops-note--blue"><ShieldCheck size={28} weight="fill" /><div><b>先预占，再结算</b><p>任务创建时预占额度；失败或未通过守卫时由后端释放。</p></div></div>
+            <div className="ops-note ops-note--blue"><ShieldCheck size={28} weight="fill" /><div><b>{isEnglish ? "Reserve first, then settle" : "先预占，再结算"}</b><p>{isEnglish ? "A failed task ends its reservation. Only credits that are still valid are returned; expired or refunded credits do not become available again." : "失败任务会结束预占；仅仍有效的额度归还，已过期或退款撤销的额度不会重新可用。"}</p></div></div>
             <ol className="ops-numbered">
               <li><span>01</span><div><b>真实余额</b><p>页面只展示账本摘要中的 balance，不推算历史消费。</p></div></li>
               <li><span>02</span><div><b>真实额度桶</b><p>仅展示 grants 返回的剩余量和到期时间。</p></div></li>
@@ -1440,7 +1454,7 @@ export function BillingPage({ navigate }) {
 
       {tab === "plans" && (
         <>
-          <div className="ops-inline-notice"><Info size={18} weight="fill" /><span><b>套餐来自后端目录</b>：{payment.notice || "支付与下单前端尚未接入。"}</span></div>
+          <div className="ops-inline-notice"><Info size={18} weight="fill" /><span><b>{isEnglish ? "Plans come from the server catalog" : "套餐来自后端目录"}</b>{isEnglish ? ": " : "："}{isEnglish ? (payment.provider === "stripe" && payment.checkout_enabled ? (payment.live ? "Live Stripe checkout is enabled. Available payment methods are shown there." : "Stripe test checkout is enabled; no real charge is made.") : "Checkout is not currently available.") : (payment.notice || "支付与下单前端尚未接入。")}</span></div>
           {freePlans.length > 0 && <Section title="基础方案" kicker="BASE PLAN"><div className="ops-plan-grid ops-plan-grid--2">{freePlans.map((plan) => <LivePlanCard key={plan.id} plan={plan} />)}</div></Section>}
           {subscriptions.length > 0 && <Section title="30 天月卡（不自动续费）" kicker="30-DAY PASSES"><div className="ops-plan-grid ops-plan-grid--2">{subscriptions.map((plan) => <LivePlanCard key={plan.id} plan={plan} onSelect={() => go(navigate, `/checkout/pro?plan=${encodeURIComponent(plan.id)}`)} />)}</div></Section>}
           {packs.length > 0 && <Section title="独立字数包" kicker="TOP-UP PACKS"><div className="ops-plan-grid ops-plan-grid--3">{packs.map((plan) => <LivePlanCard key={plan.id} plan={plan} onSelect={() => go(navigate, `/checkout/pro?plan=${encodeURIComponent(plan.id)}`)} />)}</div></Section>}
@@ -1465,6 +1479,9 @@ export function BillingPage({ navigate }) {
 export function UsagePage({ navigate }) {
   const { isEnglish, number } = useOpsLocale();
   const { billing, refreshBilling } = usePlatform();
+  const displayedPlan = billing?.plan_id
+    ? localizedPlanName({ id: billing.plan_id, name: billing.plan_name || billing.plan_id }, isEnglish)
+    : (isEnglish ? "From the server ledger" : "来自后端账本摘要");
   const [status, setStatus] = useState("all");
   const [query, setQuery] = useState("");
   const [entries, setEntries] = useState([]);
@@ -1533,7 +1550,7 @@ export function UsagePage({ navigate }) {
         <Button icon={CreditCard} onClick={() => go(navigate, "/checkout/pro")}>购买额度</Button>
       </PageHeader>
       <div className="ops-metrics ops-metrics--3">
-        <Metric label="当前余额" value={billing ? `${number(billing.balance)} 字` : "—"} note={billing?.plan_name || "来自后端账本摘要"} tone="yellow" icon={Wallet} />
+        <Metric label="当前余额" value={billing ? `${number(billing.balance)} 字` : "—"} note={displayedPlan} tone="yellow" icon={Wallet} />
         <Metric label="已加载额度增加" value={`${number(loadedIncreases)} 字`} note={`最近 ${rows.length} 条流水`} tone="green" icon={TrendUp} />
         <Metric label="已加载额度减少" value={`${number(loadedDecreases)} 字`} note={`最近 ${rows.length} 条流水`} tone="blue" icon={Receipt} />
       </div>
@@ -1564,7 +1581,7 @@ export function UsagePage({ navigate }) {
 }
 
 export function OrdersPage({ navigate }) {
-  const { number, money } = useOpsLocale();
+  const { isEnglish, number, money } = useOpsLocale();
   const [orders, setOrders] = useState([]);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -1579,14 +1596,24 @@ export function OrdersPage({ navigate }) {
       </PageHeader>
       <Section title="最近订单" kicker="ACCOUNT ORDERS" className="ops-shadow-card">
         {error && <div className="ops-inline-notice"><WarningCircle size={18} weight="fill" /><span>{error}</span></div>}
-        {!error && orders.length === 0 && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>当前账户还没有订单。</span></div>}
+        {!error && orders.length === 0 && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{isEnglish ? "This account has no orders yet." : "当前账户还没有订单。"}</span></div>}
         {orders.length > 0 && <Table rows={orders} columns={[
           { key: "order_id", label: "订单号", render: (row) => <code>{row.order_id}</code> },
           { key: "product_id", label: "套餐" },
           { key: "amount_fen", label: "金额", render: (row) => money(row.amount_fen / 100) },
-          { key: "credits", label: "额度", render: (row) => `${number(row.credits)} 字` },
-          { key: "provider", label: "通道", render: (row) => row.provider === "stripe" ? (row.live ? "Stripe 正式" : "Stripe 测试") : "本地模拟" },
-          { key: "status", label: "状态", render: (row) => <StatusPill status={row.status === "paid" ? "paid" : row.status === "refunded" ? "refunded" : "pending"} label={row.status === "paid" ? "已支付" : row.status === "refunded" ? "已退款" : "待确认"} /> },
+          { key: "credits", label: "额度", render: (row) => `${number(row.credits)} ${isEnglish ? "characters" : "字"}` },
+          { key: "provider", label: "通道", render: (row) => row.provider === "stripe" ? (row.live ? (isEnglish ? "Stripe live" : "Stripe 正式") : (isEnglish ? "Stripe test" : "Stripe 测试")) : (isEnglish ? "Local simulation" : "本地模拟") },
+          { key: "status", label: "状态", render: (row) => {
+            const labels = {
+              paid: isEnglish ? "Paid" : "已支付",
+              refunded: isEnglish ? "Refunded" : "已退款",
+              partially_refunded: isEnglish ? "Partially refunded" : "部分退款",
+              expired: isEnglish ? "Expired without payment" : "未付款已过期",
+              failed: isEnglish ? "Checkout unavailable" : "收银台创建失败",
+              pending: isEnglish ? "Awaiting payment" : "待付款",
+            };
+            return <StatusPill status={row.status} label={labels[row.status] || row.status} />;
+          } },
         ]} />}
       </Section>
     </Page>
@@ -1594,7 +1621,7 @@ export function OrdersPage({ navigate }) {
 }
 
 export function CheckoutPage({ navigate }) {
-  const { number, money } = useOpsLocale();
+  const { isEnglish, number, money } = useOpsLocale();
   const { plans: catalog = [], billing, config, session, loading, refresh, refreshBilling } = usePlatform();
   const query = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams((window.location.hash.split("?")[1] || ""));
   const requestedPlanId = query.get("plan") || "";
@@ -1631,18 +1658,18 @@ export function CheckoutPage({ navigate }) {
         const result = await getApi(`/api/billing/orders/${encodeURIComponent(returnedOrderId)}`);
         if (!active) return;
         setReturnedOrder(result.order);
-        if (result.order?.status === "paid") {
-          await refreshBilling();
+        if (["paid", "refunded", "expired", "failed"].includes(result.order?.status)) {
+          if (result.order.status === "paid") await refreshBilling();
           return;
         }
       } catch (nextError) {
-        if (active) setCheckoutError(nextError.message || "订单状态读取失败");
+        if (active) setCheckoutError(isEnglish ? "Could not read the order status. Please retry from Orders." : (nextError.message || "订单状态读取失败"));
       }
       if (active && attempts < 15) window.setTimeout(check, 2000);
     };
     void check();
     return () => { active = false; };
-  }, [returnedOrderId, refreshBilling]);
+  }, [returnedOrderId, refreshBilling, isEnglish]);
 
   const beginCheckout = async () => {
     if (!selected || !canPay || busy) return;
@@ -1667,7 +1694,7 @@ export function CheckoutPage({ navigate }) {
       });
       const target = new URL(result.checkout_url);
       if (target.protocol !== "https:" || target.hostname !== "checkout.stripe.com") {
-        throw new Error("收银台返回地址无效");
+        throw new Error(isEnglish ? "The checkout URL is invalid." : "收银台返回地址无效");
       }
       window.location.assign(target.href);
     } catch (nextError) {
@@ -1681,7 +1708,9 @@ export function CheckoutPage({ navigate }) {
         await refresh();
         navigate("/auth");
       } else {
-        setCheckoutError(nextError.message || "无法创建订单");
+        setCheckoutError(isEnglish
+          ? `Could not start checkout${nextError.status ? ` (HTTP ${nextError.status})` : ""}. Please retry or contact support.`
+          : (nextError.message || "无法创建订单"));
       }
     } finally {
       setBusy(false);
@@ -1690,7 +1719,7 @@ export function CheckoutPage({ navigate }) {
 
   return (
     <Page className="ops-checkout-page">
-      <PageHeader eyebrow={isLive ? "CHECKOUT / STRIPE" : "CHECKOUT / STRIPE TEST"} title="选择额度" description={`银行卡、微信支付或支付宝均在 Stripe 收银台选择；${isLive ? "正式收款，实际可用方式以收银台为准。" : "当前仅支持测试交易。"}`} onBack={() => go(navigate, "/app/billing")} />
+      <PageHeader eyebrow={isLive ? "CHECKOUT / STRIPE" : "CHECKOUT / STRIPE TEST"} title={isEnglish ? "Choose credits" : "选择额度"} description={isEnglish ? `Choose card, WeChat Pay, or Alipay on Stripe Checkout. ${isLive ? "This is a live payment; availability depends on Stripe Checkout." : "Only test transactions are available."}` : `银行卡、微信支付或支付宝均在 Stripe 收银台选择；${isLive ? "正式收款，实际可用方式以收银台为准。" : "当前仅支持测试交易。"}`} onBack={() => go(navigate, "/app/billing")} />
       <div className="ops-checkout-grid">
         <div>
           <Section title="30 天月卡" kicker="ONE-TIME PASS">
@@ -1699,26 +1728,29 @@ export function CheckoutPage({ navigate }) {
           <Section title="独立字数包" kicker="TOP-UP PACKS">
             <div className="ops-plan-grid ops-plan-grid--3">{paidCatalog.filter((plan) => plan.kind === "pack").map((plan) => <LivePlanCard key={plan.id} plan={plan} selected={selected?.id === plan.id} onSelect={() => setSelectedId(plan.id)} />)}</div>
           </Section>
-          <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>月卡一次购买、有效 30 天、不自动续费；字数包有效 90 天。所有金额和额度均来自服务端目录。</span></div>
+          <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{isEnglish ? "Passes are one-time purchases, valid for 30 days, and do not renew automatically. Credit packs are valid for 90 days. Prices and credits come from the server catalog." : "月卡一次购买、有效 30 天、不自动续费；字数包有效 90 天。所有金额和额度均来自服务端目录。"}</span></div>
         </div>
         <aside className="ops-checkout-summary ops-shadow-card">
           <p className="ops-eyebrow">ORDER SUMMARY</p>
-          <h2>{selected?.name || "正在加载套餐"}</h2>
-          <div className="ops-checkout-credit"><strong>{selected ? number(selected.credits) : "—"}</strong><span>字可用额度</span></div>
+          <h2>{selected ? localizedPlanName(selected, isEnglish) : (isEnglish ? "Loading plans" : "正在加载套餐")}</h2>
+          <div className="ops-checkout-credit"><strong>{selected ? number(selected.credits) : "—"}</strong><span>{isEnglish ? "character credits" : "字可用额度"}</span></div>
           <dl>
-            <div><dt>购买账号</dt><dd>{session?.user?.email || session?.user?.display_name || "请先登录"}</dd></div>
+            <div><dt>{isEnglish ? "Purchasing account" : "购买账号"}</dt><dd>{session?.user?.email || session?.user?.display_name || (isEnglish ? "Sign in first" : "请先登录")}</dd></div>
             <div><dt>产品金额</dt><dd>{selected ? money(Number(selected.price_fen) / 100) : "—"}</dd></div>
-            <div><dt>付款方式</dt><dd>银行卡 / 微信 / 支付宝</dd></div>
+            <div><dt>付款方式</dt><dd>{isEnglish ? "Card / WeChat Pay / Alipay" : "银行卡 / 微信 / 支付宝"}</dd></div>
             <div className="ops-total"><dt>应付</dt><dd>{selected ? money(Number(selected.price_fen) / 100) : "—"}</dd></div>
           </dl>
-          <div className="ops-note ops-note--yellow"><Info size={20} weight="fill" /><div><b>{isLive ? "Stripe 正式支付" : "Stripe 测试模式"}</b><p>{payment.notice || "支付通道尚未启用。"}</p></div></div>
+          <div className="ops-note ops-note--yellow"><Info size={20} weight="fill" /><div><b>{isEnglish ? (isLive ? "Stripe live payment" : "Stripe test mode") : (isLive ? "Stripe 正式支付" : "Stripe 测试模式")}</b><p>{isEnglish ? (canPay ? (isLive ? "Live payment methods depend on availability in Stripe Checkout." : "Test checkout only; no real charge will be made.") : "Stripe Checkout is not available yet.") : (payment.notice || "支付通道尚未启用。")}</p></div></div>
           {checkoutError && <div className="ops-inline-notice"><WarningCircle size={18} weight="fill" /><span>{checkoutError}</span></div>}
-          {returnedOrder?.status === "paid" && <div className="ops-payment-result ops-payment-result--success"><CheckCircle size={30} weight="fill" /><b>{returnedOrder.live ? "付款已确认，额度已到账" : "测试付款已确认，额度已到账"}</b><p>订单 {returnedOrder.order_id}</p></div>}
-          {returnedOrder?.status === "refunded" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>订单已退款，未使用额度已撤销</b><p>订单 {returnedOrder.order_id}</p></div>}
-          {returnedOrderId && returnedOrder?.status !== "paid" && returnedOrder?.status !== "refunded" && <div className="ops-payment-result ops-payment-result--pending"><Clock size={30} weight="fill" /><b>{returnResult === "cancel" ? "已返回平台；订单未付款" : "等待服务端确认付款"}</b><p>只有 Stripe 签名回调确认成功后才会发放额度。</p></div>}
-          <Button tone="blue" icon={CreditCard} className="ops-full-button" disabled={!canPay || !selected || busy || loading} onClick={beginCheckout}>{busy ? "正在前往 Stripe…" : isLive ? "前往 Stripe 安全收银台" : "前往 Stripe 测试收银台"}</Button>
+          {returnedOrder?.status === "paid" && <div className="ops-payment-result ops-payment-result--success"><CheckCircle size={30} weight="fill" /><b>{isEnglish ? (returnedOrder.live ? "Payment confirmed; credits added" : "Test payment confirmed; credits added") : (returnedOrder.live ? "付款已确认，额度已到账" : "测试付款已确认，额度已到账")}</b><p>{isEnglish ? "Order" : "订单"} {returnedOrder.order_id}</p></div>}
+          {returnedOrder?.status === "refunded" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Order refunded; unused credits revoked" : "订单已退款，未使用额度已撤销"}</b><p>{isEnglish ? "Order" : "订单"} {returnedOrder.order_id}</p></div>}
+          {returnedOrder?.status === "partially_refunded" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Partial refund confirmed; unused credits adjusted" : "部分退款已确认，未用额度已调整"}</b><p>{isEnglish ? "Order" : "订单"} {returnedOrder.order_id}</p></div>}
+          {returnedOrder?.status === "expired" && <div className="ops-payment-result ops-payment-result--pending"><Clock size={30} weight="fill" /><b>{isEnglish ? "Checkout expired without payment" : "收银台已过期，订单未付款"}</b><p>{isEnglish ? "No credits were issued. You can start a new checkout." : "未发放额度；可重新发起结账。"}</p></div>}
+          {returnedOrder?.status === "failed" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Checkout could not be created" : "收银台创建失败"}</b><p>{isEnglish ? "No payment was started. You can retry." : "未发起付款；可重试。"}</p></div>}
+          {returnedOrderId && (!returnedOrder || returnedOrder.status === "pending") && <div className="ops-payment-result ops-payment-result--pending"><Clock size={30} weight="fill" /><b>{isEnglish ? (returnResult === "cancel" ? "Back from checkout; payment not completed" : "Waiting for server payment confirmation") : (returnResult === "cancel" ? "已返回平台；订单未付款" : "等待服务端确认付款")}</b><p>{isEnglish ? "Credits are issued only after a verified Stripe callback confirms payment." : "只有 Stripe 签名回调确认成功后才会发放额度。"}</p></div>}
+          <Button tone="blue" icon={CreditCard} className="ops-full-button" disabled={!canPay || !selected || busy || loading} onClick={beginCheckout}>{isEnglish ? (busy ? "Opening Stripe…" : isLive ? "Open secure Stripe Checkout" : "Open Stripe test checkout") : (busy ? "正在前往 Stripe…" : isLive ? "前往 Stripe 安全收银台" : "前往 Stripe 测试收银台")}</Button>
           <Button tone="plain" icon={Receipt} onClick={() => go(navigate, "/app/billing/orders")}>查看订单</Button>
-          {!canPay && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{!signedIn ? "请先登录账户再购买。" : "完成服务端密钥和 Webhook 配置后，购买按钮才会开放。"}</span></div>}
+          {!canPay && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{isEnglish ? (!signedIn ? "Sign in before purchasing." : "Checkout opens after the server key and webhook are configured.") : (!signedIn ? "请先登录账户再购买。" : "完成服务端密钥和 Webhook 配置后，购买按钮才会开放。")}</span></div>}
         </aside>
       </div>
     </Page>
@@ -2054,13 +2086,13 @@ export function AccountSettingsPage({ navigate }) {
         <PageHeader
           eyebrow={isEnglish ? "ACCOUNT / ACCESS" : "ACCOUNT / 访问状态"}
           title={title}
-          description={isEnglish ? "Sign in or register to use a verified, recoverable account. Manuscript cloud sync is still a separate capability." : "登录或注册后可使用已验证、可恢复的账户；论文云同步仍是独立能力。"}
+          description={isEnglish ? "Sign in or register for a verified account. Saved manuscripts and credits are tied to that account; unsaved browser drafts remain on this device." : "登录或注册后，已保存文稿和额度会绑定账户；未同步的浏览器草稿仍只保留在当前设备。"}
         />
         <Section title={isEnglish ? "Current access" : "当前访问方式"} kicker="CURRENT SESSION" className="ops-shadow-card">
           <div className="ops-note ops-note--yellow"><UserCircle size={28} weight="fill" /><div><b>{title}</b><p>{isEnglish ? `Backend account reference: ${accountId}` : `后端账户标识：${accountId}`}</p></div></div>
           <ol className="ops-numbered">
             <li><span>01</span><div><b>{isEnglish ? "Google or verified email" : "Google 或已验证邮箱"}</b><p>{isEnglish ? "Choose Google, or register an email account and complete inbox verification." : "可使用 Google，或注册邮箱账户并完成收件箱验证。"}</p></div></li>
-            <li><span>02</span><div><b>{isEnglish ? "Credits follow the account" : "额度跟随账户"}</b><p>{isEnglish ? "A signed-in identity can own its usage ledger and future orders." : "登录身份可承载用量账本与未来订单。"}</p></div></li>
+            <li><span>02</span><div><b>{isEnglish ? "Credits follow the account" : "额度跟随账户"}</b><p>{isEnglish ? "A signed-in identity owns its saved manuscripts, usage ledger, and orders." : "已登录账户保存文稿、用量账本和订单。"}</p></div></li>
           </ol>
           <div className="ops-header-actions"><Button tone="blue" icon={UserCircle} onClick={() => navigate("/auth")}>{isEnglish ? "Sign in or register" : "登录或注册"}</Button></div>
         </Section>
@@ -2073,7 +2105,7 @@ export function AccountSettingsPage({ navigate }) {
       <PageHeader
         eyebrow={isEnglish ? "ACCOUNT / VERIFIED" : "ACCOUNT / 已验证"}
         title={isEnglish ? "Account and sign-in" : "账户与登录"}
-        description={isEnglish ? "Review the verified identity attached to credits, usage, and future orders." : "查看与额度、用量和未来订单绑定的已验证身份。"}
+        description={isEnglish ? "Review the verified identity attached to saved manuscripts, credits, usage, and orders." : "查看与已保存文稿、额度、用量和订单绑定的已验证身份。"}
       >
         <Button icon={SignOut} onClick={handleSignOut} disabled={signingOut}>{signingOut ? (isEnglish ? "Signing out…" : "正在退出…") : (isEnglish ? "Sign out" : "退出登录")}</Button>
       </PageHeader>
@@ -2090,7 +2122,7 @@ export function AccountSettingsPage({ navigate }) {
           <ol className="ops-numbered">
             <li><span>01</span><div><b>{isEnglish ? "Recoverable access" : "可恢复访问"}</b><p>{isEnglish ? "Email accounts can reset their password after inbox verification; Google accounts use Google OAuth." : "邮箱账户可在收件箱验证后重置密码；Google 账户使用 Google OAuth。"}</p></div></li>
             <li><span>02</span><div><b>{isEnglish ? "Account-scoped credits" : "账户级额度"}</b><p>{isEnglish ? "The current balance and usage ledger belong to this backend account." : "当前余额与用量账本归属于该后端账户。"}</p></div></li>
-            <li><span>03</span><div><b>{isEnglish ? "No manuscript cloud sync yet" : "暂无论文云同步"}</b><p>{isEnglish ? "Signing in does not claim that browser-only manuscripts are already synced across devices." : "登录不代表当前仅存于浏览器的论文已跨设备同步。"}</p></div></li>
+            <li><span>03</span><div><b>{isEnglish ? "Saved manuscripts follow the account" : "已保存文稿跟随账户"}</b><p>{isEnglish ? "Saved manuscripts and completed tasks can be reopened after signing in on another device. Unsynced edits remain in this browser until saved." : "已保存文稿和完成的任务可在其他设备登录后重新打开；未同步编辑须保存成功后才会出现在其他设备。"}</p></div></li>
           </ol>
           <div className="ops-header-actions"><Button icon={Wallet} onClick={() => navigate("/app/billing")}>{isEnglish ? "View credits" : "查看额度"}</Button><Button icon={ShieldCheck} onClick={() => navigate("/app/settings/privacy")}>{isEnglish ? "Privacy status" : "隐私状态"}</Button></div>
           {signOutError && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><b>{isEnglish ? "Could not sign out" : "无法退出登录"}</b><p>{signOutError}</p></div></div>}
@@ -2186,27 +2218,105 @@ function LegacyAccountSettingsPage({ navigate }) {
 
 export function PrivacySettingsPage({ navigate }) {
   const { isEnglish } = useLocale();
+  const { session } = usePlatform();
+  const [request, setRequest] = useState(null);
+  const [confirmedEmail, setConfirmedEmail] = useState("");
+  const [busy, setBusy] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const isAccountUser = session?.authMode === "accounts" && session?.authenticated;
+  const email = session?.user?.email || "";
+
+  useEffect(() => {
+    if (!isAccountUser) return;
+    getApi("/api/account/privacy-request")
+      .then((result) => setRequest(result.request || null))
+      .catch((error) => setFeedback(error.message || (isEnglish ? "Could not load privacy request." : "无法读取隐私申请。")));
+  }, [isAccountUser, isEnglish]);
+
+  const exportData = async () => {
+    setBusy("export");
+    setFeedback("");
+    try {
+      const result = await getApi("/api/account/data-export");
+      const objectUrl = URL.createObjectURL(new Blob(
+        [JSON.stringify(result, null, 2)], { type: "application/json;charset=utf-8" },
+      ));
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = "rightthesis-account-data.json";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      setFeedback(isEnglish ? "Your account data export is downloading." : "账户数据导出文件已开始下载。")
+    } catch (error) {
+      setFeedback(error.message || (isEnglish ? "Export failed." : "导出失败。"));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const requestDeletion = async () => {
+    setBusy("delete");
+    setFeedback("");
+    try {
+      const result = await postApi("/api/account/delete-request", {
+        confirm_email: confirmedEmail.trim(),
+      });
+      setRequest(result.request);
+      setConfirmedEmail("");
+      setFeedback(isEnglish ? "Deletion request received. It is reviewed before any data is removed." : "删除申请已受理；在核对权益与备份后才会执行删除。")
+    } catch (error) {
+      setFeedback(error.message || (isEnglish ? "Request failed." : "申请失败。"));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const cancelDeletion = async () => {
+    setBusy("cancel");
+    setFeedback("");
+    try {
+      const result = await postApi("/api/account/delete-request/cancel", {});
+      setRequest(result.request);
+      setFeedback(isEnglish ? "Deletion request cancelled." : "已取消删除申请。")
+    } catch (error) {
+      setFeedback(error.message || (isEnglish ? "Cancellation failed." : "取消失败。"));
+    } finally {
+      setBusy("");
+    }
+  };
   return (
     <Page>
       <PageHeader
-        eyebrow={isEnglish ? "PRIVACY / CURRENT BUILD" : "PRIVACY / 当前版本"}
-        title={isEnglish ? "Privacy controls are not connected yet" : "隐私控制能力尚未接入"}
-        description={isEnglish ? "This page describes what the current build actually does; it does not offer retention, export, or deletion controls that the backend cannot honor." : "本页只说明当前版本的真实处理方式，不提供后端无法兑现的留存、导出或删除开关。"}
+        eyebrow={isEnglish ? "PRIVACY / YOUR DATA" : "PRIVACY / 你的数据"}
+        title={isEnglish ? "Privacy and data" : "隐私与数据"}
+        description={isEnglish ? "Export your account data or submit a deletion request. Deletion is reviewed before fulfillment; financial records may need to be retained." : "可以导出账户数据或提交删除申请。删除须先核对任务、订单与剩余额度；财务记录可能需要保留。"}
       />
       <div className="ops-two-col ops-two-col--wide">
         <Section title={isEnglish ? "Current data path" : "当前数据路径"} kicker="VERIFIABLE FLOW" className="ops-shadow-card">
           <ol className="ops-numbered">
             <li><span>01</span><div><b>{isEnglish ? "Local draft backup" : "浏览器待同步备份"}</b><p>{isEnglish ? "Unsynced text is cached per manuscript in this browser. Saved caches are cleared at sign-out; unsynced copies remain to prevent loss." : "未同步文字按文稿暂存在此浏览器。退出登录时清除已同步缓存；未同步备份保留以防丢稿。"}</p></div></li>
-            <li><span>02</span><div><b>{isEnglish ? "Local application server" : "本地应用服务"}</b><p>{isEnglish ? "Original files, drafts, reports, and rewrite results are stored by account in local SQLite; this is not an off-site backup." : "原文件、文稿、报告及改写结果按账户保存在本机 SQLite；这不是异地备份。"}</p></div></li>
+            <li><span>02</span><div><b>{isEnglish ? "Platform server" : "平台服务器"}</b><p>{isEnglish ? "Saved original files, manuscripts, reports, and rewrite results are stored by account in the platform's server database. Encrypted server backups are separate from browser drafts; keep your own copy too." : "已保存的原文件、文稿、报告和改写结果按账户存放在平台服务器数据库中，并定时制作服务器加密备份；重要文稿仍请自行保留副本。"}</p></div></li>
             <li><span>03</span><div><b>{isEnglish ? "Platform-managed LLM" : "平台统一配置的 LLM"}</b><p>{isEnglish ? "When you confirm a model rewrite, the relevant text is sent by the backend to its configured model provider." : "用户确认模型改写后，相关正文由后端发送给已配置的模型服务商。"}</p></div></li>
-            <li><span>04</span><div><b>{isEnglish ? "Usage ledger" : "用量账本"}</b><p>{isEnglish ? "Credit and job-usage metadata are recorded for reservation, settlement, and release. Completed task results are retained locally." : "额度与任务用量元数据用于预占、结算和释放；已完成任务结果保存在本机。"}</p></div></li>
+            <li><span>04</span><div><b>{isEnglish ? "Usage ledger" : "用量账本"}</b><p>{isEnglish ? "Credit and job-usage metadata are recorded for reservation, settlement, and release. Completed task results are retained on the platform server." : "额度与任务用量元数据用于预占、结算和释放；已完成任务结果保存在平台服务器。"}</p></div></li>
           </ol>
         </Section>
-        <Section title={isEnglish ? "Not available" : "尚未提供"} kicker="NOT CONNECTED">
-          <div className="ops-note ops-note--yellow"><WarningCircle size={28} weight="fill" /><div><b>{isEnglish ? "Retention policy and rights APIs are pending" : "留存策略与用户权利 API 待接入"}</b><p>{isEnglish ? "Configurable retention, cross-device recovery, data export, deletion requests, and audit evidence are not implemented." : "可配置留存、跨设备恢复、数据导出、删除请求和审计证据均未实现。"}</p></div></div>
+        <Section title={isEnglish ? "Your data controls" : "你的数据操作"} kicker="ACCOUNT DATA">
+          <div className="ops-note ops-note--yellow"><WarningCircle size={28} weight="fill" /><div><b>{isEnglish ? "Deletion requires review" : "删除申请需核对"}</b><p>{isEnglish ? "A request does not delete data immediately. Running jobs, pending payments and unused paid credits must be settled first. Financial records remain pseudonymous after fulfillment; configurable retention is not available yet." : "提交申请不会立即删除。运行任务、待确认付款和未使用的付费额度须先处理；完成后财务记录会以去身份化账户标识保留。目前尚无自选留存期。"}</p></div></div>
+          {isAccountUser ? <>
+            <div className="ops-header-actions">
+              <Button icon={DownloadSimple} onClick={exportData} disabled={Boolean(busy)}>{busy === "export" ? (isEnglish ? "Preparing…" : "正在导出…") : (isEnglish ? "Download my data" : "下载我的数据")}</Button>
+            </div>
+            {request?.status === "pending" ? <div className="ops-note ops-note--yellow"><Info size={24} weight="fill" /><div><b>{isEnglish ? "Deletion request pending" : "删除申请待处理"}</b><p>{isEnglish ? `Request ${request.id}. You may cancel it while it is pending.` : `申请编号 ${request.id}。处理前可以取消。`}</p><Button onClick={cancelDeletion} disabled={Boolean(busy)}>{isEnglish ? "Cancel request" : "取消申请"}</Button></div></div> : <div className="ops-form-grid">
+              <label><span>{isEnglish ? "Type your account email to request deletion" : "输入当前账户邮箱以申请删除"}</span><input type="email" autoComplete="email" value={confirmedEmail} onChange={(event) => setConfirmedEmail(event.target.value)} placeholder={email} /></label>
+              <Button icon={Trash} onClick={requestDeletion} disabled={Boolean(busy) || confirmedEmail.trim() !== email}>{busy === "delete" ? (isEnglish ? "Submitting…" : "正在提交…") : (isEnglish ? "Request account deletion" : "申请删除账户")}</Button>
+            </div>}
+          </> : <p>{isEnglish ? "Sign in to export account data or request deletion." : "登录后可导出账户数据或申请删除。"}</p>}
+          {feedback && <div className="ops-note ops-note--green" role="status"><Info size={24} weight="fill" /><div><p>{feedback}</p></div></div>}
           <div className="ops-header-actions">
             <Button icon={UserCircle} onClick={() => go(navigate, "/app/settings/account")}>{isEnglish ? "Account status" : "账号状态"}</Button>
-            <Button icon={Info} onClick={() => go(navigate, "/privacy")}>{isEnglish ? "Read privacy notice" : "查看隐私说明"}</Button>
+            <Button icon={Info} onClick={() => go(navigate, "/legal/privacy")}>{isEnglish ? "Read privacy notice" : "查看隐私说明"}</Button>
           </div>
         </Section>
       </div>
@@ -2305,6 +2415,7 @@ export function ServiceStatusPage() {
   const checks = config?.checks && typeof config.checks === "object" ? config.checks : {};
   const checkEvidence = Object.entries(checks).map(([language, count]) => `${language.toUpperCase()} ${count}`).join(" · ") || "—";
   const payment = config?.payment || billing?.payment || {};
+  const checkoutEnabled = payment.provider === "stripe" && payment.checkout_enabled === true;
   const components = [
     {
       id: "gateway",
@@ -2338,19 +2449,28 @@ export function ServiceStatusPage() {
     },
     {
       id: "payments",
-      name: "订单与支付",
+      name: isEnglish ? "Orders and payment" : "订单与支付",
       scope: payment.display_name || payment.provider || "—",
-      evidence: payment.notice || "没有订单、支付确认、退款或对账前端能力",
-      status: "closed",
-      label: "未接入",
+      evidence: payment.notice || (isEnglish ? "Waiting for payment configuration" : "等待支付配置"),
+      status: checkoutEnabled ? (payment.live ? "healthy" : "degraded") : "closed",
+      label: checkoutEnabled
+        ? (payment.live ? (isEnglish ? "Live checkout" : "正式收款")
+          : (isEnglish ? "Test checkout" : "测试收银台"))
+        : (isEnglish ? "Unavailable" : "未接入"),
     },
     {
       id: "admin",
-      name: "管理员控制面",
-      scope: "只读占位",
-      evidence: "没有管理员数据或写操作 API",
-      status: "closed",
-      label: "未接入",
+      name: isEnglish ? "Administrator review" : "管理员核对",
+      scope: config?.admin_read_only_configured
+        ? (isEnglish ? "Authorized read-only access" : "授权只读访问")
+        : (isEnglish ? "No administrator configured" : "未配置管理员"),
+      evidence: config?.admin_read_only_configured
+        ? (isEnglish ? "Orders and deletion requests are available to authorized admins; write actions remain restricted." : "授权管理员可核对订单和删除申请；写操作仍受限。")
+        : (isEnglish ? "Set ADMIN_EMAILS privately on the server to enable review access." : "需在服务器私有配置中设置 ADMIN_EMAILS。"),
+      status: config?.admin_read_only_configured ? "degraded" : "closed",
+      label: config?.admin_read_only_configured
+        ? (isEnglish ? "Read only" : "只读")
+        : (isEnglish ? "Unavailable" : "未接入"),
     },
   ];
   const coreReady = healthOk && Boolean(config) && Boolean(billing);
@@ -2370,7 +2490,11 @@ export function ServiceStatusPage() {
         </div>
         <time>{checkedAt ? `${isEnglish ? "Checked" : "核对于"} ${new Intl.DateTimeFormat(isEnglish ? "en" : "zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(checkedAt)}` : "—"}</time>
       </div>
-      <div className="ops-inline-notice"><Info size={18} weight="fill" /><span><b>未接入项不会显示模拟数据</b>：订单、支付与管理员动作均明确停用。</span></div>
+      <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{checkoutEnabled
+        ? (isEnglish ? "Checkout availability comes from the server. Confirm a charge only from its Stripe order and verified webhook, not from this health table."
+          : "收银台可用状态来自服务端；真实扣款与额度发放仍以 Stripe 订单和已核验的 Webhook 为准。")
+          : (isEnglish ? "Unavailable services show no simulated data; payment and administrator write actions remain disabled."
+          : "未接入项不显示模拟数据；支付与管理员写操作均明确停用。")}</span></div>
       <Section title="服务组件" kicker="LIVE BACKEND EVIDENCE" className="ops-shadow-card">
         <Table rows={components} columns={[
           { key: "name", label: "组件", render: (row) => <b>{row.name}</b> },
@@ -2489,7 +2613,26 @@ function AdminUnavailablePage({ navigate, active, title, description }) {
 }
 
 export function AdminOverviewPage({ navigate }) {
-  return <AdminUnavailablePage navigate={navigate} active="overview" title="运营总览" description="真实运营指标与管理员动作尚未接入。" />;
+  const { isEnglish } = useLocale();
+  const [orders, setOrders] = useState([]);
+  const [requests, setRequests] = useState([]);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    Promise.all([getApi("/api/admin/orders"), getApi("/api/admin/privacy-requests")])
+      .then(([orderData, requestData]) => {
+        setOrders(orderData.orders || []);
+        setRequests(requestData.requests || []);
+      })
+      .catch((failure) => setError(failure.message || (isEnglish ? "Admin data unavailable." : "无法读取运营数据。")));
+  }, [isEnglish]);
+  return <Page>
+    <PageHeader eyebrow="ADMIN / LIVE" title={isEnglish ? "Operations overview" : "运营总览"} description={isEnglish ? "Read-only order and privacy-request evidence from the server." : "展示服务端真实订单与隐私申请，只读核对。"} />
+    {error && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><p>{error}</p></div></div>}
+    {!error && <div className="ops-two-col">
+      <Section title={isEnglish ? "Recent orders" : "最近订单"} kicker="BILLING"><h2>{orders.length}</h2><Button onClick={() => navigate("/admin/orders")}>{isEnglish ? "Review orders" : "核对订单"}</Button></Section>
+      <Section title={isEnglish ? "Deletion requests pending" : "待处理删除申请"} kicker="PRIVACY"><h2>{requests.length}</h2><Button onClick={() => navigate("/admin/privacy")}>{isEnglish ? "Review requests" : "查看申请"}</Button></Section>
+    </div>}
+  </Page>;
 }
 
 export function AdminUsersPage({ navigate }) {
@@ -2505,7 +2648,40 @@ export function AdminPlansPage({ navigate }) {
 }
 
 export function AdminOrdersPage({ navigate }) {
-  return <AdminUnavailablePage navigate={navigate} active="orders" title="订单与对账" description="订单查询、退款、对账与权益冲正尚未接入。" />;
+  const { isEnglish } = useLocale();
+  const [orders, setOrders] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await getApi("/api/admin/orders");
+      setOrders(result.orders || []);
+    } catch (failure) {
+      setError(failure.message || (isEnglish ? "Could not load orders." : "无法读取订单。"));
+    } finally {
+      setLoading(false);
+    }
+  }, [isEnglish]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  return <Page>
+    <PageHeader eyebrow="ADMIN / BILLING" title={isEnglish ? "Orders and local ledger" : "订单与本地账本"} description={isEnglish ? "Read-only local order and webhook records. A match here does not prove Stripe has no undelivered events; check Stripe for final settlement." : "只读查看本地订单与回调记录。本地一致不代表 Stripe 没有未送达事件；最终结算仍需到 Stripe 核对。"}>
+      <Button icon={ArrowsClockwise} onClick={refresh} disabled={loading}>{loading ? (isEnglish ? "Loading…" : "正在读取…") : (isEnglish ? "Refresh" : "刷新")}</Button>
+    </PageHeader>
+    {error && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><p>{error}</p></div></div>}
+    {!error && <Section title={isEnglish ? "Latest 100 orders" : "最近 100 笔订单"} kicker="LIVE LEDGER" className="ops-shadow-card">
+      <Table rows={orders.map((order) => ({ ...order, id: order.order_id }))} empty={isEnglish ? "No orders" : "暂无订单"} columns={[
+        { key: "order_id", label: isEnglish ? "Order" : "订单号" },
+        { key: "account_email", label: isEnglish ? "Account" : "账户", render: (row) => row.account_email || row.account_id },
+        { key: "product_id", label: isEnglish ? "Plan" : "套餐" },
+        { key: "amount_fen", label: isEnglish ? "Amount" : "金额", render: (row) => `${(row.amount_fen / 100).toFixed(2)} ${row.currency}` },
+        { key: "status", label: isEnglish ? "Status" : "状态", render: (row) => <StatusPill status={row.status} /> },
+        { key: "refunded_fen", label: isEnglish ? "Refunded" : "累计退款", render: (row) => `${(row.refunded_fen / 100).toFixed(2)} ${row.currency}` },
+        { key: "reconciliation_required", label: isEnglish ? "Local check" : "本地核对", render: (row) => row.reconciliation_required ? (isEnglish ? "Review" : "需复核") : (isEnglish ? "Locally consistent" : "本地一致") },
+      ]} />
+    </Section>}
+  </Page>;
 }
 
 export function AdminEconomicsPage({ navigate }) {
@@ -2517,7 +2693,35 @@ export function AdminServicePage({ navigate }) {
 }
 
 export function AdminPrivacyPage({ navigate }) {
-  return <AdminUnavailablePage navigate={navigate} active="privacy" title="隐私控制台" description="隐私请求、留存策略与审计导出尚未接入。" />;
+  const { isEnglish } = useLocale();
+  const [requests, setRequests] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await getApi("/api/admin/privacy-requests");
+      setRequests(result.requests || []);
+    } catch (failure) {
+      setError(failure.message || (isEnglish ? "Could not load requests." : "无法读取申请。"));
+    } finally {
+      setLoading(false);
+    }
+  }, [isEnglish]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  return <Page>
+    <PageHeader eyebrow="ADMIN / PRIVACY" title={isEnglish ? "Privacy requests" : "隐私申请"} description={isEnglish ? "Pending requests are fulfilled only after a verified backup and a review of outstanding paid entitlements." : "仅在备份恢复校验、任务与付费权益核对完成后处理删除申请。"}>
+      <Button icon={ArrowsClockwise} onClick={refresh} disabled={loading}>{loading ? (isEnglish ? "Loading…" : "正在读取…") : (isEnglish ? "Refresh" : "刷新")}</Button>
+    </PageHeader>
+    {error && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><p>{error}</p></div></div>}
+    {!error && <Section title={isEnglish ? "Pending requests" : "待处理申请"} kicker="LIVE REQUESTS" className="ops-shadow-card"><Table rows={requests} empty={isEnglish ? "No pending requests" : "暂无待处理申请"} columns={[
+      { key: "id", label: isEnglish ? "Request" : "申请号" },
+      { key: "email", label: isEnglish ? "Email" : "邮箱" },
+      { key: "kind", label: isEnglish ? "Type" : "类型" },
+      { key: "created_at", label: isEnglish ? "Submitted" : "提交时间", render: (row) => new Date(row.created_at * 1000).toLocaleString(isEnglish ? "en" : "zh-CN") },
+    ]} /></Section>}
+  </Page>;
 }
 
 function LegacyAdminOverviewPage({ navigate }) {

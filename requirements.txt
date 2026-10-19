@@ -6,4 +6,5 @@ pypdf>=5.0       # PDF 正文提取。缺了只影响 PDF 入口，其余功能�
 google-auth[requests]>=2.35  # Google OAuth ID Token 签名、audience 与 issuer 校验
 argon2-cffi>=23.1  # 邮箱账户密码使用 Argon2id，禁止自制密码哈希
 stripe>=16,<17  # Stripe Checkout 与官方 webhook 验签 SDK（测试及正式模式）
+cryptography>=42  # AES-GCM authenticated encryption for database backups
 # docx 读写只用 zipfile + ElementTree，不需要 python-docx

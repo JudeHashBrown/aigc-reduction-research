@@ -36,11 +36,12 @@ from llm import Client                    # noqa: E402
 from billing import BillingError, BillingStore, request_fingerprint  # noqa: E402
 from payments import create_payment_provider                         # noqa: E402
 from workspace_store import WorkspaceStore                           # noqa: E402
+from privacy_store import PrivacyError, PrivacyStore                  # noqa: E402
 from trial_session import (COOKIE_NAME, TrialSessionStore,
                            load_or_create_secret)                    # noqa: E402
 from auth import (AUTH_COOKIE_NAME, AuthError, AuthStore, EmailDelivery,
                   GoogleOAuthClient, PASSWORD_MAX_LENGTH,
-                  PASSWORD_MIN_LENGTH)                              # noqa: E402
+                  PASSWORD_MIN_LENGTH, normalize_email)             # noqa: E402
 
 WEIGHTS = ROOT.parent / "engine" / "weights.json"
 LOCAL_ENV = ROOT.parent / ".env"
@@ -165,6 +166,7 @@ def _billing_db_path() -> Path:
 ACCOUNT_ID = "local-demo"
 BILLING = BillingStore(_billing_db_path())
 WORKSPACES = WorkspaceStore(_billing_db_path())
+PRIVACY = PrivacyStore(_billing_db_path())
 PAYMENTS = create_payment_provider(os.environ.get("PAYMENT_PROVIDER", "mock"), BILLING)
 
 
@@ -237,6 +239,14 @@ if AUTH_MODE not in {"local", "trial", "accounts"}:
     raise RuntimeError("AUTH_MODE 必须是 local、trial 或 accounts")
 TRIAL_MODE = AUTH_MODE == "trial"
 ACCOUNTS_MODE = AUTH_MODE == "accounts"
+ADMIN_EMAILS = {normalize_email(value.strip()) for value in
+                os.environ.get("ADMIN_EMAILS", "").split(",") if value.strip()}
+
+
+def _admin_allowed(session: dict | None) -> bool:
+    user = session.get("user") if session else None
+    return bool(ACCOUNTS_MODE and session and session.get("authenticated") and isinstance(user, dict)
+                and user.get("email") in ADMIN_EMAILS)
 TRIAL_CREDITS = _env_int("TRIAL_CREDITS", 3000, 0, 10_000_000)
 TRIAL_MAX_CHARS = _env_int("TRIAL_MAX_CHARS", 3000, 1, MAX_CHARS)
 _trial_public_origin_raw = os.environ.get("TRIAL_PUBLIC_ORIGIN", "").strip()
@@ -753,6 +763,8 @@ class Handler(BaseHTTPRequestHandler):
                                               ensure_ascii=False))
         parsed_path = urlparse(self.path)
         path = parsed_path.path
+        if path == "/health":
+            return self._send(200, json.dumps({"ok": True}))
         if path == "/api/session":
             session = self._read_trial_session()
             headers = None
@@ -829,9 +841,18 @@ class Handler(BaseHTTPRequestHandler):
             if session is None:
                 return
         account_id = session["account_id"] if session else ACCOUNT_ID
-        if path == "/health":
-            self._send(200, json.dumps({"ok": True}))
-        elif path.startswith("/api/job/"):
+        if path.startswith("/api/admin/"):
+            if not _admin_allowed(session):
+                return self._send(403, json.dumps({"error": "仅管理员可访问。"},
+                                                  ensure_ascii=False))
+            if path == "/api/admin/orders":
+                return self._send(200, json.dumps({"orders": BILLING.admin_orders()},
+                                                  ensure_ascii=False))
+            if path == "/api/admin/privacy-requests":
+                return self._send(200, json.dumps(
+                    {"requests": PRIVACY.pending_requests()}, ensure_ascii=False))
+            return self._send(404, json.dumps({"error": "not found"}))
+        if path.startswith("/api/job/"):
             jid = path.rsplit("/", 1)[-1]
             j = WORKSPACES.get_job(account_id, jid)
             if not j:
@@ -850,6 +871,18 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/jobs":
             return self._send(200, json.dumps({
                 "jobs": WORKSPACES.list_jobs(account_id),
+            }, ensure_ascii=False))
+        elif ACCOUNTS_MODE and path == "/api/account/data-export":
+            try:
+                exported = PRIVACY.export(account_id)
+            except PrivacyError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}, ensure_ascii=False))
+            return self._send(200, json.dumps(exported, ensure_ascii=False),
+                              headers={"Content-Disposition":
+                                       'attachment; filename="rightthesis-account-data.json"'})
+        elif ACCOUNTS_MODE and path == "/api/account/privacy-request":
+            return self._send(200, json.dumps({
+                "request": PRIVACY.current_request(account_id),
             }, ensure_ascii=False))
         elif path == "/api/documents":
             return self._send(200, json.dumps({
@@ -913,6 +946,7 @@ class Handler(BaseHTTPRequestHandler):
                     "email_password": True,
                     "google": bool(GOOGLE_OAUTH and GOOGLE_OAUTH.configured),
                 } if ACCOUNTS_MODE else {}),
+                "admin_read_only_configured": bool(ADMIN_EMAILS),
                 "payment": _payment_status(),
             }, ensure_ascii=False))
         elif path == "/api" or path.startswith("/api/"):
@@ -1174,6 +1208,16 @@ class Handler(BaseHTTPRequestHandler):
                     "authenticated": False,
                 }, ensure_ascii=False))
         account_id = session["account_id"] if session else ACCOUNT_ID
+        if ACCOUNTS_MODE and path == "/api/account/delete-request":
+            try:
+                request = PRIVACY.request_deletion(
+                    account_id, payload.get("confirm_email", ""))
+            except PrivacyError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}, ensure_ascii=False))
+            return self._send(202, json.dumps({"request": request}, ensure_ascii=False))
+        if ACCOUNTS_MODE and path == "/api/account/delete-request/cancel":
+            request = PRIVACY.cancel_deletion(account_id)
+            return self._send(200, json.dumps({"request": request}, ensure_ascii=False))
         if path == "/api/documents":
             value, error = _checked_manuscript(payload, creating=True)
             if error:

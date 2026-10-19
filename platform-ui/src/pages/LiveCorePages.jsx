@@ -154,10 +154,11 @@ const FINDING_REASONS_EN = {
 const PLAN_NAMES_EN = {
   "免费体验": "Free experience",
   "小额包": "Small pack",
+  "小字数包": "Small pack",
   "论文包": "Paper pack",
   "大论文包": "Large paper pack",
-  "学生月卡": "Student 30-day plan",
-  "高频月卡": "Frequent-use 30-day plan",
+  "学生月卡": "Student 30-day pass",
+  "高频月卡": "Frequent-use 30-day pass",
 };
 
 function hasCjk(value) {

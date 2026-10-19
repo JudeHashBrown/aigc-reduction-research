@@ -68,7 +68,7 @@ BILLING_DB=data/billing.sqlite3
 3. 仅在本机未提交的 `.env` 中设置 `AUTH_MODE=accounts`、`PAYMENT_PROVIDER=stripe`、`STRIPE_SECRET_KEY=sk_test_...`、`STRIPE_WEBHOOK_SECRET=whsec_...`、`STRIPE_LIVE_ENABLED=0`、`PUBLIC_ORIGIN=http://127.0.0.1:8877`，并启动 `python3 web/server.py 8877`。
 4. 登录账户，从“额度与订单”进入收银台。Stripe 返回平台后，页面从服务端读取订单状态；只有验签通过、订单号/金额/币种/账户核对无误的回调才能增加额度。测试卡、微信及支付宝的实际可见性受 Stripe 测试账户设置和收银台条件影响。
 
-公网正式收款必须另行完成：在 Stripe **正式模式**创建 HTTPS Webhook 端点 `https://rightthesis.com/api/billing/stripe/webhook`，订阅 `checkout.session.completed`、`checkout.session.async_payment_succeeded`、`refund.created` 和 `refund.updated`；把正式模式的 `rk_live_`（至少需要创建和读取 Checkout Session、读取 Event 与 Refund 的权限；`sk_live_` 也可用）与此端点的 `whsec_` 仅写入服务器私有 `.env`；确认 `PUBLIC_ORIGIN=https://rightthesis.com`，先运行 `python3 scripts/stripe_live_preflight.py` 确认只读权限，再设置 `STRIPE_LIVE_ENABLED=1` 并重启服务。缺任一条件时收银台保持关闭。Webhook 通过签名、环境核验后，正式模式还会用独立 API 密钥从 Stripe 实时读取事件及收银台或退款对象，再核对订单号、账户、商品、金额和币种；无法读取时不会发放或撤销额度。成功退款累计达到整单金额时撤销未使用额度。部分退款和银行卡争议仍需人工对账处理，不能把测试付款当作正式验收。**目前公网尚未配置正式密钥，不能真实收款。**
+公网正式收款的启用条件：在 Stripe **正式模式**创建 HTTPS Webhook 端点 `https://rightthesis.com/api/billing/stripe/webhook`，订阅 `checkout.session.completed`、`checkout.session.async_payment_succeeded`、`refund.created` 和 `refund.updated`；把正式模式的 `rk_live_`（至少需要创建和读取 Checkout Session、读取 Event 与 Refund 的权限；`sk_live_` 也可用）与此端点的 `whsec_` 仅写入服务器私有 `.env`；确认 `PUBLIC_ORIGIN=https://rightthesis.com`，先运行 `python3 scripts/stripe_live_preflight.py` 确认只读权限，再设置 `STRIPE_LIVE_ENABLED=1` 并重启服务。缺任一条件时收银台保持关闭。Webhook 通过签名、环境核验后，正式模式还会用独立 API 密钥从 Stripe 实时读取事件及收银台或退款对象，再核对订单号、账户、商品、金额和币种；无法读取时不会发放或撤销额度。成功退款会按累计退款金额调整该订单未用额度；已消耗额度不能追回。银行卡争议仍需人工核对。**公网实际开关以 `/api/config` 的 `payment.live` 与 `payment.checkout_enabled` 为准，不依赖文档中的静态状态。**
 
 ## 文稿保存与恢复
 
@@ -76,7 +76,9 @@ BILLING_DB=data/billing.sqlite3
 
 服务重启后，已完成任务的结果仍可在“版本与任务历史”下载；若模型生成时进程中断，不能安全续跑同一次调用，任务会标记中断并尝试退回预占额度。如果结果已写入数据库但尚未结算，重启会继续完成结算。旧版 `sessionStorage` 里的文字会迁移为独立“恢复文本”；旧版从未保存的原始 DOCX 字节无法恢复，需要重新导入。
 
-这是**单机持久化，不是异地备份**。磁盘故障、误删 `data/` 或部署时不保留数据库仍会造成数据丢失；正式上线前应配置加密备份、定期恢复演练和存储容量监控。对复杂 DOCX，导出失败时可下载完整 TXT 作为可用成果，并在 Word 中核对样式与引用。
+这是**单机持久化，不是异地备份**。`scripts/backup_database.py` 可在线制作一致性快照，用 AES-GCM 加密并自动执行解密与 SQLite 完整性校验；`deploy/rightthesis-backup.timer` 每天运行一次。必须把加密档案和解密密钥分别复制到服务器之外，并定期在新路径演练还原；只在同一云盘上留存备份仍不能抵御磁盘故障。对复杂 DOCX，导出失败时可下载完整 TXT 作为可用成果，并在 Word 中核对样式与引用。
+
+登录账户可以在“隐私与数据”下载 JSON 数据导出，或提交、取消账户删除申请。删除需由运营核对任务、待付款订单及未用付费额度后，使用 `scripts/privacy_requests.py` 在已验证的新近备份保护下处理。处理时删除身份、文稿和改写结果；交易与用量记录以去身份化账户标识保留，用于财务对账。加密备份在轮换前仍可能包含先前内容。具体操作见 [生产运维说明](docs/production-operations.md)。
 
 ## Google 与邮箱账号登录
 

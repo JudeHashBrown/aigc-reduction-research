@@ -1,0 +1,16 @@
+[Unit]
+Description=Create and verify an encrypted RightThesis database backup
+After=rightthesis.service
+
+[Service]
+Type=oneshot
+User=admin
+Group=admin
+WorkingDirectory=/home/admin/rightthesis
+ExecStart=/home/admin/rightthesis/.venv/bin/python scripts/backup_database.py backup --database /home/admin/rightthesis/data/billing.sqlite3 --output-dir /home/admin/rightthesis-backups --key-file /home/admin/.config/rightthesis/backup.key
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/admin/rightthesis-backups
+PrivateTmp=true

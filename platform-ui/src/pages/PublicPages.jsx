@@ -26,6 +26,7 @@ import {
 } from '@phosphor-icons/react';
 import './public-pages.css';
 import { LanguageToggle, useLocale } from '../locale.jsx';
+import { localizedPlanDescription as planDescription, localizedPlanName as planName } from '../plan-copy.js';
 import { useOptionalPlatform, usePlatform } from '../platform.jsx';
 import { AuthPage as AccountAuthPage } from './AuthPage.jsx';
 
@@ -372,15 +373,6 @@ function ListChecksArt() {
   );
 }
 
-const planEnglishCopy = {
-  free: { name: 'Free experience', description: 'Free Chinese and English rule analysis, with 800 characters for a first conservative rewrite.' },
-  pack_3k: { name: 'Small pack', description: 'For a chapter or short draft. It does not renew automatically.' },
-  pack_10k: { name: 'Paper pack', description: 'For a short paper or several rounds of focused revision.' },
-  pack_30k: { name: 'Large paper pack', description: 'For longer papers and asynchronous chunked processing.' },
-  student_month: { name: 'Student 30-day pass', description: 'One-time purchase: 20,000 characters, valid for 30 days. No automatic renewal.' },
-  pro_month: { name: 'Frequent-use 30-day pass', description: 'One-time purchase: 60,000 characters, valid for 30 days. No automatic renewal.' },
-};
-
 function formatCredits(value, isEnglish) {
   return new Intl.NumberFormat(isEnglish ? 'en-US' : 'zh-CN').format(Number(value) || 0);
 }
@@ -394,15 +386,6 @@ function formatPlanPrice(plan, isEnglish) {
       maximumFractionDigits: 2,
     }).format(price),
   };
-}
-
-function planName(plan, isEnglish) {
-  return isEnglish ? (planEnglishCopy[plan.id]?.name || plan.name || plan.id) : (plan.name || plan.id);
-}
-
-function planDescription(plan, isEnglish) {
-  if (!isEnglish) return plan.description || '服务端当前配置的额度产品。';
-  return planEnglishCopy[plan.id]?.description || plan.description || 'An entitlement currently configured by the service.';
 }
 
 function planTone(plan) {
@@ -571,9 +554,9 @@ function LegacyAuthPage({ navigate, statePath }) {
 const privacySections = [
   ['我们处理哪些信息', '注册与登录时，账户服务会处理邮箱、显示名称、邮箱验证状态、登录方式和会话安全信息；Google 登录会接收账户授权的基本身份信息。使用工作台时，服务还会处理文档内容、处理请求和额度使用。', 'Information we process', 'During registration and sign-in, the account service processes your email, display name, verification status, sign-in method, and session-security information. Google sign-in provides the basic identity information you authorize. The workspace also processes document content, processing requests, and credit usage.'],
   ['信息如何使用', '这些信息用于账户验证与恢复、会话安全、文档解析、分析、改写任务、额度核算和故障排查。已保存的文稿和任务与账户关联，可在同一账户中恢复；仍请自行保留原稿和导出成果。', 'How we use information', 'Information is used for account verification and recovery, session security, document parsing, analysis, rewrite jobs, credit accounting, and troubleshooting. Saved manuscripts and jobs are linked to your account and can be restored when you sign in again. Keep your own copies of originals and exports.'],
-  ['文档与保留边界', '浏览器可能保留轻量工作台状态；已保存的文稿、导入文件内容、改写任务和额度记录存放在平台服务器的账户数据库中。当前尚无正式的保留期或账户级删除流程；请勿提交不必要的敏感信息。', 'Documents and retention boundaries', 'The browser may keep lightweight workspace state. Saved manuscripts, imported file content, rewrite jobs, and credit records are stored in an account-scoped database on our server. There is not yet a formal retention schedule or account-deletion workflow; do not submit unnecessary sensitive information.'],
+  ['文档与保留边界', '浏览器可能保留轻量工作台状态；已保存的文稿、导入文件内容、改写任务和额度记录存放在平台服务器的账户数据库中。文稿在账户使用期间保留；可在隐私设置提交删除申请，由人工核对运行任务、待确认付款和未用付费额度后处理。服务器会制作加密备份，已删除内容可能在备份轮换前继续存在；请勿提交不必要的敏感信息。', 'Documents and retention boundaries', 'The browser may keep lightweight workspace state. Saved manuscripts, imported content, rewrite jobs, and credit records are stored in an account-scoped server database. Manuscripts remain while the account is active. A deletion request can be submitted in privacy settings and is reviewed against running jobs, pending payments and unused paid credits. The server creates encrypted backups; deleted content may remain in backups until they rotate. Do not submit unnecessary sensitive information.'],
   ['第三方服务', 'Google 登录由 Google OAuth 提供，邮箱验证与恢复邮件由平台配置的邮件服务发送。只有在你主动启动模型改写时，相关文本才会发送给平台配置的模型服务。服务器由阿里云托管；在结账功能启用时，付款由 Stripe 收银台处理，平台保存订单、付款状态与额度记录，不接收完整银行卡号。', 'Third-party services', 'Google sign-in is provided through Google OAuth, while verification and recovery messages are sent through the configured email service. Relevant text is sent to the configured model service only when you actively start a rewrite. Our server is hosted by Alibaba Cloud. When checkout is enabled, Stripe processes payments and we retain orders, payment status, and credit records; we do not receive complete card numbers.'],
-  ['你的选择', '仅使用页面实际提供的导出和工作台操作。当前没有可声称为已上线的账户删除或数据导出中心；正式流程实现后会在此说明。', 'Your choices', 'Use only the export and workspace controls actually shown. There is no launched account-deletion or account-data export center yet; formal processes will be documented here when implemented.'],
+  ['你的选择', '登录后可在隐私设置下载账户数据或提交、取消账户删除申请。删除申请不是即时删除；完成后文稿、任务与登录身份会移除，财务记录仍以去身份化账户标识保留用于对账。', 'Your choices', 'After signing in, you can download account data or submit and cancel a deletion request in privacy settings. A request is not immediate deletion. Once fulfilled, manuscripts, jobs and sign-in identity are removed; financial records remain under a pseudonymous account ID for reconciliation.'],
   ['政策更新', '产品能力或适用规则变化时，本页面会标注最新生效日期；具体提示方式以当时产品实际提供的能力为准。', 'Policy updates', 'When product capabilities or applicable rules change, this page will show the latest effective date. The way we notify you will depend on the capabilities the product provides at that time.'],
 ];
 
@@ -582,7 +565,7 @@ const termsSections = [
   ['当前访问资格', '平台可提供 Google 登录与经过验证的邮箱密码账户；在明确开启试用模式时，也可能提供当前浏览器的匿名会话。不得通过自动化攻击、绕过限额或干扰他人使用。', 'Current access and eligibility', 'The platform may provide Google sign-in and verified email/password accounts. When trial mode is explicitly enabled, it may also provide a browser-specific anonymous session. You may not conduct automated attacks, bypass limits, or interfere with other people’s use of the service.'],
   ['学术诚信', '你应遵守所在学校、期刊或机构的学术诚信与 AI 使用政策。平台不会代替作者完成事实核验、来源核查或署名判断。', 'Academic integrity', 'You must follow the academic-integrity and AI-use policies of your school, journal, or institution. The platform does not replace the author’s responsibility to verify facts, check sources, or make authorship decisions.'],
   ['内容责任', '你确认有权上传和处理相关文本。请在提交前移除不必要的敏感信息，并在导出前审阅所有修改、数字、引用和术语。', 'Responsibility for content', 'You confirm that you have the right to upload and process the relevant text. Remove unnecessary sensitive information before submitting it, and review every revision, number, citation, and term before exporting.'],
-  ['套餐、付款与退款', '定价页展示服务端当前的价格、额度、有效期和单次上限。仅在结账功能启用且你主动确认付款时才会真实扣款；30 天月卡为一次购买，不自动续费。退款申请可联系 support@righttoken.ai；是否退款需依适用法律和具体订单情况核对。Stripe 确认成功退款后，平台撤销相应订单尚未使用的额度；部分退款与银行卡争议需人工处理。', 'Plans, payments, and refunds', 'The pricing page shows current server-side prices, credits, validity periods, and per-task limits. A real charge occurs only when checkout is enabled and you confirm payment. A 30-day pass is a one-time purchase, not an auto-renewing subscription. Contact support@righttoken.ai about a refund; eligibility depends on applicable law and the order. After Stripe confirms a successful full refund, unused credits from that order are revoked. Partial refunds and card disputes require manual handling.'],
+  ['套餐、付款与退款', '定价页展示服务端当前的价格、额度、有效期和单次上限。仅在结账功能启用且你主动确认付款时才会真实扣款；30 天月卡为一次购买，不自动续费。退款申请可联系 support@righttoken.ai；是否退款需依适用法律和具体订单情况核对。Stripe 确认成功退款后，平台按累计退款金额调整该订单未使用的额度；已消耗额度无法追回。银行卡争议仍需人工核对。', 'Plans, payments, and refunds', 'The pricing page shows current server-side prices, credits, validity periods, and per-task limits. A real charge occurs only when checkout is enabled and you confirm payment. A 30-day pass is a one-time purchase, not an auto-renewing subscription. Contact support@righttoken.ai about a refund; eligibility depends on applicable law and the order. After Stripe confirms a successful refund, unused credits from that order are adjusted in proportion to the cumulative refunded amount. Spent credits cannot be recovered. Card disputes still require manual review.'],
   ['服务变化', '测试阶段的模型、额度与功能可能调整。页面只描述当前实际可用或明确标为预览的能力，不保证未上线功能的时间表。', 'Changes to the service', 'Models, credits, and features may change during testing. Pages describe only capabilities that are currently available or explicitly marked as previews, and do not guarantee a timeline for unreleased features.'],
 ];
 

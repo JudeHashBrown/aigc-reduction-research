@@ -249,6 +249,27 @@ def test_expiry_and_stale_reservation_release():
         folder.cleanup()
 
 
+def test_expired_grant_release_has_no_phantom_credits():
+    clock = [1_700_000_000]
+    folder, store = make_store(now=lambda: clock[0])
+    try:
+        store.mock_checkout("student-a", "pack_3k", "checkout_expiry_release")
+        store.reserve("student-a", "job-expiry-release", "甲" * 100, "conservative")
+        clock[0] += 90 * 24 * 60 * 60 + 1
+        result = store.finalize("job-expiry-release", success=False)
+        assert result["status"] == "released"
+        assert result["released"] == 0
+        assert result["balance"] == 800
+        assert store.finalize("job-expiry-release", success=False)["released"] == 0
+        release = next(entry for entry in store.ledger("student-a")
+                       if entry["reference"] == "job:job-expiry-release"
+                       and entry["kind"] == "release")
+        assert release["delta"] == 0
+        assert release["metadata"]["expired_or_revoked_credits"] == 100
+    finally:
+        folder.cleanup()
+
+
 TESTS = [
     test_billable_character_contract,
     test_welcome_grant_and_catalog,
@@ -258,6 +279,7 @@ TESTS = [
     test_deterministic_english_s11_rewrite_commits_reserved_quota,
     test_concurrent_reservations_cannot_overspend,
     test_expiry_and_stale_reservation_release,
+    test_expired_grant_release_has_no_phantom_credits,
 ]
 
 

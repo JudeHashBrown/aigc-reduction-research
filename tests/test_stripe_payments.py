@@ -271,8 +271,10 @@ def test_full_refund_revokes_unused_credits_and_handles_event_order():
         assert store.summary("buyer")["balance"] == 10_800
         partial = {"id": "re_partial002", "payment_intent": "pi_refund002", "amount": 1000,
                    "status": "succeeded", "currency": "cny"}
-        assert store.apply_stripe_succeeded_refund("evt_partial002", "hash-partial", partial)["status"] == "partial_refund_manual_review"
-        assert store.summary("buyer")["balance"] == 10_800
+        assert store.apply_stripe_succeeded_refund("evt_partial002", "hash-partial", partial)["status"] == "partially_refunded"
+        assert store.summary("buyer")["balance"] == 10_800 - 10_000 * 1000 // 2990
+        assert store.order("buyer", second["id"])["refunded_fen"] == 1000
+        assert store.apply_stripe_succeeded_refund("evt_partial002", "hash-partial", partial)["status"] == "duplicate"
         full = {**partial, "id": "re_full002", "amount": 1990}
         assert store.apply_stripe_succeeded_refund("evt_full002", "hash-full", full)["status"] == "refunded"
         assert store.summary("buyer")["balance"] == 800
@@ -294,8 +296,97 @@ def test_full_refund_revokes_unused_credits_and_handles_event_order():
         assert store.apply_stripe_succeeded_refund("evt_refund003", "hash-refund3",
                                                    third_refund)["status"] == "refunded"
         assert store.summary("buyer")["balance"] == 800
-        store.finalize("job-refund-003", success=False)
+        released = store.finalize("job-refund-003", success=False)
+        assert released["released"] == 0
+        assert store.finalize("job-refund-003", success=False)["released"] == 0
         assert store.summary("buyer")["balance"] == 800
+        release_entry = next(entry for entry in store.ledger("buyer")
+                             if entry["reference"] == "job:job-refund-003"
+                             and entry["kind"] == "release")
+        assert release_entry["delta"] == 0
+        assert release_entry["balance_after"] == 800
+        assert release_entry["metadata"]["expired_or_revoked_credits"] == 1000
+
+
+def test_partial_refund_during_reservation_cannot_reissue_refunded_credits():
+    with tempfile.TemporaryDirectory() as folder:
+        store = BillingStore(Path(folder) / "billing.sqlite3")
+        order = store.prepare_stripe_checkout("buyer", "pack_3k", "partial_reserved_001",
+                                              livemode=True)
+        store.attach_stripe_checkout(order["id"], "cs_live_partial_reserved",
+                                     "https://checkout.stripe.com/c/pay/partial",
+                                     int(time.time()) + 3600)
+        session = {"id": "cs_live_partial_reserved", "client_reference_id": order["id"],
+                   "metadata": {"order_id": order["id"], "account_id": "buyer",
+                                "product_id": "pack_3k"},
+                   "mode": "payment", "currency": "cny", "amount_total": 990,
+                   "payment_status": "paid", "payment_intent": "pi_partial_reserved"}
+        store.apply_stripe_checkout_event("evt_partialpaid", "hash-paid", session)
+        store.reserve("buyer", "job-partial", "x" * 2000, "conservative")
+        assert store.summary("buyer")["balance"] == 1800
+        refund = {"id": "re_partial_reserved", "payment_intent": "pi_partial_reserved",
+                  "amount": 495, "status": "succeeded", "currency": "cny"}
+        assert store.apply_stripe_succeeded_refund(
+            "evt_partialrefund", "hash-refund", refund)["status"] == "partially_refunded"
+        # The paid grant now has only 1,500 credits; 2,000 are reserved, so
+        # none of its unreserved credits may be spent meanwhile.
+        assert store.summary("buyer")["balance"] == 800
+        released = store.finalize("job-partial", success=False)
+        assert released["released"] == 1500
+        assert store.summary("buyer")["balance"] == 2300
+        assert store.apply_stripe_checkout_event(
+            "evt_partialpaidagain", "hash-paid-again", session)["status"] == "partially_refunded"
+        assert store.summary("buyer")["balance"] == 2300
+
+
+def test_checkout_failure_expiry_and_late_paid_webhook():
+    clock = [1_700_000_000]
+    with tempfile.TemporaryDirectory() as folder:
+        store = BillingStore(Path(folder) / "billing.sqlite3", now=lambda: clock[0])
+        orphan = store.prepare_stripe_checkout("buyer", "pack_3k", "checkout_orphan_001")
+        clock[0] += 30 * 60 + 1
+        assert store.order("buyer", orphan["id"])["status"] == "failed"
+
+        order = store.prepare_stripe_checkout("buyer", "pack_3k", "checkout_expired_001")
+        store.attach_stripe_checkout(order["id"], "cs_test_latepaid",
+                                     "https://checkout.stripe.com/c/pay/latepaid",
+                                     clock[0] + 3600)
+        clock[0] += 3600
+        assert store.order("buyer", order["id"])["status"] == "expired"
+        assert store.orders("buyer")[0]["status"] == "expired"
+        session = {
+            "id": "cs_test_latepaid", "client_reference_id": order["id"],
+            "metadata": {"order_id": order["id"], "account_id": "buyer",
+                         "product_id": "pack_3k"},
+            "mode": "payment", "currency": "cny", "amount_total": 990,
+            "payment_status": "paid", "payment_intent": "pi_latepaid",
+        }
+        assert store.apply_stripe_checkout_event("evt_latepaid", "hash-latepaid", session)["status"] == "paid"
+        assert store.order("buyer", order["id"])["status"] == "paid"
+        assert store.summary("buyer")["balance"] == 3800
+
+        failing = SimpleNamespace(
+            StripeClient=lambda _key: SimpleNamespace(v1=SimpleNamespace(
+                checkout=SimpleNamespace(sessions=SimpleNamespace(
+                    create=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("offline")))))),
+        )
+        with patch.dict(os.environ, {"STRIPE_SECRET_KEY": "sk_test_not_real",
+                                  "STRIPE_WEBHOOK_SECRET": "whsec_not_real",
+                                  "STRIPE_LIVE_ENABLED": "0"}):
+            provider = StripePaymentProvider(store)
+            provider.stripe = failing
+            provider.configured = True
+            expect_error(lambda: provider.checkout("buyer", "pack_3k", "checkout_failed_001",
+                                                   origin="http://127.0.0.1:8877"), 502)
+        assert store.orders("buyer")[0]["status"] == "failed"
+
+        # A concurrent request may have received the same Stripe session even
+        # after the first request timed out; attaching it safely restores pending.
+        failed_id = store.orders("buyer")[0]["order_id"]
+        store.attach_stripe_checkout(failed_id, "cs_test_recovered",
+                                     "https://checkout.stripe.com/c/pay/recovered",
+                                     clock[0] + 3600)
+        assert store.order("buyer", failed_id)["status"] == "pending"
 
 
 def test_real_sdk_rejects_bad_signature_when_installed():
@@ -397,6 +488,8 @@ if __name__ == "__main__":
     test_provider_modes_and_checkout_options()
     test_live_mode_requires_opt_in_https_and_matching_webhook()
     test_full_refund_revokes_unused_credits_and_handles_event_order()
+    test_partial_refund_during_reservation_cannot_reissue_refunded_credits()
+    test_checkout_failure_expiry_and_late_paid_webhook()
     test_real_sdk_rejects_bad_signature_when_installed()
     test_http_webhook_without_browser_cookie_when_sdk_installed()
     print("✓ Stripe 离线合同：测试密钥、三种支付方式、金额验核和幂等发放")

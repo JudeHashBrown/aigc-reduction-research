@@ -140,6 +140,8 @@ def run():
         browser, jar = opener_with_cookies()
         try:
             wait_until_ready(health, base, proc)
+            code, payload, _ = request(health, base, "/health")
+            assert code == 200 and payload == {"ok": True}
             console = ConsoleReader(proc)
             session = new_session(browser, base)
             assert session["providers"] == {

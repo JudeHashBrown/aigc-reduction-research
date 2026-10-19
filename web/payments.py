@@ -145,9 +145,13 @@ class StripePaymentProvider(PaymentProvider):
             session = client.v1.checkout.sessions.create(
                 params=params, options={"idempotency_key": "rightthesis-" + order["id"]})
         except Exception as exc:
+            self.store.fail_stripe_checkout(order["id"])
             raise BillingError("Stripe 暂时无法创建收银台，请稍后重试", 502) from exc
         if hasattr(session, "to_dict"):
             session = session.to_dict()
+        if not isinstance(session, dict):
+            self.store.fail_stripe_checkout(order["id"])
+            raise BillingError("Stripe 返回了无效的收银台链接", 502)
         session_id = session.get("id")
         checkout_url = session.get("url")
         expires_at = session.get("expires_at")
@@ -157,6 +161,7 @@ class StripePaymentProvider(PaymentProvider):
                 or urlparse(checkout_url).scheme != "https"
                 or urlparse(checkout_url).hostname != "checkout.stripe.com"
                 or not isinstance(expires_at, int)):
+            self.store.fail_stripe_checkout(order["id"])
             raise BillingError("Stripe 返回了无效的收银台链接", 502)
         self.store.attach_stripe_checkout(
             order["id"], session_id, checkout_url, expires_at)

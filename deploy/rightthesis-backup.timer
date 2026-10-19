@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily verified RightThesis database backup
+
+[Timer]
+OnCalendar=*-*-* 02:35:00
+Persistent=true
+Unit=rightthesis-backup.service
+
+[Install]
+WantedBy=timers.target

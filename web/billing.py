@@ -146,6 +146,7 @@ class BillingStore:
                         product_snapshot_json TEXT,
                         stripe_livemode INTEGER NOT NULL DEFAULT 0,
                         payment_intent_id TEXT,
+                        refunded_fen INTEGER NOT NULL DEFAULT 0,
                         UNIQUE(account_id, idempotency_key),
                         UNIQUE(provider, provider_order_id)
                     );
@@ -179,6 +180,7 @@ class BillingStore:
                         reference TEXT NOT NULL,
                         created_at INTEGER NOT NULL,
                         revoked_at INTEGER,
+                        refunded_credits INTEGER NOT NULL DEFAULT 0,
                         UNIQUE(account_id, reference)
                     );
                     CREATE TABLE IF NOT EXISTS usage_reservations (
@@ -226,12 +228,30 @@ class BillingStore:
                     ("product_snapshot_json", "TEXT"),
                     ("stripe_livemode", "INTEGER NOT NULL DEFAULT 0"),
                     ("payment_intent_id", "TEXT"),
+                    ("refunded_fen", "INTEGER NOT NULL DEFAULT 0"),
                 ):
                     if name not in columns:
                         conn.execute(f"ALTER TABLE orders ADD COLUMN {name} {declaration}")
                 grant_columns = {row["name"] for row in conn.execute("PRAGMA table_info(credit_grants)")}
                 if "revoked_at" not in grant_columns:
                     conn.execute("ALTER TABLE credit_grants ADD COLUMN revoked_at INTEGER")
+                if "refunded_credits" not in grant_columns:
+                    conn.execute("ALTER TABLE credit_grants ADD COLUMN refunded_credits INTEGER NOT NULL DEFAULT 0")
+                # Older releases already revoked full-refund grants but did
+                # not store a cumulative amount. Mark those orders as applied
+                # so a later refund.updated webhook cannot insert a second
+                # ledger reversal for the same purchase.
+                conn.execute(
+                    "UPDATE orders SET refunded_fen=amount_fen "
+                    "WHERE provider='stripe' AND status='refunded' AND refunded_fen=0"
+                )
+                conn.execute(
+                    """UPDATE credit_grants SET refunded_credits=granted
+                       WHERE refunded_credits=0 AND revoked_at IS NOT NULL
+                         AND reference IN (
+                           SELECT 'order:' || id FROM orders
+                           WHERE provider='stripe' AND status='refunded')"""
+                )
                 conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_stripe_payment_intent "
                              "ON orders(payment_intent_id) WHERE payment_intent_id IS NOT NULL")
             finally:
@@ -477,6 +497,7 @@ class BillingStore:
         product = dict(PRODUCTS[product_id])
         with self._transaction() as conn:
             self._ensure_account(conn, account_id, now)
+            self._expire_pending_checkouts(conn, account_id, now)
             existing = conn.execute(
                 "SELECT * FROM orders WHERE account_id=? AND idempotency_key=?",
                 (account_id, idempotency_key),
@@ -500,6 +521,37 @@ class BillingStore:
             )
             return dict(conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone())
 
+    @staticmethod
+    def _expire_pending_checkouts(conn: sqlite3.Connection, account_id: str, now: int) -> None:
+        """Close unusable local checkout records without deciding payment state.
+
+        A late, verified paid webhook may still settle an expired local order.
+        """
+        conn.execute(
+            """UPDATE orders SET status='expired'
+               WHERE account_id=? AND provider='stripe' AND status='pending'
+                 AND checkout_expires_at IS NOT NULL AND checkout_expires_at<=?""",
+            (account_id, now),
+        )
+        # An interrupted process can leave a pending order with no redirect URL.
+        conn.execute(
+            """UPDATE orders SET status='failed'
+               WHERE account_id=? AND provider='stripe' AND status='pending'
+                 AND provider_order_id IS NULL AND checkout_url IS NULL
+                 AND created_at<=?""",
+            (account_id, now - 30 * 60),
+        )
+
+    def fail_stripe_checkout(self, order_id: str) -> None:
+        """Mark a checkout that could not return a usable Stripe redirect."""
+        with self._transaction() as conn:
+            conn.execute(
+                """UPDATE orders SET status='failed'
+                   WHERE id=? AND provider='stripe' AND status='pending'
+                     AND provider_order_id IS NULL""",
+                (order_id,),
+            )
+
     def attach_stripe_checkout(self, order_id: str, session_id: str,
                                checkout_url: str, expires_at: int) -> Dict:
         with self._transaction() as conn:
@@ -507,13 +559,15 @@ class BillingStore:
                                (order_id,)).fetchone()
             if not row:
                 raise BillingError("订单不存在", 404)
+            if row["status"] in {"paid", "refunded"}:
+                raise BillingError("订单已处理，不能重新关联收银台", 409)
             if row["provider_order_id"] and row["provider_order_id"] != session_id:
                 raise BillingError("订单已关联其他收银台", 409)
             expected_prefix = "cs_live_" if row["stripe_livemode"] else "cs_test_"
             if not session_id.startswith(expected_prefix):
                 raise BillingError("Stripe 收银台环境与订单不一致", 409)
             conn.execute(
-                """UPDATE orders SET provider_order_id=?,checkout_url=?,
+                """UPDATE orders SET status='pending',provider_order_id=?,checkout_url=?,
                    checkout_expires_at=? WHERE id=?""",
                 (session_id, checkout_url, int(expires_at), order_id),
             )
@@ -527,11 +581,13 @@ class BillingStore:
             "amount_fen": int(row["amount_fen"]), "currency": row["currency"],
             "credits": int(row["credits"]), "created_at": int(row["created_at"]),
             "paid_at": row["paid_at"],
+            "refunded_fen": int(row["refunded_fen"]),
             "live": bool(row["stripe_livemode"]) if row["provider"] == "stripe" else False,
         }
 
     def order(self, account_id: str, order_id: str) -> Optional[Dict]:
         with self._transaction() as conn:
+            self._expire_pending_checkouts(conn, account_id, int(self._now()))
             row = conn.execute("SELECT * FROM orders WHERE account_id=? AND id=?",
                                (account_id, order_id)).fetchone()
             return self._public_order(row) if row else None
@@ -539,11 +595,33 @@ class BillingStore:
     def orders(self, account_id: str, limit: int = 30) -> List[Dict]:
         limit = max(1, min(int(limit), 100))
         with self._transaction() as conn:
+            self._expire_pending_checkouts(conn, account_id, int(self._now()))
             rows = conn.execute(
                 "SELECT * FROM orders WHERE account_id=? ORDER BY created_at DESC LIMIT ?",
                 (account_id, limit),
             ).fetchall()
             return [self._public_order(row) for row in rows]
+
+    def admin_orders(self, limit: int = 100) -> List[Dict]:
+        """Read-only reconciliation view; caller must enforce administrator auth."""
+        limit = max(1, min(int(limit), 500))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT o.*,p.primary_email AS account_email,
+                          (SELECT COALESCE(SUM(amount_fen),0) FROM stripe_refunds r
+                           WHERE r.payment_intent_id=o.payment_intent_id) AS provider_refunded_fen
+                   FROM orders o LEFT JOIN auth_profiles p ON p.account_id=o.account_id
+                   ORDER BY o.created_at DESC,o.id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            return [
+                {**self._public_order(row), "account_id": row["account_id"],
+                 "account_email": row["account_email"],
+                 "provider_refunded_fen": int(row["provider_refunded_fen"] or 0),
+                 "reconciliation_required": int(row["provider_refunded_fen"] or 0)
+                 != int(row["refunded_fen"])}
+                for row in rows
+            ]
 
     def apply_stripe_checkout_event(self, event_id: str, payload_hash: str,
                                     session: Dict) -> Dict:
@@ -588,7 +666,7 @@ class BillingStore:
                 raise BillingError("Stripe PaymentIntent 无效", 409)
             if order["payment_intent_id"] and order["payment_intent_id"] != payment_intent_id:
                 raise BillingError("Stripe PaymentIntent 与订单不一致", 409)
-            if order["status"] != "paid":
+            if order["status"] not in {"paid", "partially_refunded"}:
                 if order["status"] == "refunded":
                     return {"status": "refunded", "order_id": order_id}
                 product = json.loads(order["product_snapshot_json"] or "null")
@@ -628,10 +706,10 @@ class BillingStore:
             )
             if payment_intent_id:
                 refund = self._refund_total(conn, payment_intent_id)
-                if refund and refund["amount_fen"] == order["amount_fen"]:
-                    self._apply_full_refund(conn, order_id, refund, now)
-                    return {"status": "refunded", "order_id": order_id}
-            return {"status": "paid", "order_id": order_id}
+                if refund:
+                    return self._reconcile_refund(conn, order_id, refund, now)
+            return {"status": order["status"] if order["status"] == "partially_refunded"
+                    else "paid", "order_id": order_id}
 
     @staticmethod
     def _refund_total(conn: sqlite3.Connection, payment_intent_id: str) -> Optional[Dict]:
@@ -648,14 +726,36 @@ class BillingStore:
         return {"payment_intent_id": payment_intent_id,
                 "amount_fen": int(row["amount_fen"]), "currency": row["currency"]}
 
-    def _apply_full_refund(self, conn: sqlite3.Connection, order_id: str,
-                           refund: Dict, now: int) -> None:
+    @staticmethod
+    def _recalculate_grant_remaining(conn: sqlite3.Connection, grant_id: str,
+                                     now: int) -> None:
+        """Keep released reservations below the post-refund entitlement ceiling."""
+        conn.execute(
+            """UPDATE credit_grants
+               SET remaining=MAX(0,granted-refunded_credits-
+                   (SELECT COALESCE(SUM(a.amount),0)
+                    FROM usage_allocations a
+                    JOIN usage_reservations r ON r.job_id=a.job_id
+                    WHERE a.grant_id=credit_grants.id
+                      AND r.status IN ('reserved','committed')))
+               WHERE id=? AND revoked_at IS NULL
+                 AND (expires_at IS NULL OR expires_at>?)""",
+            (grant_id, now),
+        )
+
+    def _reconcile_refund(self, conn: sqlite3.Connection, order_id: str,
+                          refund: Dict, now: int) -> Dict:
         order = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
-        if not order or order["status"] == "refunded":
-            return
-        if (order["status"] != "paid" or refund["amount_fen"] != order["amount_fen"]
+        if (not order or order["status"] not in {"paid", "partially_refunded", "refunded"}
+                or refund["amount_fen"] > order["amount_fen"]
                 or refund["currency"] != order["currency"]):
             raise BillingError("Stripe 退款与订单金额或状态不匹配", 409)
+        status = ("refunded" if refund["amount_fen"] == order["amount_fen"]
+                  else "partially_refunded")
+        if int(order["refunded_fen"]) == refund["amount_fen"]:
+            return {"status": status, "order_id": order_id}
+        if int(order["refunded_fen"]) > refund["amount_fen"]:
+            raise BillingError("Stripe 累计退款金额不能倒退", 409)
         balance_before = self._active_balance(conn, order["account_id"], now)
         reference = "order:" + order_id
         grant = conn.execute(
@@ -664,9 +764,20 @@ class BillingStore:
         ).fetchone()
         if not grant:
             raise BillingError("退款订单缺少额度发放记录", 409)
-        conn.execute("UPDATE credit_grants SET revoked_at=? WHERE id=?",
-                     (now, grant["id"]))
-        conn.execute("UPDATE orders SET status='refunded' WHERE id=?", (order_id,))
+        target_credits = (int(order["credits"]) * refund["amount_fen"]
+                          // int(order["amount_fen"]))
+        if status == "refunded":
+            target_credits = int(order["credits"])
+            conn.execute(
+                "UPDATE credit_grants SET refunded_credits=?,remaining=0,revoked_at=? WHERE id=?",
+                (target_credits, now, grant["id"]),
+            )
+        else:
+            conn.execute("UPDATE credit_grants SET refunded_credits=? WHERE id=?",
+                         (target_credits, grant["id"]))
+            self._recalculate_grant_remaining(conn, grant["id"], now)
+        conn.execute("UPDATE orders SET status=?,refunded_fen=? WHERE id=?",
+                     (status, refund["amount_fen"], order_id))
         conn.execute("UPDATE stripe_refunds SET applied_at=? WHERE payment_intent_id=?",
                      (now, refund["payment_intent_id"]))
         balance_after = self._active_balance(conn, order["account_id"], now)
@@ -674,12 +785,16 @@ class BillingStore:
             """INSERT INTO ledger_entries
                (account_id,delta,kind,reference,balance_after,metadata_json,created_at)
                VALUES(?,?,?,?,?,?,?)""",
-            (order["account_id"], balance_after - balance_before, "refund", reference,
+            (order["account_id"], balance_after - balance_before,
+             "refund" if status == "refunded" else "partial_refund",
+             reference if status == "refunded" else f"{reference}:{refund['amount_fen']}",
              balance_after, json.dumps({"provider": "stripe", "product_id": order["product_id"],
-                                        "amount_fen": order["amount_fen"],
+                                        "refunded_fen": refund["amount_fen"],
+                                        "refunded_credits": target_credits,
                                         "revoked_unused_credits": balance_before - balance_after},
                                        ensure_ascii=False), now),
         )
+        return {"status": status, "order_id": order_id}
 
     def apply_stripe_succeeded_refund(self, event_id: str, payload_hash: str,
                                       refund_object: Dict) -> Dict:
@@ -730,15 +845,8 @@ class BillingStore:
             ).fetchone()
             if not order:
                 return {"status": "pending_order"}
-            paid_order = conn.execute("SELECT amount_fen FROM orders WHERE id=?",
-                                      (order["id"],)).fetchone()
             refund = self._refund_total(conn, payment_intent_id)
-            if refund["amount_fen"] < paid_order["amount_fen"]:
-                return {"status": "partial_refund_manual_review", "order_id": order["id"]}
-            if refund["amount_fen"] > paid_order["amount_fen"]:
-                raise BillingError("Stripe 累计退款金额超过订单金额", 409)
-            self._apply_full_refund(conn, order["id"], refund, now)
-            return {"status": "refunded", "order_id": order["id"]}
+            return self._reconcile_refund(conn, order["id"], refund, now)
 
     def reserve(self, account_id: str, job_id: str, text: str, strength: str,
                 fingerprint: Optional[str] = None) -> Dict:
@@ -849,12 +957,19 @@ class BillingStore:
                 raise BillingError("计费预占不存在", 404)
             account_id = reservation["account_id"]
             if reservation["status"] != "reserved":
+                released = 0
+                if reservation["status"] == "released":
+                    entry = conn.execute(
+                        """SELECT delta FROM ledger_entries
+                           WHERE account_id=? AND kind='release' AND reference=?""",
+                        (account_id, "job:" + job_id),
+                    ).fetchone()
+                    released = max(0, int(entry["delta"])) if entry else 0
                 return {
                     "job_id": job_id, "status": reservation["status"],
                     "charged": int(reservation["reserved"])
                                if reservation["status"] == "committed" else 0,
-                    "released": int(reservation["reserved"])
-                                if reservation["status"] == "released" else 0,
+                    "released": released,
                     "balance": self._active_balance(conn, account_id, now),
                     "reused": True,
                     "input_tokens": int(reservation["input_tokens"]),
@@ -904,25 +1019,26 @@ class BillingStore:
                     "SELECT grant_id,amount FROM usage_allocations WHERE job_id=?",
                     (job_id,),
                 ).fetchall()
-                for item in allocations:
-                    conn.execute(
-                        "UPDATE credit_grants SET remaining=remaining+? WHERE id=?",
-                        (int(item["amount"]), item["grant_id"]),
-                    )
+                balance_before = self._active_balance(conn, account_id, now)
                 status = "released"
-                charged, released = 0, reserved
-                balance = self._active_balance(conn, account_id, now)
                 conn.execute(
                     """UPDATE usage_reservations SET status=?,input_tokens=?,output_tokens=?,
                        finalized_at=? WHERE job_id=?""",
                     (status, input_tokens, output_tokens, now, job_id),
                 )
+                for item in allocations:
+                    self._recalculate_grant_remaining(conn, item["grant_id"], now)
+                charged = 0
+                balance = self._active_balance(conn, account_id, now)
+                released = balance - balance_before
                 conn.execute(
                     """INSERT INTO ledger_entries
                        (account_id,delta,kind,reference,balance_after,metadata_json,created_at)
                        VALUES(?,?,?,?,?,?,?)""",
-                    (account_id, reserved, "release", "job:" + job_id, balance,
+                    (account_id, released, "release", "job:" + job_id, balance,
                      json.dumps({"reason": "failed_or_no_accepted_candidate",
+                                 "reservation_released": reserved,
+                                 "expired_or_revoked_credits": reserved - released,
                                  "input_tokens": input_tokens,
                                  "output_tokens": output_tokens,
                                  "total_tokens": total_tokens,

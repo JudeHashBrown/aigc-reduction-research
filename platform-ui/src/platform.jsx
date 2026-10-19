@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
+export { billableChars } from "./billing-text.js";
+
 const PlatformContext = createContext(null);
 
 let activeSession = {
@@ -13,6 +15,11 @@ let activeSession = {
   user: null,
   auth: {},
 };
+const sessionListeners = new Set();
+
+function publishSession() {
+  sessionListeners.forEach((listener) => listener({ ...activeSession }));
+}
 
 const workspace = {
   id: null,
@@ -171,6 +178,7 @@ function applySession(payload = {}) {
     user: next.user || null,
     auth,
   };
+  publishSession();
   return activeSession;
 }
 
@@ -200,6 +208,18 @@ export async function ensureSession(force = false) {
   return applySession(payload);
 }
 
+async function refreshAccountAfterUnauthorized() {
+  if (activeSession.authMode !== "accounts") return;
+  try {
+    await ensureSession(true);
+  } catch {
+    // The API has already returned 401. Keep local drafts, but close access
+    // to protected screens even if the session-status request also fails.
+    activeSession = { ...activeSession, authenticated: false, kind: "none", csrfToken: "", user: null };
+    publishSession();
+  }
+}
+
 export async function getApi(path, retry = true) {
   await ensureSession();
   const response = await fetch(path, {
@@ -213,6 +233,7 @@ export async function getApi(path, retry = true) {
       await ensureSession(true);
       return getApi(path, false);
     }
+    if (error.status === 401) await refreshAccountAfterUnauthorized();
     throw error;
   }
 }
@@ -234,6 +255,7 @@ export async function postApi(path, body, retry = true) {
       await ensureSession(true);
       return postApi(path, body, false);
     }
+    if (error.status === 401) await refreshAccountAfterUnauthorized();
     throw error;
   }
 }
@@ -506,10 +528,6 @@ async function hydrateWorkspace(session) {
   }
 }
 
-export function billableChars(text) {
-  return Array.from(String(text || "").normalize("NFC")).filter((char) => !/^\s$/u.test(char)).length;
-}
-
 export function requestId(prefix = "request") {
   if (globalThis.crypto?.randomUUID) return `${prefix}_${crypto.randomUUID().replaceAll("-", "")}`;
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
@@ -546,6 +564,11 @@ export function PlatformProvider({ children }) {
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    sessionListeners.add(setSession);
+    return () => sessionListeners.delete(setSession);
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
