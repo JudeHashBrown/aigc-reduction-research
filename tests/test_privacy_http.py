@@ -1,6 +1,7 @@
 """Account data actions are authenticated, account-scoped and CSRF-protected."""
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -18,6 +19,12 @@ from workspace_store import WorkspaceStore  # noqa: E402
 
 
 def run():
+    source = ast.parse((ROOT / "web/server.py").read_text(encoding="utf-8"))
+    env_keys = next(ast.literal_eval(node.value) for node in source.body
+                    if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "_LOCAL_ENV_KEYS"
+                            for target in node.targets))
+    assert "ADMIN_EMAILS" in env_keys
     with tempfile.TemporaryDirectory() as folder:
         database = Path(folder) / "app.sqlite3"
         BillingStore(database)
@@ -55,6 +62,8 @@ def run():
         opener, _ = opener_with_cookies()
         try:
             wait_until_ready(opener, base, process)
+            code, config, _ = request(opener, base, "/api/config")
+            assert code == 200 and config["admin_read_only_configured"] is True
             cookie = {"Cookie": f"rightthesis_session={session['token']}"}
             code, _, _ = request(opener, base, "/api/account/data-export")
             assert code == 401
