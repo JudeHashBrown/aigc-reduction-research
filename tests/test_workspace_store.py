@@ -43,6 +43,9 @@ class WorkspaceStoreTests(unittest.TestCase):
             "a", doc["id"], 1, {"current": "stale", "report": None, "notices": []})
         self.assertEqual(status, "conflict")
         self.assertEqual(self.store.get_manuscript("a", doc["id"])["current"], "edited")
+        self.assertEqual([v["revision"] for v in self.store.list_versions("a", doc["id"])], [2, 1])
+        self.assertEqual(self.store.get_version("a", doc["id"], 2)["text"], "edited")
+        self.assertIsNone(self.store.get_version("b", doc["id"], 2))
 
     def test_job_result_persists_and_retries_dedupe(self):
         jid = "job_" + "a" * 24

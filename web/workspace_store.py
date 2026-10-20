@@ -37,6 +37,16 @@ class WorkspaceStore:
                 );
                 CREATE INDEX IF NOT EXISTS manuscripts_owner_updated
                     ON manuscripts(account_id, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS manuscript_versions (
+                    manuscript_id TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY (manuscript_id, revision)
+                );
+                CREATE INDEX IF NOT EXISTS manuscript_versions_owner
+                    ON manuscript_versions(account_id, manuscript_id, revision DESC);
                 CREATE TABLE IF NOT EXISTS rewrite_jobs (
                     id TEXT PRIMARY KEY,
                     account_id TEXT NOT NULL,
@@ -60,6 +70,15 @@ class WorkspaceStore:
             columns = {row[1] for row in db.execute("PRAGMA table_info(rewrite_jobs)")}
             if "owner_pid" not in columns:
                 db.execute("ALTER TABLE rewrite_jobs ADD COLUMN owner_pid INTEGER")
+            # Existing documents predate snapshots. Preserve the recoverable
+            # source and current draft without inventing intermediate edits.
+            db.execute("""INSERT OR IGNORE INTO manuscript_versions
+                (manuscript_id, account_id, revision, text, created_at)
+                SELECT id, account_id, 1, source, created_at FROM manuscripts""")
+            db.execute("""INSERT OR IGNORE INTO manuscript_versions
+                (manuscript_id, account_id, revision, text, created_at)
+                SELECT id, account_id, revision, current, updated_at
+                FROM manuscripts WHERE revision>1 AND current!=source""")
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=30)
@@ -95,6 +114,10 @@ class WorkspaceStore:
                 (manuscript_id, account_id, value["name"], value["kind"],
                  value["source"], value["current"], _json(value.get("report")),
                  _json(value.get("document")), _json(value.get("notices", [])), now, now))
+            db.execute("""INSERT INTO manuscript_versions
+                (manuscript_id, account_id, revision, text, created_at)
+                VALUES (?, ?, 1, ?, ?)""",
+                (manuscript_id, account_id, value["current"], now))
         return self.get_manuscript(account_id, manuscript_id)
 
     def get_manuscript(self, account_id, manuscript_id):
@@ -114,6 +137,10 @@ class WorkspaceStore:
     def update_manuscript(self, account_id, manuscript_id, revision, value):
         now = time.time()
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute("""SELECT current FROM manuscripts
+                WHERE id=? AND account_id=? AND revision=?""",
+                (manuscript_id, account_id, revision)).fetchone()
             cursor = db.execute("""UPDATE manuscripts SET revision=revision+1,
                 current=?, report_json=?, notices_json=?, updated_at=?
                 WHERE id=? AND account_id=? AND revision=?""",
@@ -124,7 +151,26 @@ class WorkspaceStore:
                 exists = db.execute("SELECT 1 FROM manuscripts WHERE id=? AND account_id=?",
                                     (manuscript_id, account_id)).fetchone()
                 return "conflict" if exists else "missing", None
+            if previous and previous["current"] != value["current"]:
+                db.execute("""INSERT INTO manuscript_versions
+                    (manuscript_id, account_id, revision, text, created_at)
+                    VALUES (?, ?, ?, ?, ?)""",
+                    (manuscript_id, account_id, revision + 1, value["current"], now))
         return "saved", self.get_manuscript(account_id, manuscript_id)
+
+    def list_versions(self, account_id, manuscript_id):
+        with self._connect() as db:
+            rows = db.execute("""SELECT revision, length(text) AS chars, created_at
+                FROM manuscript_versions WHERE account_id=? AND manuscript_id=?
+                ORDER BY revision DESC""", (account_id, manuscript_id)).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_version(self, account_id, manuscript_id, revision):
+        with self._connect() as db:
+            row = db.execute("""SELECT revision, text, created_at
+                FROM manuscript_versions WHERE account_id=? AND manuscript_id=?
+                AND revision=?""", (account_id, manuscript_id, revision)).fetchone()
+        return dict(row) if row else None
 
     def mark_last_job(self, account_id, manuscript_id, job_id):
         with self._connect() as db:

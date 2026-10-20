@@ -40,7 +40,7 @@ def run():
             email="other@example.com",
         )
         account = session["account_id"]
-        workspace.create_manuscript(account, {
+        manuscript = workspace.create_manuscript(account, {
             "name": "Thesis", "kind": "text", "source": "private source text",
             "current": "private current text", "notices": [],
         })
@@ -75,6 +75,19 @@ def run():
             assert "auth_sessions" not in exported
             code, admin_orders, _ = request(opener, base, "/api/admin/orders", headers=cookie)
             assert code == 200 and "orders" in admin_orders
+            for endpoint, field in (("users", "users"), ("jobs", "jobs"),
+                                    ("plans", "plans"), ("economics", "currency"),
+                                    ("service", "jobs_by_state")):
+                code, data, _ = request(opener, base, f"/api/admin/{endpoint}", headers=cookie)
+                assert code == 200 and field in data
+                assert "private source text" not in str(data)
+                code, _, _ = request(opener, base, f"/api/admin/{endpoint}", headers={
+                    "Cookie": f"rightthesis_session={another['token']}"})
+                assert code == 403
+            code, _, _ = request(opener, base,
+                                 f"/api/documents/{manuscript['id']}/versions", headers={
+                                     "Cookie": f"rightthesis_session={another['token']}"})
+            assert code == 404
             code, _, _ = request(opener, base, "/api/admin/orders")
             assert code == 401
             code, _, _ = request(opener, base, "/api/admin/orders", headers={

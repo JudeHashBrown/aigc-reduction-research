@@ -837,12 +837,16 @@ export function WorkbenchPage({ navigate = () => {} }) {
 export function VersionsPage({ navigate = () => {} }) {
   const { isEnglish } = useLocale();
   const current = restoreWorkspace();
-  const changed = Boolean(current.source && current.current !== current.source);
+  const [versions, setVersions] = useState([]);
+  const [selectedVersion, setSelectedVersion] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
   const [error, setError] = useState("");
   useEffect(() => {
     getApi("/api/jobs").then((data) => setJobs((data.jobs || []).filter((job) => job.manuscript_id === current.id)))
+      .catch((nextError) => setError(nextError.message));
+    if (current.id) getApi(`/api/documents/${encodeURIComponent(current.id)}/versions`)
+      .then((data) => setVersions(data.versions || []))
       .catch((nextError) => setError(nextError.message));
   }, [current.id]);
   const restoreOriginal = async () => {
@@ -859,6 +863,21 @@ export function VersionsPage({ navigate = () => {} }) {
       setError("");
     } catch (nextError) { setError(nextError.message); }
   };
+  const openVersion = async (revision) => {
+    try {
+      const data = await getApi(`/api/documents/${encodeURIComponent(current.id)}/versions/${revision}`);
+      setSelectedVersion(data.version);
+      setError("");
+    } catch (nextError) { setError(nextError.message); }
+  };
+  const restoreVersion = async () => {
+    if (!selectedVersion || !current.id) return;
+    try {
+      updateWorkspace({ current: selectedVersion.text, report: null });
+      await saveWorkspaceNow();
+      navigate("/app/documents/rt-014");
+    } catch (nextError) { setError(nextError.message); }
+  };
   const downloadJob = () => {
     if (!selectedJob?.result?.text) return;
     const url = URL.createObjectURL(new Blob([selectedJob.result.text], { type: "text/plain;charset=utf-8" }));
@@ -870,13 +889,14 @@ export function VersionsPage({ navigate = () => {} }) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   return <div className="rt-page rt-versions-page">
-    <section className="rt-page-intro"><div><button className="rt-back-link" onClick={() => navigate("/app/documents/rt-014")}>{isEnglish ? "← Back to manuscript" : "← 返回文稿"}</button><span className="rt-kicker">VERSIONS / SAVED</span><h1>{isEnglish ? "Review the source and saved draft." : "查看原稿与已保存的当前稿。"}</h1><p>{isEnglish ? "Both are stored with your account. Detailed version snapshots are not available yet; completed rewrite results remain in task history." : "原稿与当前稿已按账户保存；逐次版本快照尚未开放，已完成的改写结果保留在任务记录中。"}</p></div></section>
+    <section className="rt-page-intro"><div><button className="rt-back-link" onClick={() => navigate("/app/documents/rt-014")}>{isEnglish ? "← Back to manuscript" : "← 返回文稿"}</button><span className="rt-kicker">VERSIONS / SAVED</span><h1>{isEnglish ? "Review saved drafts." : "查看已保存的稿件版本。"}</h1><p>{isEnglish ? "Text changes saved to your account create recoverable snapshots. Older manuscripts include the source and last saved draft; intermediate edits before this feature cannot be recovered." : "之后每次保存正文修改都会留存可恢复快照。旧文稿仅补录原稿和当时的当前稿；此前中间修改无法补回。"}</p></div></section>
     <section className="rt-board rt-live-version-board">
       {error && <div className="rt-live-banner is-error" role="alert">{error}</div>}
       {current.source ? <>
-        <div className="rt-live-version-row"><span>V1</span><div><strong>{isEnglish ? "Original import" : "原始导入"}</strong><small>{billableChars(current.source).toLocaleString()} {isEnglish ? "chars" : "字"}</small></div><CheckCircle weight="fill" /></div>
-        {changed && <div className="rt-live-version-row is-current"><span>V2</span><div><strong>{isEnglish ? "Current reviewed draft" : "当前修改稿"}</strong><small>{billableChars(current.current).toLocaleString()} {isEnglish ? "chars" : "字"}</small></div><button className="rt-button" onClick={restoreOriginal}>{isEnglish ? "Restore original" : "恢复原稿"}</button></div>}
-      </> : <div className="rt-live-empty"><FolderOpen size={34} /><strong>{isEnglish ? "No session versions" : "暂无会话版本"}</strong></div>}
+        <div className="rt-live-version-row"><span>V1</span><div><strong>{isEnglish ? "Original import" : "原始导入"}</strong><small>{billableChars(current.source).toLocaleString()} {isEnglish ? "chars" : "字"}</small></div><button className="rt-button" onClick={restoreOriginal}>{isEnglish ? "Restore original" : "恢复原稿"}</button></div>
+        {versions.map((version) => <div className="rt-live-version-row" key={version.revision}><span>V{version.revision}</span><div><strong>{isEnglish ? "Saved draft" : "已保存稿"}</strong><small>{new Date(version.created_at * 1000).toLocaleString()} · {Number(version.chars || 0).toLocaleString()} {isEnglish ? "characters" : "字符"}</small></div><button className="rt-button" onClick={() => openVersion(version.revision)}>{isEnglish ? "Review" : "查看"}</button></div>)}
+        {selectedVersion && <div className="rt-job-result-detail"><strong>V{selectedVersion.revision} · {isEnglish ? "Saved text" : "已保存正文"}</strong><p className="rt-version-preview">{selectedVersion.text.slice(0, 1200)}{selectedVersion.text.length > 1200 ? "…" : ""}</p><button className="rt-button rt-button-primary" onClick={restoreVersion}>{isEnglish ? "Restore this version" : "恢复此版本"}</button></div>}
+      </> : <div className="rt-live-empty"><FolderOpen size={34} /><strong>{isEnglish ? "No saved versions" : "暂无已保存版本"}</strong></div>}
     </section>
     <section className="rt-board rt-live-version-board rt-job-history">
       <header className="rt-section-heading"><h2>{isEnglish ? "Saved rewrite tasks" : "已保存改写任务"}</h2></header>

@@ -9,11 +9,20 @@
 诊断结果会系统性偏低——而界面照样显示「问题很少」。
 """
 import io
+import os
 import re
+import shutil
+import subprocess
+import tempfile
+import threading
+import time
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 MAX_PDF_BYTES = 60 * 1024 * 1024
 MAX_PAGES = 400
+MAX_OCR_PAGES = 20
+_OCR_SLOT = threading.BoundedSemaphore(1)
 
 
 class PdfError(Exception):
@@ -79,6 +88,69 @@ def _is_cjk(ch: str) -> bool:
     return "　" <= ch <= "鿿" or "＀" <= ch <= "￯"
 
 
+def _ocr_pages(data: bytes, page_numbers: List[int]) -> Dict[int, str]:
+    """Run bounded, offline OCR only for pages without a selectable text layer."""
+    if not _OCR_SLOT.acquire(blocking=False):
+        raise PdfError("当前有扫描件正在识别，请稍后重试。")
+    try:
+        return _ocr_pages_locked(data, page_numbers)
+    finally:
+        _OCR_SLOT.release()
+
+
+def _ocr_pages_locked(data: bytes, page_numbers: List[int]) -> Dict[int, str]:
+    if len(page_numbers) > MAX_OCR_PAGES:
+        raise PdfError(f"有 {len(page_numbers)} 页取不到文字，超过当前 OCR 的 {MAX_OCR_PAGES} 页上限；请分拆文件或使用原始 Word 文档。")
+    if not shutil.which("pdftoppm") or not shutil.which("tesseract"):
+        raise PdfError("检测到扫描页，但服务器尚未安装 OCR 组件；请使用原始 Word 文档或稍后重试。")
+    child_env = {"PATH": os.defpath, "LANG": "C.UTF-8"}
+    try:
+        languages = subprocess.run(["tesseract", "--list-langs"], capture_output=True,
+                                   text=True, timeout=10, check=True, env=child_env).stdout.splitlines()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise PdfError("OCR 语言组件不可用。") from exc
+    if not {"chi_sim", "eng"}.issubset(set(languages)):
+        raise PdfError("服务器缺少中文或英文 OCR 语言包。")
+    results = {}
+    deadline = time.monotonic() + 480
+    with tempfile.TemporaryDirectory(prefix="rightthesis-ocr-") as folder:
+        pdf = Path(folder) / "source.pdf"
+        pdf.write_bytes(data)
+        for index in page_numbers:
+            if time.monotonic() >= deadline:
+                raise PdfError("OCR 总耗时超过 8 分钟；请分拆扫描件。")
+            image = Path(folder) / f"page-{index}"
+            try:
+                subprocess.run(["pdftoppm", "-f", str(index), "-l", str(index),
+                                "-singlefile", "-r", "150", "-png", str(pdf), str(image)],
+                               check=True, capture_output=True,
+                               timeout=min(30, max(1, deadline - time.monotonic())),
+                               env=child_env)
+                recognized = subprocess.run(["tesseract", str(image) + ".png", "stdout",
+                                             "-l", "chi_sim+eng"], check=True,
+                                            capture_output=True, text=True,
+                                            timeout=min(40, max(1, deadline - time.monotonic())),
+                                            env=child_env)
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise PdfError(f"第 {index} 页 OCR 失败或超时；未返回不完整的诊断结果。") from exc
+            results[index] = recognized.stdout[:200000]
+            Path(str(image) + ".png").unlink(missing_ok=True)
+    return results
+
+
+def _has_raster_image(page) -> bool:
+    """Do not OCR intentionally blank pages merely because they have no text."""
+    try:
+        resources = page.get("/Resources")
+        objects = resources.get_object().get("/XObject") if resources else None
+        if not objects:
+            return False
+        return any(obj.get_object().get("/Subtype") == "/Image"
+                   for obj in objects.get_object().values())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def extract(data: bytes) -> Tuple[str, Dict]:
     """提取正文，返回 (文本, 元信息)。"""
     if len(data) > MAX_PDF_BYTES:
@@ -106,15 +178,25 @@ def extract(data: bytes) -> Tuple[str, Dict]:
     if n_pages > MAX_PAGES:
         raise PdfError(f"共 {n_pages} 页，超过 {MAX_PAGES} 页上限")
 
-    chunks, empty = [], 0
-    for pg in pages[:MAX_PAGES]:
+    chunks, empty_pages, raster_pages = [], [], []
+    for page_number, pg in enumerate(pages[:MAX_PAGES], 1):
         try:
             t = pg.extract_text() or ""
         except Exception:                          # noqa: BLE001
             t = ""
         if len(t.strip()) < 10:
-            empty += 1
+            empty_pages.append(page_number)
+            if _has_raster_image(pg):
+                raster_pages.append(page_number)
         chunks.append(t)
+
+    ocr_pages = []
+    if raster_pages:
+        recognized = _ocr_pages(data, raster_pages)
+        for page_number in raster_pages:
+            if len(recognized[page_number].strip()) >= 10:
+                chunks[page_number - 1] = recognized[page_number]
+                ocr_pages.append(page_number)
 
     raw = "\n".join(chunks)
     text = _merge_lines(raw)
@@ -130,7 +212,8 @@ def extract(data: bytes) -> Tuple[str, Dict]:
         "n_pages": n_pages,
         "n_chars": len(text),
         "n_paragraphs": text.count("\n\n") + 1,
-        "empty_pages": empty,
+        "empty_pages": len(empty_pages) - len(ocr_pages),
+        "ocr_pages": len(ocr_pages),
         "cjk_ratio": round(n_cjk / max(1, len(text)), 3),
     }
 
@@ -149,6 +232,8 @@ def notices(meta: Dict) -> List[Dict]:
                     f"多半是扫描图或公式图。这些页的内容没有参与诊断，"
                     f"报告只覆盖能取到文字的部分。",
         })
+    if meta.get("ocr_pages"):
+        out.append({"level": "warn", "text": f"{meta['ocr_pages']} 页通过本机 OCR 识别；请核对公式、表格、引文和专名，识别文字可能有误。"})
     if meta.get("cjk_ratio", 1) < 0.2 and meta.get("n_chars", 0) > 500:
         out.append({
             "level": "warn",

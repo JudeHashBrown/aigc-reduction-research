@@ -1,0 +1,9 @@
+[Unit]
+Description=Check RightThesis backup and OSS upload after scheduled jobs
+
+[Timer]
+OnCalendar=*-*-* 03:05:00
+Unit=rightthesis-backup-health.service
+
+[Install]
+WantedBy=timers.target

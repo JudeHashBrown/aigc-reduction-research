@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from backup_database import backup, init_key  # noqa: E402
-from upload_oss_backup import newest_archive, upload  # noqa: E402
+from upload_oss_backup import newest_archive, record_success, upload  # noqa: E402
+from check_backup_health import check  # noqa: E402
 
 
 def assert_rejected(action, expected: str) -> None:
@@ -81,6 +82,8 @@ def test_upload_only_verified_encrypted_archive() -> None:
             assert upload(archive, key, "rightthesis-backup-jude-2026", "cn-hongkong") == (
                 "rightthesis-backups/" + archive.name
             )
+            record_success(archive_dir, archive, "rightthesis-backups/" + archive.name)
+            assert check(archive_dir)["archive"] == archive.name
             assert calls == [("rightthesis-backups/" + archive.name, str(archive))]
             tampered = archive_dir / "rightthesis-tampered.rtbk"
             data = bytearray(archive.read_bytes())
@@ -93,6 +96,8 @@ def test_upload_only_verified_encrypted_archive() -> None:
             else:
                 raise AssertionError("tampered archive uploaded")
             assert len(calls) == 1
+            record_success(archive_dir, old, "rightthesis-backups/" + old.name)
+            assert_rejected(lambda: check(archive_dir), "latest backup was not uploaded")
 
 
 if __name__ == "__main__":

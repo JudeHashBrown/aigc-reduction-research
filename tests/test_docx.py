@@ -123,6 +123,36 @@ def t_tracked_changes_keep_inserted_current_text():
     assert meta["n_paragraphs"] == 2
 
 
+def t_modified_tracked_change_is_refused():
+    doc = (f'<w:document xmlns:w="{W}"><w:body><w:p>'
+           f'<w:ins><w:r><w:t>待确认内容。</w:t></w:r></w:ins>'
+           f'</w:p></w:body></w:document>')
+    data = make_docx_xml(doc)
+    _, meta = docx_io.extract(data)
+    try:
+        docx_io.replace(data, ["不同内容。"], meta)
+    except docx_io.DocxError as exc:
+        assert "修订" in str(exc)
+    else:
+        raise AssertionError("编辑未接受的修订应拒绝写回")
+
+
+def t_modified_field_is_refused():
+    doc = (f'<w:document xmlns:w="{W}"><w:body><w:p>'
+           f'<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+           f'<w:r><w:instrText>REF _Ref1</w:instrText></w:r>'
+           f'<w:r><w:t>引用文字。</w:t></w:r>'
+           f'</w:p></w:body></w:document>')
+    data = make_docx_xml(doc)
+    _, meta = docx_io.extract(data)
+    try:
+        docx_io.replace(data, ["改后的引用。"], meta)
+    except docx_io.DocxError as exc:
+        assert "域" in str(exc)
+    else:
+        raise AssertionError("字段结果与指令可能失配，应拒绝写回")
+
+
 def t_unused_ignorable_namespaces_survive_export():
     mc = "http://schemas.openxmlformats.org/markup-compatibility/2006"
     w14 = "http://schemas.microsoft.com/office/word/2010/wordml"

@@ -14,6 +14,7 @@
 .rt-live-banner.is-error { background: #ffe1dc; }
 .rt-live-banner.is-warn { background: #fff2c7; }
 .rt-live-banner.is-success { background: #dff8e5; }
+.rt-version-preview { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rt-live-workbench .rt-document-bar { flex-wrap: wrap; }
 .rt-live-workbench .rt-document-actions { flex-wrap: wrap; gap: 8px; }
 .rt-save-status { white-space: nowrap; padding: 5px 8px; border: 1px solid #8fbc8f; background: #e5f8e9; color: #146c36; font-size: 11px; font-weight: 800; }

@@ -1098,6 +1098,20 @@ class EmailDelivery:
             f"验证码在 {expires_minutes} 分钟内有效，且只能使用一次。\n"
             "如果不是你本人操作，请忽略这封邮件。\n"
         )
+        self._send_email(message)
+
+    def send_operational_alert(self, recipient: str, subject: str, body: str):
+        """Synchronous operator-only alert; never include passwords or user text."""
+        if not self.configured or self.mode != "smtp":
+            raise AuthError("运营告警邮件配置不完整。", 503, "email_delivery_unavailable")
+        message = EmailMessage()
+        message["Subject"] = subject
+        message["From"] = self.sender
+        message["To"] = normalize_email(recipient)
+        message.set_content(body)
+        self._send_email(message)
+
+    def _send_email(self, message: EmailMessage):
         try:
             tls_context = ssl.create_default_context(cafile=certifi.where())
             if self.smtp_ssl:

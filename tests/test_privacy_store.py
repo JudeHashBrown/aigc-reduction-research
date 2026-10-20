@@ -35,6 +35,7 @@ def test_export_and_safe_deletion():
         exported = privacy.export(account)
         assert exported["profile"]["primary_email"] == "writer@example.com"
         assert exported["manuscripts"][0]["source"] == "private draft"
+        assert len(exported["manuscript_versions"]) == 1
         assert "auth_sessions" not in exported
         assert "auth_password_credentials" not in exported
         try:
@@ -51,6 +52,7 @@ def test_export_and_safe_deletion():
         assert privacy.complete_deletion(requested["id"])["status"] == "completed"
         assert auth.authenticate_session(session["token"]) is None
         assert workspace.list_manuscripts(account) == []
+        assert workspace.list_versions(account, exported["manuscripts"][0]["id"]) == []
         assert privacy.current_request(account)["status"] == "completed"
         try:
             privacy.export(account)

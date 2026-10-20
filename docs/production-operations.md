@@ -9,11 +9,13 @@ python3 scripts/backup_database.py init-key --key-file /home/admin/.config/right
 python3 scripts/backup_database.py backup --database /home/admin/rightthesis/data/billing.sqlite3 --output-dir /home/admin/rightthesis-backups --key-file /home/admin/.config/rightthesis/backup.key
 ```
 
-`init-key` 在密钥已存在时拒绝覆盖。备份程序使用 SQLite 在线备份 API、AES-GCM 加密，且在发布档案前进行解密及 `PRAGMA integrity_check`。档案和密钥必须分别保存在服务器之外；复制后再次运行 `verify`。不要把密钥、数据库或备份加入 Git。服务器定时任务配置在 `deploy/rightthesis-backup.service` 和 `.timer`，每天 02:35 运行；检查 `systemctl status rightthesis-backup.timer` 与 `journalctl -u rightthesis-backup.service`。还需要另行配置云端异地目标或定期拉取，**定时备份本身不是异地备份**。
+`init-key` 在密钥已存在时拒绝覆盖。备份程序使用 SQLite 在线备份 API、AES-GCM 加密，且在发布档案前进行解密及 `PRAGMA integrity_check`。档案和密钥必须分别保存在服务器之外；复制后再次运行 `verify`。不要把密钥、数据库或备份加入 Git。服务器定时任务配置在 `deploy/rightthesis-backup.service` 和 `.timer`，每天 02:35 运行；检查 `systemctl status rightthesis-backup.timer` 与 `journalctl -u rightthesis-backup.service`。单独的服务器定时备份不抵御磁盘故障，下节的 OSS 副本用于抵御此类故障。
 
 ### 加密备份上传阿里云 OSS
 
 `deploy/rightthesis-oss-upload.service` 和 `.timer` 将在每天 02:50 上传 6 小时内的最新加密备份到香港私有 Bucket `rightthesis-backup-jude-2026` 的 `rightthesis-backups/` 前缀。上传前再次解密校验，不上传原始 SQLite 或 `backup.key`。与主服务器同在香港地域不构成跨地域容灾；务必把解密密钥另存于安全地点，并定期进行下载及还原演练。
+
+2026-10-20 02:35 的首次自动备份与 02:50 的自动 OSS 上传均成功。上传成功后程序会在本地备份目录写 `oss-upload-receipt.json`，每日 03:05 的 `rightthesis-backup-health.timer` 核验新近备份、回执名称与 SHA-256；备份、上传或健康检查失败时由 `rightthesis-backup-alert@.service` 使用现有 SMTP 给 `ADMIN_EMAILS` 发邮件。部署或改动后应手动测试一次告警邮件；邮箱本身故障时告警会失败，仍须定期查看 systemd 日志。用户已选择**暂不跨地域、暂不自动删除旧备份**；应关注 OSS 存储费用，并在制定删除申请与恢复窗口后再配置生命周期规则，切勿自行清理历史档案。
 
 在阿里云 RAM 中创建仅供程序使用的用户 `rightthesis-backup-uploader`，不要授予控制台登录或 `AliyunOSSFullAccess`。创建自定义权限策略并只授予该用户：
 
@@ -53,6 +55,10 @@ python3 scripts/backup_database.py restore --archive /path/to/archive.rtbk --des
 ## 数据导出与删除申请
 
 用户可在 `/app/settings/privacy` 下载包含个人资料、文稿、任务、订单与额度流水的 JSON；密码哈希、会话令牌和验证码不导出。用户输入当前账户邮箱后可提交删除申请，处理前可取消。管理员只读页 `/admin/privacy` 展示待处理申请。
+
+每次服务端保存且正文有变化时写入账户级文稿快照；旧文稿仅补录原稿与启用时的当前稿，不声称能恢复更早的中间修改。隐私导出包含快照，完成账户删除时一并移除；旧加密备份仍可能含删除前正文。
+
+扫描 PDF 使用服务器本机 `pdftoppm` 与 Tesseract（简体中文、英文），不将页面送往外部 OCR 服务。仅对没有文字层且含图像的页面 OCR，每份最多 20 页，单次总耗时最多 8 分钟；OCR 结果可能误读专名、公式、表格和引文，仍只用于 PDF 诊断，不能写回原 PDF。安装依赖：`sudo apt-get install --no-install-recommends poppler-utils tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng`。
 
 运营人员处理申请前，应先核对客服沟通记录、订单状态、运行任务和未用付费额度，制作并验证 24 小时内的新近备份。命令会拒绝待付款、运行任务或未用付费额度仍存在的账户：
 

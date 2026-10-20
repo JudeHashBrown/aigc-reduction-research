@@ -2,6 +2,7 @@
 Description=Verify and upload the newest encrypted RightThesis backup to private OSS
 After=network-online.target rightthesis-backup.service
 Wants=network-online.target
+OnFailure=rightthesis-backup-alert@%n.service
 
 [Service]
 Type=oneshot

@@ -156,6 +156,9 @@ def _set_para_text(p: ET.Element, new_text: str) -> None:
     old_text = "".join(old_parts)
     if old_text == new_text:
         return
+    if any(n.tag in (W + "fldChar", W + "instrText", W + "ins", W + "del")
+           for n in p.iter()):
+        raise DocxError("段落含域或修订标记，无法安全回写；请先在 Word 中确认域和修订，或下载 TXT 手动替换。")
     if any(n.tag in (W + "tab", W + "br", W + "cr") for n in p.iter()):
         raise DocxError("段落含制表符或手动换行，修改后无法安全保持 run 格式；请复制文本后手工替换。")
 
@@ -230,4 +233,8 @@ def replace(data: bytes, new_paragraphs: List[str], meta: Dict) -> bytes:
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zo:
         for item in zf.infolist():
             zo.writestr(item, new_doc if item.filename == DOC else zf.read(item.filename))
-    return out.getvalue()
+    result = out.getvalue()
+    reread, _ = extract(result)
+    if reread.split("\n\n") != new_paragraphs:
+        raise DocxError("导出后文字复核失败，已拒绝返回可能错位的 DOCX；请下载 TXT。")
+    return result

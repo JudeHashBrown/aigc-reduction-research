@@ -52,6 +52,22 @@ import { ensureSession, getApi, postApi, logoutSession, usePlatform } from "../p
 import "./operations-pages.css";
 
 const OPS_EN = {
+  "用户与权益": "Users and credits",
+  "最近 100 位账户的身份与额度摘要；不展示论文内容，不提供直接改额度操作。": "Identity and credit summaries for the latest 100 accounts. Manuscript contents and direct balance changes are not available here.",
+  "邮箱": "Email", "名称": "Name", "可用字数": "Available characters", "文稿数": "Manuscripts", "注册时间": "Registered",
+  "改写任务": "Rewrite jobs",
+  "最近 100 个真实任务的状态及 Token 用量；正文和改写结果不会在管理台展示。": "Status and token usage for the latest 100 jobs; no manuscript or result text is shown.",
+  "任务号": "Job ID", "阶段": "Phase", "计费字数": "Billable characters", "输入 Token": "Input tokens", "输出 Token": "Output tokens", "开始时间": "Started",
+  "套餐目录": "Plan catalog",
+  "查看当前实际生效的服务端套餐。价格修改仍需代码审查和发布，避免在管理台误改真实收款。": "View live server plans. Price changes still require code review and deployment to avoid accidental live-billing changes.",
+  "套餐 ID": "Plan ID", "价格": "Price", "额度": "Credits", "有效天数": "Valid days",
+  "收款与模型用量": "Payments and model usage",
+  "展示真实已支付订单净额与已结算任务 Token。模型单价和 Stripe 手续费尚未接入，不能据此计算毛利。": "Shows actual net order amount and tokens for committed jobs. Model pricing and Stripe fees are not included, so this is not gross margin.",
+  "订单净额（未扣费）": "Net order amount (before fees)", "已结算改写任务": "Committed rewrite jobs", "模型 Token": "Model tokens",
+  "服务状态": "Service status",
+  "只读查看当前任务和待付款订单；停服、容量和部署操作仍由服务器受控执行。": "Read-only job and pending-order counts. Shutdown, capacity, and deployment changes remain server-controlled.",
+  "运行中任务": "Running jobs", "失败任务": "Failed jobs", "待确认订单": "Pending orders",
+  "正在读取…": "Loading…", "刷新": "Refresh",
   "已支付": "Paid",
   "确认中": "Confirming",
   "已退款": "Refunded",
@@ -2636,15 +2652,54 @@ export function AdminOverviewPage({ navigate }) {
 }
 
 export function AdminUsersPage({ navigate }) {
-  return <AdminUnavailablePage navigate={navigate} active="users" title="用户与权益" description="用户查询、权益调整与账号管理尚未接入。" />;
+  return <AdminLiveList navigate={navigate} active="users" endpoint="/api/admin/users" field="users" title="用户与权益" description="最近 100 位账户的身份与额度摘要；不展示论文内容，不提供直接改额度操作。" columns={[
+    { key: "primary_email", label: "邮箱" },
+    { key: "display_name", label: "名称" },
+    { key: "balance", label: "可用字数" },
+    { key: "manuscript_count", label: "文稿数" },
+    { key: "created_at", label: "注册时间", render: (row) => new Date(row.created_at * 1000).toLocaleString() },
+  ]} />;
 }
 
 export function AdminJobsPage({ navigate }) {
-  return <AdminUnavailablePage navigate={navigate} active="jobs" title="任务与成本" description="全局任务队列、追踪与管理员处置尚未接入。" />;
+  return <AdminLiveList navigate={navigate} active="jobs" endpoint="/api/admin/jobs" field="jobs" title="改写任务" description="最近 100 个真实任务的状态及 Token 用量；正文和改写结果不会在管理台展示。" columns={[
+    { key: "id", label: "任务号" },
+    { key: "state", label: "状态" },
+    { key: "phase", label: "阶段" },
+    { key: "billable_chars", label: "计费字数" },
+    { key: "input_tokens", label: "输入 Token" },
+    { key: "output_tokens", label: "输出 Token" },
+    { key: "t0", label: "开始时间", render: (row) => new Date(row.t0 * 1000).toLocaleString() },
+  ]} />;
 }
 
 export function AdminPlansPage({ navigate }) {
-  return <AdminUnavailablePage navigate={navigate} active="plans" title="方案管理" description="方案目录可由用户端只读获取，管理员编辑与发布尚未接入。" />;
+  return <AdminLiveList navigate={navigate} active="plans" endpoint="/api/admin/plans" field="plans" title="套餐目录" description="查看当前实际生效的服务端套餐。价格修改仍需代码审查和发布，避免在管理台误改真实收款。" columns={[
+    { key: "id", label: "套餐 ID" },
+    { key: "name", label: "名称" },
+    { key: "price_fen", label: "价格", render: (row) => `${(row.price_fen / 100).toFixed(2)} ${row.currency}` },
+    { key: "credits", label: "额度" },
+    { key: "valid_days", label: "有效天数" },
+  ]} />;
+}
+
+function AdminLiveList({ navigate, active, endpoint, field, title, description, columns }) {
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try { setRows((await getApi(endpoint))[field] || []); }
+    catch (failure) { setError(failure.message || "无法读取运营数据。"); }
+    finally { setLoading(false); }
+  }, [endpoint, field]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  return <Page>
+    <AdminHeader title={title} description={description}><Button icon={ArrowsClockwise} onClick={refresh} disabled={loading}>{loading ? "正在读取…" : "刷新"}</Button></AdminHeader>
+    <AdminTabs navigate={navigate} active={active} />
+    {error ? <div className="ops-note ops-note--yellow" role="alert">{error}</div> : <Section title={title} kicker="LIVE / READ ONLY" className="ops-shadow-card"><Table rows={rows} columns={columns} empty="暂无记录" /></Section>}
+  </Page>;
 }
 
 export function AdminOrdersPage({ navigate }) {
@@ -2685,11 +2740,23 @@ export function AdminOrdersPage({ navigate }) {
 }
 
 export function AdminEconomicsPage({ navigate }) {
-  return <AdminUnavailablePage navigate={navigate} active="economics" title="成本与单位经济" description="真实收入、成本和毛利数据源尚未接入。" />;
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => { getApi("/api/admin/economics").then(setData).catch((failure) => setError(failure.message)); }, []);
+  return <Page><AdminHeader title="收款与模型用量" description="展示真实已支付订单净额与已结算任务 Token。模型单价和 Stripe 手续费尚未接入，不能据此计算毛利。" /><AdminTabs navigate={navigate} active="economics" />
+    {error && <div className="ops-note ops-note--yellow" role="alert">{error}</div>}
+    {data && <div className="ops-metrics ops-metrics--3"><Metric label="订单净额（未扣费）" value={`${(data.net_sales_fen / 100).toFixed(2)} ${data.currency}`} /><Metric label="已结算改写任务" value={String(data.settled_jobs)} /><Metric label="模型 Token" value={`${Number(data.input_tokens).toLocaleString()} 入 / ${Number(data.output_tokens).toLocaleString()} 出`} /></div>}
+  </Page>;
 }
 
 export function AdminServicePage({ navigate }) {
-  return <AdminUnavailablePage navigate={navigate} active="service" title="服务控制" description="服务开关、容量管理与变更审计尚未接入。" />;
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  useEffect(() => { getApi("/api/admin/service").then(setData).catch((failure) => setError(failure.message)); }, []);
+  return <Page><AdminHeader title="服务状态" description="只读查看当前任务和待付款订单；停服、容量和部署操作仍由服务器受控执行。" /><AdminTabs navigate={navigate} active="service" />
+    {error && <div className="ops-note ops-note--yellow" role="alert">{error}</div>}
+    {data && <div className="ops-metrics ops-metrics--3"><Metric label="运行中任务" value={String(data.jobs_by_state.running || 0)} /><Metric label="失败任务" value={String(data.jobs_by_state.error || 0)} /><Metric label="待确认订单" value={String(data.pending_orders)} /></div>}
+  </Page>;
 }
 
 export function AdminPrivacyPage({ navigate }) {

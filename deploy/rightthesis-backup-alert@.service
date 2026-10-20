@@ -1,0 +1,13 @@
+[Unit]
+Description=Email operator after a RightThesis backup unit failure (%i)
+
+[Service]
+Type=oneshot
+User=admin
+Group=admin
+WorkingDirectory=/home/admin/rightthesis
+ExecStart=/home/admin/rightthesis/.venv/bin/python scripts/send_ops_alert.py --env-file /home/admin/rightthesis/.env --unit %i
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true

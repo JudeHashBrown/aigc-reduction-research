@@ -36,6 +36,7 @@ from llm import Client                    # noqa: E402
 from billing import BillingError, BillingStore, request_fingerprint  # noqa: E402
 from payments import create_payment_provider                         # noqa: E402
 from workspace_store import WorkspaceStore                           # noqa: E402
+from admin_store import AdminStore                                   # noqa: E402
 from privacy_store import PrivacyError, PrivacyStore                  # noqa: E402
 from trial_session import (COOKIE_NAME, TrialSessionStore,
                            load_or_create_secret)                    # noqa: E402
@@ -167,6 +168,7 @@ def _billing_db_path() -> Path:
 ACCOUNT_ID = "local-demo"
 BILLING = BillingStore(_billing_db_path())
 WORKSPACES = WorkspaceStore(_billing_db_path())
+ADMIN = AdminStore(_billing_db_path())
 PRIVACY = PrivacyStore(_billing_db_path())
 PAYMENTS = create_payment_provider(os.environ.get("PAYMENT_PROVIDER", "mock"), BILLING)
 
@@ -849,6 +851,16 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/admin/orders":
                 return self._send(200, json.dumps({"orders": BILLING.admin_orders()},
                                                   ensure_ascii=False))
+            if path == "/api/admin/users":
+                return self._send(200, json.dumps({"users": ADMIN.users()}, ensure_ascii=False))
+            if path == "/api/admin/jobs":
+                return self._send(200, json.dumps({"jobs": ADMIN.jobs()}, ensure_ascii=False))
+            if path == "/api/admin/plans":
+                return self._send(200, json.dumps({"plans": BILLING.public_catalog()}, ensure_ascii=False))
+            if path == "/api/admin/economics":
+                return self._send(200, json.dumps(ADMIN.economics(), ensure_ascii=False))
+            if path == "/api/admin/service":
+                return self._send(200, json.dumps(ADMIN.service(), ensure_ascii=False))
             if path == "/api/admin/privacy-requests":
                 return self._send(200, json.dumps(
                     {"requests": PRIVACY.pending_requests()}, ensure_ascii=False))
@@ -889,6 +901,24 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps({
                 "documents": WORKSPACES.list_manuscripts(account_id),
             }, ensure_ascii=False))
+        elif path.startswith("/api/documents/") and "/versions" in path:
+            parts = path.split("/")
+            if (len(parts) not in {5, 6} or parts[:3] != ["", "api", "documents"]
+                    or parts[4] != "versions"):
+                return self._send(404, json.dumps({"error": "not found"}))
+            manuscript_id = parts[3]
+            if not WORKSPACES.get_manuscript(account_id, manuscript_id):
+                return self._send(404, json.dumps({"error": "文稿不存在"}, ensure_ascii=False))
+            if len(parts) == 5:
+                return self._send(200, json.dumps({
+                    "versions": WORKSPACES.list_versions(account_id, manuscript_id),
+                }, ensure_ascii=False))
+            if not parts[5].isdecimal() or int(parts[5]) < 1:
+                return self._send(404, json.dumps({"error": "版本不存在"}, ensure_ascii=False))
+            version = WORKSPACES.get_version(account_id, manuscript_id, int(parts[5]))
+            return self._send(200 if version else 404, json.dumps(
+                {"version": version} if version else {"error": "版本不存在"},
+                ensure_ascii=False))
         elif path.startswith("/api/documents/"):
             manuscript_id = path.rsplit("/", 1)[-1]
             manuscript = WORKSPACES.get_manuscript(account_id, manuscript_id)

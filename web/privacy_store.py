@@ -72,6 +72,7 @@ class PrivacyStore:
                 "verified_emails": self._rows(db, "auth_verified_emails", account_id),
                 "identities": self._rows(db, "auth_identities", account_id),
                 "manuscripts": self._rows(db, "manuscripts", account_id),
+                "manuscript_versions": self._rows(db, "manuscript_versions", account_id),
                 "rewrite_jobs": self._rows(db, "rewrite_jobs", account_id),
                 "orders": self._rows(db, "orders", account_id),
                 "credit_grants": self._rows(db, "credit_grants", account_id),
@@ -179,6 +180,7 @@ class PrivacyStore:
                            session_hashes)
                 db.execute(f"DELETE FROM auth_email_challenges WHERE session_hash IN ({placeholders})",
                            session_hashes)
+            db.execute("DELETE FROM manuscript_versions WHERE account_id=?", (account_id,))
             db.execute("DELETE FROM manuscripts WHERE account_id=?", (account_id,))
             db.execute("DELETE FROM rewrite_jobs WHERE account_id=?", (account_id,))
             db.execute("DELETE FROM auth_password_credentials WHERE account_id=?", (account_id,))

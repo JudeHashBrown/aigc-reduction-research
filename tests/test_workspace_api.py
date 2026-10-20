@@ -62,6 +62,10 @@ class WorkspaceApiTests(unittest.TestCase):
             "report": None, "notices": [],
         })
         self.assertEqual(code, 200, saved)
+        code, history, _ = self.call(f"/api/documents/{manuscript_id}/versions")
+        self.assertEqual((code, [item["revision"] for item in history["versions"]]), (200, [2, 1]))
+        code, old_version, _ = self.call(f"/api/documents/{manuscript_id}/versions/1")
+        self.assertEqual((code, old_version["version"]["text"]), (200, "Original research sentence."))
         code, conflict, _ = self.call(f"/api/documents/{manuscript_id}/save", {
             "revision": 1, "current": "stale edit", "report": None, "notices": [],
         })

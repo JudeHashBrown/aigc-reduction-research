@@ -6,6 +6,8 @@ Never upload the AES key or an unencrypted database to this bucket.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import time
 from pathlib import Path
@@ -61,6 +63,27 @@ def upload(archive: Path, key_file: Path, bucket_name: str, region: str) -> str:
     return object_name
 
 
+def record_success(directory: Path, archive: Path, object_name: str) -> Path:
+    """Leave a local receipt only after OSS acknowledges the encrypted object."""
+    if directory.is_symlink() or archive.parent.resolve() != directory.resolve():
+        raise ValueError("archive and receipt must be in the backup directory")
+    payload = {"archive": archive.name, "object": object_name,
+               "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+               "uploaded_at": time.time()}
+    receipt = directory / "oss-upload-receipt.json"
+    temporary = directory / "oss-upload-receipt.json.tmp"
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            json.dump(payload, output)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, receipt)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return receipt
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backup-dir", type=Path, required=True)
@@ -73,6 +96,7 @@ def main() -> None:
         parser.error("--max-age-hours must be positive")
     archive = newest_archive(args.backup_dir, args.max_age_hours)
     name = upload(archive, args.key_file, args.bucket, args.region)
+    record_success(args.backup_dir, archive, name)
     print(f"verified encrypted OSS backup uploaded: {args.bucket}/{name}")
 
 

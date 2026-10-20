@@ -1,6 +1,7 @@
 [Unit]
 Description=Create and verify an encrypted RightThesis database backup
 After=rightthesis.service
+OnFailure=rightthesis-backup-alert@%n.service
 
 [Service]
 Type=oneshot
