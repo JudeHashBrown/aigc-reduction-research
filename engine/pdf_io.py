@@ -203,10 +203,15 @@ def extract(data: bytes) -> Tuple[str, Dict]:
     n_cjk = len(re.findall(r'[一-鿿]', text))
 
     if len(text.strip()) < 50:
+        if ocr_pages:
+            raise PdfError(
+                "扫描页已完成 OCR，但可识别正文不足 50 字，暂不能可靠诊断。"
+                "请上传更完整或更清晰的文件；识别文字可能有误。")
+        if text.strip():
+            raise PdfError("PDF 可提取正文不足 50 字，暂不能可靠诊断；请上传更完整的文件。")
         raise PdfError(
-            "这个 PDF 里取不到文字。常见原因：整篇是扫描图片，"
-            "或字体没有嵌入 ToUnicode 映射表。"
-            "解决办法是用原始的 Word 文件，或者先做 OCR。")
+            "这个 PDF 里取不到文字。扫描图片会自动尝试 OCR；"
+            "如果仍无法识别，请上传更清晰的扫描件或原始 Word 文件。")
 
     return text, {
         "n_pages": n_pages,

@@ -107,6 +107,15 @@ def t_scanned_pdf_gives_clear_error():
         raise AssertionError("空 PDF 应当报错而不是静默返回空文本")
 
 
+def t_short_pdf_explains_length_not_missing_ocr():
+    try:
+        pdf_io.extract(minimal_pdf(["Short text."]))
+    except pdf_io.PdfError as exc:
+        assert "不足 50 字" in str(exc), str(exc)
+    else:
+        raise AssertionError("过短的 PDF 应说明长度要求")
+
+
 def t_notices_say_pdf_is_read_only():
     _, meta = pdf_io.extract(minimal_pdf(
         ["Some text here for testing purposes, long enough to pass",
