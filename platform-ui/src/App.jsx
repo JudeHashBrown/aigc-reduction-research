@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowSquareOut,
-  BookOpenText,
   CaretDown,
   ChartLineUp,
   ClockCounterClockwise,
@@ -10,7 +9,6 @@ import {
   FileText,
   Gauge,
   GearSix,
-  House,
   Lifebuoy,
   ListBullets,
   LockKey,
@@ -19,7 +17,6 @@ import {
   SignOut,
   UserCircle,
   UsersThree,
-  X,
 } from "@phosphor-icons/react";
 import {
   LandingPage,
@@ -59,73 +56,20 @@ import "./pages/public-pages.css";
 import "./pages/core-pages.css";
 import "./pages/operations-pages.css";
 
-const pageGroups = [
-  {
-    label: "Public",
-    items: [
-      ["品牌首页", "/"],
-      ["定价", "/pricing"],
-      ["登录与注册", "/auth"],
-      ["邮箱验证", "/auth/verify"],
-      ["忘记密码", "/auth/forgot"],
-      ["隐私与数据", "/legal/privacy"],
-      ["服务条款", "/legal/terms"],
-      ["帮助中心", "/help"],
-    ],
-  },
-  {
-    label: "Core",
-    items: [
-      ["文档首页", "/app"],
-      ["新建与导入", "/app/new"],
-      ["保真优化工作台", "/app/documents/rt-014"],
-      ["版本与任务历史", "/app/documents/rt-014/versions"],
-    ],
-  },
-  {
-    label: "Money",
-    items: [
-      ["我的权益", "/app/billing"],
-      ["额度明细", "/app/billing/usage"],
-      ["订单与月卡", "/app/billing/orders"],
-      ["支付确认", "/checkout/pro"],
-    ],
-  },
-  {
-    label: "Account",
-    items: [
-      ["账号设置", "/app/settings/account"],
-      ["数据管理", "/app/settings/privacy"],
-      ["服务状态", "/app/settings/service"],
-    ],
-  },
-  {
-    label: "Admin",
-    items: [
-      ["运营总览", "/admin"],
-      ["用户", "/admin/users"],
-      ["改写任务", "/admin/jobs"],
-      ["套餐配置", "/admin/plans"],
-      ["订单与对账", "/admin/orders"],
-      ["成本与毛利", "/admin/economics"],
-      ["服务控制", "/admin/service"],
-      ["隐私审计", "/admin/privacy"],
-    ],
-  },
-  {
-    label: "System",
-    items: [
-      ["页面未找到", "/404"],
-      ["服务错误", "/500"],
-      ["离线", "/offline"],
-      ["维护中", "/maintenance"],
-      ["会话过期", "/session-expired"],
-      ["额度不足", "/insufficient-balance"],
-    ],
-  },
-];
-
-const routeTitles = Object.fromEntries(pageGroups.flatMap((group) => group.items.map(([label, path]) => [path, label])));
+const routeTitles = {
+  "/": "品牌首页", "/pricing": "定价", "/auth": "登录与注册",
+  "/auth/verify": "邮箱验证", "/auth/forgot": "忘记密码",
+  "/legal/privacy": "隐私与数据", "/legal/terms": "服务条款", "/help": "帮助中心",
+  "/app": "文档首页", "/app/new": "新建与导入", "/app/workbench": "保真优化工作台",
+  "/app/versions": "版本与任务历史", "/app/billing": "我的权益",
+  "/app/billing/usage": "额度明细", "/app/billing/orders": "订单与月卡",
+  "/checkout/pro": "支付确认", "/app/settings/account": "账号设置",
+  "/app/settings/privacy": "数据管理", "/app/settings/service": "服务状态",
+  "/admin": "运营总览", "/admin/users": "用户", "/admin/jobs": "改写任务",
+  "/admin/plans": "套餐配置", "/admin/orders": "订单与对账",
+  "/admin/economics": "收款与模型用量", "/admin/service": "服务状态",
+  "/admin/privacy": "隐私审计", "/404": "页面未找到",
+};
 const routeTitlesEnglish = {
   "/": "Home",
   "/pricing": "Pricing",
@@ -137,8 +81,8 @@ const routeTitlesEnglish = {
   "/help": "Help center",
   "/app": "Documents",
   "/app/new": "New import",
-  "/app/documents/rt-014": "Faithful rewrite workspace",
-  "/app/documents/rt-014/versions": "Versions & tasks",
+  "/app/workbench": "Faithful rewrite workspace",
+  "/app/versions": "Versions & tasks",
   "/app/billing": "Plans & balance",
   "/app/billing/usage": "Usage ledger",
   "/app/billing/orders": "Orders & passes",
@@ -155,11 +99,6 @@ const routeTitlesEnglish = {
   "/admin/service": "Service controls",
   "/admin/privacy": "Privacy audit",
   "/404": "Page not found",
-  "/500": "Service error",
-  "/offline": "Offline",
-  "/maintenance": "Maintenance",
-  "/session-expired": "Session expired",
-  "/insufficient-balance": "Insufficient balance",
 };
 
 function currentRoute() {
@@ -167,7 +106,16 @@ function currentRoute() {
   if (!hash && ["/legal/privacy", "/legal/terms"].includes(window.location.pathname)) {
     return window.location.pathname;
   }
-  return (hash || "/").split("?")[0];
+  const path = (hash || "/").split("?")[0];
+  const replacement = {
+    "/app/documents/rt-014": "/app/workbench",
+    "/app/documents/rt-014/versions": "/app/versions",
+  }[path];
+  if (replacement) {
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${replacement}`);
+    return replacement;
+  }
+  return path;
 }
 
 const routeComponents = {
@@ -181,8 +129,8 @@ const routeComponents = {
   "/help": HelpPage,
   "/app": DashboardPage,
   "/app/new": NewDocumentPage,
-  "/app/documents/rt-014": WorkbenchPage,
-  "/app/documents/rt-014/versions": VersionsPage,
+  "/app/workbench": WorkbenchPage,
+  "/app/versions": VersionsPage,
   "/app/billing": BillingPage,
   "/app/billing/usage": UsagePage,
   "/app/billing/orders": OrdersPage,
@@ -201,9 +149,9 @@ const routeComponents = {
 };
 
 const appNavigation = [
-  ["工作台", "Workspace", "/app/documents/rt-014", Gauge],
+  ["当前文稿", "Current manuscript", "/app/workbench", Gauge],
   ["文档", "Documents", "/app", FileText],
-  ["版本历史", "Versions", "/app/documents/rt-014/versions", ClockCounterClockwise],
+  ["版本历史", "Versions", "/app/versions", ClockCounterClockwise],
   ["套餐与用量", "Plans & usage", "/app/billing", Coins],
   ["账号设置", "Account", "/app/settings/account", GearSix],
 ];
@@ -227,7 +175,7 @@ function Brand({ navigate, compact = false }) {
   );
 }
 
-function Topbar({ path, navigate, onOpenMap }) {
+function Topbar({ path, navigate }) {
   const { isEnglish } = useLocale();
   const { billing, config, session, refresh } = usePlatform();
   const [serviceOpen, setServiceOpen] = useState(false);
@@ -237,7 +185,7 @@ function Topbar({ path, navigate, onOpenMap }) {
   const serviceAnchorRef = useRef(null);
   const userAnchorRef = useRef(null);
   const isAdmin = path.startsWith("/admin");
-  const isDocument = path === "/app/documents/rt-014";
+  const isDocument = path === "/app/workbench";
   const workspace = getWorkspace();
   const displayName = session?.user?.display_name || session?.user?.name || (isEnglish ? "Local researcher" : "本地研究者");
   const avatarLabel = Array.from(displayName.trim())[0] || (isEnglish ? "R" : "研");
@@ -297,8 +245,8 @@ function Topbar({ path, navigate, onOpenMap }) {
       </div>
       <div className="rt-topbar__document">
         <span className="rt-kicker">{isAdmin ? "OPERATIONS" : (isEnglish ? routeTitlesEnglish[path] : routeTitles[path]) || "RIGHTTHESIS"}</span>
-        <strong>{isAdmin ? (isEnglish ? "Operations preview" : "运营预览") : path.includes("documents") ? (workspace.name || (isEnglish ? "Untitled manuscript" : "未命名文稿")) : (isEnglish ? "Researcher workspace" : "研究者工作区")}</strong>
-        <span>{isAdmin ? (isEnglish ? "No production admin data" : "尚无生产后台数据") : (isEnglish ? "Saved local workspace" : "本地已保存工作区")}</span>
+        <strong>{isAdmin ? (isEnglish ? "Operations" : "运营后台") : isDocument ? (workspace.name || (isEnglish ? "Untitled manuscript" : "未命名文稿")) : (isEnglish ? "Researcher workspace" : "研究者工作区")}</strong>
+        <span>{isAdmin ? (isEnglish ? "Live service data" : "实时服务数据") : (isEnglish ? "Your research workspace" : "你的研究工作区")}</span>
       </div>
       <div className="rt-topbar__actions">
         <LanguageToggle />
@@ -321,12 +269,7 @@ function Topbar({ path, navigate, onOpenMap }) {
             <span>{isEnglish ? "Balance" : "剩余额度"}</span><strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "chars" : "字"}</strong>
           </button>
         )}
-        {!isDocument && (
-          <>
-            <button className="rt-icon-button" onClick={onOpenMap} aria-label={isEnglish ? "Open all pages" : "打开全部页面"}>
-              <Command size={21} weight="bold" />
-            </button>
-            <div ref={userAnchorRef} className="rt-popover-anchor">
+        <div ref={userAnchorRef} className="rt-popover-anchor">
               <button className="rt-user-button" onClick={() => { setUserOpen((value) => !value); setServiceOpen(false); }} aria-expanded={userOpen} aria-haspopup="menu" aria-label={isEnglish ? "Open user menu" : "打开用户菜单"}>
                 <span>{avatarLabel}</span><CaretDown size={14} weight="bold" />
               </button>
@@ -340,15 +283,13 @@ function Topbar({ path, navigate, onOpenMap }) {
                   {signOutError && <p role="alert">{signOutError}</p>}
                 </div>
               )}
-            </div>
-          </>
-        )}
+        </div>
       </div>
     </header>
   );
 }
 
-function Sidebar({ path, navigate, onOpenMap }) {
+function Sidebar({ path, navigate }) {
   const { isEnglish } = useLocale();
   const isAdmin = path.startsWith("/admin");
   const items = isAdmin ? adminNavigation : appNavigation;
@@ -366,73 +307,11 @@ function Sidebar({ path, navigate, onOpenMap }) {
         })}
       </nav>
       <div className="rt-sidebar__foot">
-        <button onClick={onOpenMap}><Command size={21} />{isEnglish ? "All pages" : "全部页面"}</button>
         <button onClick={() => navigate("/help")}><Lifebuoy size={21} />{isEnglish ? "Help center" : "帮助中心"}</button>
         {isAdmin && <button onClick={() => navigate("/app")}><ArrowSquareOut size={21} />{isEnglish ? "User app" : "返回用户端"}</button>}
-        <span>RightThesis<br />local MVP 0.3</span>
+        <span>RightThesis</span>
       </div>
     </aside>
-  );
-}
-
-function PageMap({ open, path, navigate, onClose }) {
-  const { isEnglish } = useLocale();
-  const dialogRef = useRef(null);
-  const closeButtonRef = useRef(null);
-  const previousFocusRef = useRef(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    previousFocusRef.current = document.activeElement;
-    closeButtonRef.current?.focus();
-
-    function onKey(event) {
-      if (event.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = dialogRef.current?.querySelectorAll("button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])");
-      if (!focusable?.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previousFocusRef.current?.focus?.();
-    };
-  }, [open, onClose]);
-
-  if (!open) return null;
-  return (
-    <div className="rt-map-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section ref={dialogRef} className="rt-page-map" role="dialog" aria-modal="true" aria-label={isEnglish ? "All pages" : "全部页面"}>
-        <header>
-          <div><span className="rt-kicker">SITE MAP</span><h2>{isEnglish ? "Full platform map" : "整个平台页面"}</h2></div>
-          <button ref={closeButtonRef} className="rt-icon-button" onClick={onClose} aria-label={isEnglish ? "Close" : "关闭"}><X size={22} weight="bold" /></button>
-        </header>
-        <div className="rt-page-map__grid">
-          {pageGroups.filter((group) => group.label !== "Admin").map((group) => (
-            <section key={group.label}>
-              <h3>{group.label}</h3>
-              {group.items.map(([label, href]) => (
-                <button key={href} className={path === href ? "is-current" : ""} aria-current={path === href ? "page" : undefined} onClick={() => { navigate(href); onClose(); }}>
-                  <span>{isEnglish ? routeTitlesEnglish[href] || label : label}</span><small>{href}</small>
-                </button>
-              ))}
-            </section>
-          ))}
-        </div>
-      </section>
-    </div>
   );
 }
 
@@ -440,7 +319,6 @@ export function App() {
   const { isEnglish } = useLocale();
   const { session, loading, error, refresh } = usePlatform();
   const [path, setPath] = useState(currentRoute);
-  const [mapOpen, setMapOpen] = useState(false);
 
   const navigate = (nextPath) => {
     if (nextPath === path) return;
@@ -529,18 +407,15 @@ export function App() {
       <>
         <Page navigate={navigate} statePath={path} />
         {needsFloatingLanguage && <div className="rt-floating-language"><LanguageToggle /></div>}
-        <button className="rt-map-fab" onClick={() => setMapOpen(true)} aria-label={isEnglish ? "Open all pages" : "打开全部页面"}><Command size={18} weight="bold" /><span>{isEnglish ? "All pages" : "全部页面"}</span></button>
-        <PageMap open={mapOpen} path={path} navigate={navigate} onClose={() => setMapOpen(false)} />
       </>
     );
   }
 
   return (
     <div className="rt-shell">
-      <Topbar path={path} navigate={navigate} onOpenMap={() => setMapOpen(true)} />
-      <Sidebar path={path} navigate={navigate} onOpenMap={() => setMapOpen(true)} />
+      <Topbar path={path} navigate={navigate} />
+      <Sidebar path={path} navigate={navigate} />
       <main className="rt-main"><Page navigate={navigate} statePath={path} /></main>
-      <PageMap open={mapOpen} path={path} navigate={navigate} onClose={() => setMapOpen(false)} />
     </div>
   );
 }

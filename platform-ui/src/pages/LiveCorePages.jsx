@@ -231,7 +231,7 @@ export function DashboardPage({ navigate = () => {} }) {
   }, []);
   const openDocument = async (id) => {
     setDocumentError("");
-    try { await openWorkspace(id); navigate("/app/documents/rt-014"); }
+    try { await openWorkspace(id); navigate("/app/workbench"); }
     catch (nextError) { setDocumentError(nextError.message); }
   };
 
@@ -305,7 +305,7 @@ export function DashboardPage({ navigate = () => {} }) {
             <ol>
               <li><span>1</span>{isEnglish ? "Free bilingual diagnosis" : "免费中英文诊断"}</li>
               <li><span>2</span>{isEnglish ? "Fact-anchor guard" : "事实锚点守卫"}</li>
-              <li><span>3</span>{isEnglish ? "Human review before export" : "导出前逐项人工复核"}</li>
+              <li><span>3</span>{isEnglish ? "Check revisions and evidence before export" : "导出前核对修改与证据"}</li>
             </ol>
           </section>
         </aside>
@@ -382,7 +382,7 @@ export function NewDocumentPage({ navigate = () => {} }) {
       report.notices = [...notices, ...(report.notices || [])];
       await createWorkspace({ name, kind, source, current: report.text || source, report, document, notices: report.notices });
       setStatus("done");
-      navigate("/app/documents/rt-014");
+      navigate("/app/workbench");
     } catch (nextError) {
       setStatus("error");
       setError(nextError.message || (isEnglish ? "Import failed." : "导入失败。"));
@@ -853,7 +853,7 @@ export function VersionsPage({ navigate = () => {} }) {
     try {
       updateWorkspace({ current: current.source, report: null });
       await saveWorkspaceNow();
-      navigate("/app/documents/rt-014");
+      navigate("/app/workbench");
     } catch (nextError) { setError(nextError.message); }
   };
   const openJob = async (id) => {
@@ -875,7 +875,7 @@ export function VersionsPage({ navigate = () => {} }) {
     try {
       updateWorkspace({ current: selectedVersion.text, report: null });
       await saveWorkspaceNow();
-      navigate("/app/documents/rt-014");
+      navigate("/app/workbench");
     } catch (nextError) { setError(nextError.message); }
   };
   const downloadJob = () => {
@@ -889,7 +889,7 @@ export function VersionsPage({ navigate = () => {} }) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   return <div className="rt-page rt-versions-page">
-    <section className="rt-page-intro"><div><button className="rt-back-link" onClick={() => navigate("/app/documents/rt-014")}>{isEnglish ? "← Back to manuscript" : "← 返回文稿"}</button><span className="rt-kicker">VERSIONS / SAVED</span><h1>{isEnglish ? "Review saved drafts." : "查看已保存的稿件版本。"}</h1><p>{isEnglish ? "Text changes saved to your account create recoverable snapshots. Older manuscripts include the source and last saved draft; intermediate edits before this feature cannot be recovered." : "之后每次保存正文修改都会留存可恢复快照。旧文稿仅补录原稿和当时的当前稿；此前中间修改无法补回。"}</p></div></section>
+    <section className="rt-page-intro"><div><button className="rt-back-link" onClick={() => navigate("/app/workbench")}>{isEnglish ? "← Back to manuscript" : "← 返回文稿"}</button><span className="rt-kicker">VERSIONS / SAVED</span><h1>{isEnglish ? "Review saved drafts." : "查看已保存的稿件版本。"}</h1><p>{isEnglish ? "Text changes saved to your account create recoverable snapshots. Older manuscripts include the source and last saved draft; intermediate edits before this feature cannot be recovered." : "之后每次保存正文修改都会留存可恢复快照。旧文稿仅补录原稿和当时的当前稿；此前中间修改无法补回。"}</p></div></section>
     <section className="rt-board rt-live-version-board">
       {error && <div className="rt-live-banner is-error" role="alert">{error}</div>}
       {current.source ? <>

@@ -3156,95 +3156,19 @@ function LegacyAdminPrivacyPage({ navigate }) {
   );
 }
 
-export function SystemStatePage({ navigate, statePath = "/404" }) {
-  const { t } = useOpsLocale();
-  const [connectionChecked, setConnectionChecked] = useState(false);
-  const normalizedPath = String(statePath || "/404").split("?")[0];
-  const states = {
-    "/404": {
-      code: "404",
-      eyebrow: "PAGE NOT FOUND",
-      title: "这一页不在论文里",
-      description: "链接可能已失效，或页面地址输入有误。你的文档与额度不会受影响。",
-      icon: FileText,
-      primary: "返回首页",
-      primaryPath: "/",
-      detail: "未知路由会默认来到这里。",
-    },
-    "/500": {
-      code: "500",
-      eyebrow: "INTERNAL ERROR",
-      title: "服务开了个小差",
-      description: "当前操作没有完成，也不会产生重复任务或额度结算。",
-      icon: WarningCircle,
-      primary: "返回工作区",
-      primaryPath: "/app",
-      detail: "错误追踪号：RT-DEMO-500（仅演示）",
-    },
-    "/offline": {
-      code: "OFFLINE",
-      eyebrow: "CONNECTION LOST",
-      title: "网络连接已中断",
-      description: "已编辑内容会留在当前本地演示状态；恢复连接前不会提交任务。",
-      icon: HardDrives,
-      primary: "重新检查",
-      detail: "检查操作仅更新界面，不会访问外部网络。",
-    },
-    "/maintenance": {
-      code: "MAINTENANCE",
-      eyebrow: "PLANNED MAINTENANCE",
-      title: "正在进行短暂维护",
-      description: "文档浏览仍可使用，新建改写任务暂时停用。额度不会过期或被扣除。",
-      icon: Wrench,
-      primary: "查看服务状态",
-      primaryPath: "/app/settings/service",
-      detail: "预计恢复：今天 16:30（演示信息）",
-    },
-    "/session-expired": {
-      code: "SESSION",
-      eyebrow: "SESSION EXPIRED",
-      title: "登录状态已过期",
-      description: "为保护论文与订单信息，请重新登录。未提交的本地编辑仍会保留。",
-      icon: LockKey,
-      primary: "重新登录",
-      primaryPath: "/auth",
-      detail: "不会自动上传或清除当前内容。",
-    },
-    "/insufficient-balance": {
-      code: "BALANCE",
-      eyebrow: "INSUFFICIENT BALANCE",
-      title: "本次任务额度不足",
-      description: "创建任务前的预估额度高于当前可用余额，因此没有预占、扣除或提交改写。",
-      icon: Wallet,
-      primary: "查看套餐与额度",
-      primaryPath: "/app/billing",
-      detail: "支付尚未接入；套餐与结算流程均为本地演示。",
-    },
-  };
-  const state = states[normalizedPath] || states["/404"];
-  const StateIcon = state.icon;
-  const runPrimary = () => {
-    if (state.primaryPath) {
-      go(navigate, state.primaryPath);
-      return;
-    }
-    setConnectionChecked(true);
-  };
-
+export function SystemStatePage({ navigate }) {
+  const { isEnglish } = useOpsLocale();
   return (
     <Page className="ops-state-page">
       <div className="ops-state-card ops-shadow-card">
-        <div className="ops-state-code" aria-hidden="true">{state.code}</div>
-        <div className="ops-state-icon"><StateIcon size={42} weight="fill" /></div>
-        <p className="ops-eyebrow">SYSTEM / {state.eyebrow}</p>
-        <h1>{state.title}</h1>
-        <p className="ops-state-description">{state.description}</p>
-        <div className="ops-state-detail"><Info size={18} weight="fill" /><span>{state.detail}</span></div>
+        <div className="ops-state-code" aria-hidden="true">404</div>
+        <div className="ops-state-icon"><FileText size={42} weight="fill" /></div>
+        <p className="ops-eyebrow">SYSTEM / PAGE NOT FOUND</p>
+        <h1>{isEnglish ? "Page not found" : "找不到这个页面"}</h1>
+        <p className="ops-state-description">{isEnglish ? "The link may be outdated or the address may be incorrect." : "链接可能已失效，或页面地址输入有误。"}</p>
         <div className="ops-state-actions">
-          <Button tone="blue" icon={ArrowRight} onClick={runPrimary}>{state.primary}</Button>
-          {state.code !== "404" && <Button onClick={() => go(navigate, "/")}>返回首页</Button>}
+          <Button tone="blue" icon={ArrowRight} onClick={() => go(navigate, "/")}>{isEnglish ? "Back to home" : "返回首页"}</Button>
         </div>
-        <DemoFeedback tone="green">{connectionChecked ? t("已完成本地连接检查演示；没有发起任何网络请求。", "The local connection-check demo completed; no network request was made.") : ""}</DemoFeedback>
       </div>
     </Page>
   );
