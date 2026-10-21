@@ -18,3 +18,11 @@ test("document navigation uses a semantic route and preserves old bookmarks", ()
   assert.match(app, /"\/app\/documents\/rt-014": "\/app\/workbench"/);
   assert.doesNotMatch(core, /\/app\/documents\/rt-014/);
 });
+
+test("account data actions live in account settings and old privacy bookmarks redirect", () => {
+  assert.match(app, /"\/app\/settings\/privacy": "\/app\/settings\/account"/);
+  assert.doesNotMatch(app, /"\/app\/settings\/privacy": PrivacySettingsPage/);
+  assert.match(operations, /<AccountDataControls email=\{user\.email \|\| ""\} navigate=\{navigate\} \/>/);
+  assert.match(operations, /getApi\("\/api\/account\/data-export"\)/);
+  assert.match(operations, /postApi\("\/api\/account\/delete-request"/);
+});

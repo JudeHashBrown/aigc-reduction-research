@@ -54,7 +54,7 @@ python3 scripts/backup_database.py restore --archive /path/to/archive.rtbk --des
 
 ## 数据导出与删除申请
 
-用户可在 `/app/settings/privacy` 下载包含个人资料、文稿、任务、订单与额度流水的 JSON；密码哈希、会话令牌和验证码不导出。用户输入当前账户邮箱后可提交删除申请，处理前可取消。管理员只读页 `/admin/privacy` 展示待处理申请。
+用户可在 `/app/settings/account` 下载包含个人资料、文稿、任务、订单与额度流水的 JSON；密码哈希、会话令牌和验证码不导出。用户输入当前账户邮箱后可提交删除申请，处理前可取消。旧的 `/app/settings/privacy` 链接会跳转到账号设置。管理员只读页 `/admin/privacy` 展示待处理申请。
 
 每次服务端保存且正文有变化时写入账户级文稿快照；旧文稿仅补录原稿与启用时的当前稿，不声称能恢复更早的中间修改。隐私导出包含快照，完成账户删除时一并移除；旧加密备份仍可能含删除前正文。
 

@@ -2140,10 +2140,11 @@ export function AccountSettingsPage({ navigate }) {
             <li><span>02</span><div><b>{isEnglish ? "Account-scoped credits" : "账户级额度"}</b><p>{isEnglish ? "The current balance and usage ledger belong to this backend account." : "当前余额与用量账本归属于该后端账户。"}</p></div></li>
             <li><span>03</span><div><b>{isEnglish ? "Saved manuscripts follow the account" : "已保存文稿跟随账户"}</b><p>{isEnglish ? "Saved manuscripts and completed tasks can be reopened after signing in on another device. Unsynced edits remain in this browser until saved." : "已保存文稿和完成的任务可在其他设备登录后重新打开；未同步编辑须保存成功后才会出现在其他设备。"}</p></div></li>
           </ol>
-          <div className="ops-header-actions"><Button icon={Wallet} onClick={() => navigate("/app/billing")}>{isEnglish ? "View credits" : "查看额度"}</Button><Button icon={ShieldCheck} onClick={() => navigate("/app/settings/privacy")}>{isEnglish ? "Privacy status" : "隐私状态"}</Button></div>
+          <div className="ops-header-actions"><Button icon={Wallet} onClick={() => navigate("/app/billing")}>{isEnglish ? "View credits" : "查看额度"}</Button></div>
           {signOutError && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><b>{isEnglish ? "Could not sign out" : "无法退出登录"}</b><p>{signOutError}</p></div></div>}
         </Section>
       </div>
+      <AccountDataControls email={user.email || ""} navigate={navigate} />
     </Page>
   );
 }
@@ -2179,7 +2180,6 @@ function LegacyAccountAccessPage({ navigate }) {
           </div>
           <div className="ops-header-actions">
             <Button icon={Wallet} onClick={() => go(navigate, "/app/billing")}>{isEnglish ? "View credits" : "查看额度"}</Button>
-            <Button icon={ShieldCheck} onClick={() => go(navigate, "/app/settings/privacy")}>{isEnglish ? "Privacy status" : "隐私状态"}</Button>
           </div>
         </Section>
       </div>
@@ -2203,7 +2203,6 @@ function LegacyAccountSettingsPage({ navigate }) {
       <div className="ops-settings-grid">
         <nav className="ops-settings-nav" aria-label="设置导航">
           <button className="is-active" type="button"><UserCircle size={19} />账号资料</button>
-          <button type="button" onClick={() => go(navigate, "/app/settings/privacy")}><ShieldCheck size={19} />隐私与数据</button>
           <button type="button" onClick={() => go(navigate, "/app/billing")}><Wallet size={19} />额度与订单</button>
         </nav>
         <div className="ops-settings-main">
@@ -2232,22 +2231,18 @@ function LegacyAccountSettingsPage({ navigate }) {
   );
 }
 
-export function PrivacySettingsPage({ navigate }) {
+function AccountDataControls({ email, navigate }) {
   const { isEnglish } = useLocale();
-  const { session } = usePlatform();
   const [request, setRequest] = useState(null);
   const [confirmedEmail, setConfirmedEmail] = useState("");
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState("");
-  const isAccountUser = session?.authMode === "accounts" && session?.authenticated;
-  const email = session?.user?.email || "";
 
   useEffect(() => {
-    if (!isAccountUser) return;
     getApi("/api/account/privacy-request")
       .then((result) => setRequest(result.request || null))
       .catch((error) => setFeedback(error.message || (isEnglish ? "Could not load privacy request." : "无法读取隐私申请。")));
-  }, [isAccountUser, isEnglish]);
+  }, [isEnglish]);
 
   const exportData = async () => {
     setBusy("export");
@@ -2303,40 +2298,20 @@ export function PrivacySettingsPage({ navigate }) {
     }
   };
   return (
-    <Page>
-      <PageHeader
-        eyebrow={isEnglish ? "PRIVACY / YOUR DATA" : "PRIVACY / 你的数据"}
-        title={isEnglish ? "Privacy and data" : "隐私与数据"}
-        description={isEnglish ? "Export your account data or submit a deletion request. Deletion is reviewed before fulfillment; financial records may need to be retained." : "可以导出账户数据或提交删除申请。删除须先核对任务、订单与剩余额度；财务记录可能需要保留。"}
-      />
-      <div className="ops-two-col ops-two-col--wide">
-        <Section title={isEnglish ? "Current data path" : "当前数据路径"} kicker="VERIFIABLE FLOW" className="ops-shadow-card">
-          <ol className="ops-numbered">
-            <li><span>01</span><div><b>{isEnglish ? "Local draft backup" : "浏览器待同步备份"}</b><p>{isEnglish ? "Unsynced text is cached per manuscript in this browser. Saved caches are cleared at sign-out; unsynced copies remain to prevent loss." : "未同步文字按文稿暂存在此浏览器。退出登录时清除已同步缓存；未同步备份保留以防丢稿。"}</p></div></li>
-            <li><span>02</span><div><b>{isEnglish ? "Platform server" : "平台服务器"}</b><p>{isEnglish ? "Saved original files, manuscripts, reports, and rewrite results are stored by account in the platform's server database. Encrypted server backups are separate from browser drafts; keep your own copy too." : "已保存的原文件、文稿、报告和改写结果按账户存放在平台服务器数据库中，并定时制作服务器加密备份；重要文稿仍请自行保留副本。"}</p></div></li>
-            <li><span>03</span><div><b>{isEnglish ? "Platform-managed LLM" : "平台统一配置的 LLM"}</b><p>{isEnglish ? "When you confirm a model rewrite, the relevant text is sent by the backend to its configured model provider." : "用户确认模型改写后，相关正文由后端发送给已配置的模型服务商。"}</p></div></li>
-            <li><span>04</span><div><b>{isEnglish ? "Usage ledger" : "用量账本"}</b><p>{isEnglish ? "Credit and job-usage metadata are recorded for reservation, settlement, and release. Completed task results are retained on the platform server." : "额度与任务用量元数据用于预占、结算和释放；已完成任务结果保存在平台服务器。"}</p></div></li>
-          </ol>
-        </Section>
-        <Section title={isEnglish ? "Your data controls" : "你的数据操作"} kicker="ACCOUNT DATA">
-          <div className="ops-note ops-note--yellow"><WarningCircle size={28} weight="fill" /><div><b>{isEnglish ? "Deletion requires review" : "删除申请需核对"}</b><p>{isEnglish ? "A request does not delete data immediately. Running jobs, pending payments and unused paid credits must be settled first. Financial records remain pseudonymous after fulfillment; configurable retention is not available yet." : "提交申请不会立即删除。运行任务、待确认付款和未使用的付费额度须先处理；完成后财务记录会以去身份化账户标识保留。目前尚无自选留存期。"}</p></div></div>
-          {isAccountUser ? <>
-            <div className="ops-header-actions">
-              <Button icon={DownloadSimple} onClick={exportData} disabled={Boolean(busy)}>{busy === "export" ? (isEnglish ? "Preparing…" : "正在导出…") : (isEnglish ? "Download my data" : "下载我的数据")}</Button>
-            </div>
-            {request?.status === "pending" ? <div className="ops-note ops-note--yellow"><Info size={24} weight="fill" /><div><b>{isEnglish ? "Deletion request pending" : "删除申请待处理"}</b><p>{isEnglish ? `Request ${request.id}. You may cancel it while it is pending.` : `申请编号 ${request.id}。处理前可以取消。`}</p><Button onClick={cancelDeletion} disabled={Boolean(busy)}>{isEnglish ? "Cancel request" : "取消申请"}</Button></div></div> : <div className="ops-form-grid">
-              <label><span>{isEnglish ? "Type your account email to request deletion" : "输入当前账户邮箱以申请删除"}</span><input type="email" autoComplete="email" value={confirmedEmail} onChange={(event) => setConfirmedEmail(event.target.value)} placeholder={email} /></label>
-              <Button icon={Trash} onClick={requestDeletion} disabled={Boolean(busy) || confirmedEmail.trim() !== email}>{busy === "delete" ? (isEnglish ? "Submitting…" : "正在提交…") : (isEnglish ? "Request account deletion" : "申请删除账户")}</Button>
-            </div>}
-          </> : <p>{isEnglish ? "Sign in to export account data or request deletion." : "登录后可导出账户数据或申请删除。"}</p>}
-          {feedback && <div className="ops-note ops-note--green" role="status"><Info size={24} weight="fill" /><div><p>{feedback}</p></div></div>}
-          <div className="ops-header-actions">
-            <Button icon={UserCircle} onClick={() => go(navigate, "/app/settings/account")}>{isEnglish ? "Account status" : "账号状态"}</Button>
-            <Button icon={Info} onClick={() => go(navigate, "/legal/privacy")}>{isEnglish ? "Read privacy notice" : "查看隐私说明"}</Button>
-          </div>
-        </Section>
+    <Section title={isEnglish ? "Data and account deletion" : "数据与账户删除"} kicker="ACCOUNT DATA" className="ops-shadow-card">
+      <div className="ops-note ops-note--yellow"><WarningCircle size={28} weight="fill" /><div><b>{isEnglish ? "Deletion requires review" : "删除申请需核对"}</b><p>{isEnglish ? "A request does not delete data immediately. Running jobs, pending payments and unused paid credits must be settled first. Financial records remain pseudonymous after fulfillment; configurable retention is not available yet." : "提交申请不会立即删除。运行任务、待确认付款和未使用的付费额度须先处理；完成后财务记录会以去身份化账户标识保留。目前尚无自选留存期。"}</p></div></div>
+      <div className="ops-header-actions">
+        <Button icon={DownloadSimple} onClick={exportData} disabled={Boolean(busy)}>{busy === "export" ? (isEnglish ? "Preparing…" : "正在导出…") : (isEnglish ? "Download my data" : "下载我的数据")}</Button>
       </div>
-    </Page>
+      {request?.status === "pending" ? <div className="ops-note ops-note--yellow"><Info size={24} weight="fill" /><div><b>{isEnglish ? "Deletion request pending" : "删除申请待处理"}</b><p>{isEnglish ? `Request ${request.id}. You may cancel it while it is pending.` : `申请编号 ${request.id}。处理前可以取消。`}</p><Button onClick={cancelDeletion} disabled={Boolean(busy)}>{isEnglish ? "Cancel request" : "取消申请"}</Button></div></div> : <div className="ops-form-grid">
+        <label><span>{isEnglish ? "Type your account email to request deletion" : "输入当前账户邮箱以申请删除"}</span><input type="email" autoComplete="email" value={confirmedEmail} onChange={(event) => setConfirmedEmail(event.target.value)} placeholder={email} /></label>
+        <Button icon={Trash} onClick={requestDeletion} disabled={Boolean(busy) || confirmedEmail.trim() !== email}>{busy === "delete" ? (isEnglish ? "Submitting…" : "正在提交…") : (isEnglish ? "Request account deletion" : "申请删除账户")}</Button>
+      </div>}
+      {feedback && <div className="ops-note ops-note--green" role="status"><Info size={24} weight="fill" /><div><p>{feedback}</p></div></div>}
+      <div className="ops-header-actions">
+        <Button icon={Info} onClick={() => go(navigate, "/legal/privacy")}>{isEnglish ? "Read privacy notice" : "查看隐私说明"}</Button>
+      </div>
+    </Section>
   );
 }
 

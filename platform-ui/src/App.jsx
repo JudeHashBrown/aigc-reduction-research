@@ -38,7 +38,6 @@ import {
   OrdersPage,
   CheckoutPage,
   AccountSettingsPage,
-  PrivacySettingsPage,
   ServiceStatusPage,
   AdminOverviewPage,
   AdminUsersPage,
@@ -64,7 +63,7 @@ const routeTitles = {
   "/app/versions": "版本与任务历史", "/app/billing": "我的权益",
   "/app/billing/usage": "额度明细", "/app/billing/orders": "订单与月卡",
   "/checkout/pro": "支付确认", "/app/settings/account": "账号设置",
-  "/app/settings/privacy": "数据管理", "/app/settings/service": "服务状态",
+  "/app/settings/service": "服务状态",
   "/admin": "运营总览", "/admin/users": "用户", "/admin/jobs": "改写任务",
   "/admin/plans": "套餐配置", "/admin/orders": "订单与对账",
   "/admin/economics": "收款与模型用量", "/admin/service": "服务状态",
@@ -88,7 +87,6 @@ const routeTitlesEnglish = {
   "/app/billing/orders": "Orders & passes",
   "/checkout/pro": "Checkout",
   "/app/settings/account": "Account settings",
-  "/app/settings/privacy": "Privacy controls",
   "/app/settings/service": "Service status",
   "/admin": "Operations overview",
   "/admin/users": "Users",
@@ -110,6 +108,7 @@ function currentRoute() {
   const replacement = {
     "/app/documents/rt-014": "/app/workbench",
     "/app/documents/rt-014/versions": "/app/versions",
+    "/app/settings/privacy": "/app/settings/account",
   }[path];
   if (replacement) {
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#${replacement}`);
@@ -136,7 +135,6 @@ const routeComponents = {
   "/app/billing/orders": OrdersPage,
   "/checkout/pro": CheckoutPage,
   "/app/settings/account": AccountSettingsPage,
-  "/app/settings/privacy": PrivacySettingsPage,
   "/app/settings/service": ServiceStatusPage,
   "/admin": AdminOverviewPage,
   "/admin/users": AdminUsersPage,
