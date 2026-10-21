@@ -115,6 +115,15 @@ def run():
             assert code == 200 and body
             assert headers.get_content_type() == "text/javascript"
 
+            server.ACCOUNTS_MODE = True
+            try:
+                code, body, _ = request(opener, base, "/legacy")
+                assert code == 200 and body == index
+                code, body, _ = request(opener, base, "/legacy/app.js")
+                assert code == 200 and body == index
+            finally:
+                server.ACCOUNTS_MODE = False
+
             code, body, headers = request(opener, base, "/api/not-a-route")
             assert code == 404 and headers.get_content_type() == "application/json"
             assert b"RightThesis React" not in body

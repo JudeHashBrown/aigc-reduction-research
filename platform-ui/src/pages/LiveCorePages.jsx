@@ -441,7 +441,7 @@ export function NewDocumentPage({ navigate = () => {} }) {
               {(isEnglish ? ["Mechanical phrasing", "Terminology consistency", "Argument boundaries", "Fact anchors"] : ["机械化表达", "术语一致性", "论证边界", "事实锚点"]).map((item) => <span key={item}><Check weight="bold" /> {item}</span>)}
             </div>
           </section>
-          <section className="rt-privacy-note"><ShieldCheck size={26} weight="bold" /><div><strong>{isEnglish ? "Saved to your account" : "保存到当前账户"}</strong><p>{isEnglish ? "The original and revised text are stored on this local server. This is not a cloud backup." : "原稿与修改稿会保存到这台本地服务器；这不等于异地云备份。"}</p></div></section>
+          <section className="rt-privacy-note"><ShieldCheck size={26} weight="bold" /><div><strong>{isEnglish ? "Saved to your account" : "保存到当前账户"}</strong><p>{isEnglish ? "Your original and revised text are saved to your account. Keep a separate copy of important manuscripts." : "原稿与修改稿会保存到你的账户；重要文稿也请自行保留副本。"}</p></div></section>
           {error && <div className="rt-live-banner is-error" role="alert"><WarningCircle weight="fill" /> {error}</div>}
           <button className="rt-button rt-button-primary rt-analyze-button" disabled={!canContinue || busy} onClick={startAnalysis} aria-busy={busy}>
             {busy ? <CircleNotch className="rt-spin" weight="bold" /> : <Sparkle weight="bold" />}

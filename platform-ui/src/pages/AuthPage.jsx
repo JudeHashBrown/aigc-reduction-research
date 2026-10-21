@@ -507,7 +507,7 @@ export function AuthPage({ navigate, statePath }) {
           <button className="rtp-btn rtp-btn-blue rtp-btn-full" type="submit" disabled={!emailVerificationAvailable || busy || !displayName.trim() || !passwordIsValid(password)}>{busy ? <SpinnerGap className="rtp-spin" weight="bold" /> : <EnvelopeSimple weight="bold" />}{busy ? (isEnglish ? 'Registering…' : '正在注册…') : (isEnglish ? 'Register' : '注册')}</button>
         </form>
       )}
-      {developmentMail && <p className="rtp-auth-notice"><Warning weight="fill" /> {isEnglish ? 'Development email delivery is active. Verification codes are printed in the local server terminal, not sent to an inbox.' : '当前为开发邮件模式：验证码只会打印在本地服务终端，不会发到真实邮箱。'}</p>}
+      {developmentMail && <p className="rtp-auth-notice"><Warning weight="fill" /> {isEnglish ? 'Email delivery is unavailable. Verification codes appear only in the server terminal, not in your inbox.' : '邮件投递不可用。验证码仅会显示在服务终端，不会发送到邮箱。'}</p>}
       {guestReady && <button className="rtp-guest-link" type="button" onClick={go(navigate, '/app')}>{isEnglish ? 'Continue with this browser’s anonymous trial' : '继续使用当前浏览器的匿名试用'}</button>}
     </>
   );
@@ -551,7 +551,7 @@ export function AuthPage({ navigate, statePath }) {
     <>
       <div className="rtp-auth-heading"><span>ACCOUNT RECOVERY</span><h2>{isEnglish ? 'Forgot your password?' : '忘记密码？'}</h2><p>{isEnglish ? 'Enter your email. If an account is eligible, we’ll send a reset code.' : '输入邮箱。如果账户可恢复，我们会发送密码重置验证码。'}</p></div>
       {!emailVerificationAvailable && <p className="rtp-auth-notice" role="status"><Warning weight="fill" /> {isEnglish ? 'Password recovery requires a configured email delivery service.' : '找回密码需要先配置邮件投递服务。'}</p>}
-      {developmentMail && <p className="rtp-auth-notice"><Warning weight="fill" /> {isEnglish ? 'Local test mode is active. The reset code will be printed in the server terminal.' : '当前为本地测试模式，重置验证码会打印在服务终端。'}</p>}
+      {developmentMail && <p className="rtp-auth-notice"><Warning weight="fill" /> {isEnglish ? 'Email delivery is unavailable. The reset code appears only in the server terminal.' : '邮件投递不可用。重置验证码仅会显示在服务终端。'}</p>}
       <form onSubmit={submitForgotPassword}>
         <label htmlFor="rtp-forgot-email">{isEnglish ? 'Email address' : '邮箱地址'}<div className="rtp-input-wrap"><EnvelopeSimple aria-hidden="true" /><input id="rtp-forgot-email" type="email" inputMode="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={!emailVerificationAvailable || busy} /></div></label>
         <button className="rtp-btn rtp-btn-blue rtp-btn-full" type="submit" disabled={!emailVerificationAvailable || busy}>{busy ? <SpinnerGap className="rtp-spin" weight="bold" /> : <EnvelopeSimple weight="bold" />}{busy ? (isEnglish ? 'Sending…' : '正在发送…') : (isEnglish ? 'Send reset code' : '发送重置验证码')}</button>

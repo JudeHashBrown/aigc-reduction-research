@@ -470,6 +470,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _serve_frontend(self, path: str):
         """Serve the React build, or the legacy app when no build is available."""
+        if ACCOUNTS_MODE and path in {"/legacy", "/legacy/", "/legacy/index.html", "/legacy/app.js"}:
+            return self._redirect("/app")
         if path in {"/legacy", "/legacy/", "/legacy/index.html"}:
             try:
                 # The old document uses an absolute /app.js reference.  Rewrite
@@ -1276,7 +1278,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/billing/checkout":
             if TRIAL_MODE:
                 return self._send(403, json.dumps({
-                    "error": "内测模式已禁用模拟充值，请联系管理员。",
+                    "error": "当前访问方式不支持购买。如需额度，请联系管理员。",
                     "code": "trial_checkout_disabled",
                 }, ensure_ascii=False))
             product_id = payload.get("product_id")

@@ -331,8 +331,7 @@ class BillingStore:
                       "trial": 5, "free": 0}
         plan_id = max((row["product_id"] for row in paid),
                       key=lambda value: priorities.get(value, 1), default="free")
-        plan = PRODUCTS.get(plan_id, {"name": "内测体验" if plan_id == "trial"
-                                          else "免费体验"})
+        plan = PRODUCTS.get(plan_id, {"name": "免费体验"})
         max_chars = max((int(row["max_chars_per_job"]) for row in grants), default=0)
         return {
             "account_id": account_id,
