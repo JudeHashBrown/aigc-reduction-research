@@ -396,9 +396,7 @@ function planTone(plan) {
 
 export function PricingPage({ navigate }) {
   const { isEnglish } = useLocale();
-  const { plans, config, session, loading, error, refresh } = usePlatform();
-  const stripeReady = config?.payment?.provider === 'stripe' && config.payment.checkout_enabled === true;
-  const stripeLive = stripeReady && config.payment.live === true;
+  const { plans, session, loading, error, refresh } = usePlatform();
   const [kind, setKind] = useState('month');
   const groupedPlans = useMemo(() => ({
     month: plans.filter((plan) => plan.kind === 'subscription'),
@@ -453,7 +451,7 @@ export function PricingPage({ navigate }) {
                 </ul>
                 <p>{planDescription(plan, isEnglish)}</p>
                 <button className={`rtp-btn ${tone === 'blue' ? 'rtp-btn-yellow' : 'rtp-btn-blue'}`} onClick={() => openPlan(plan)} disabled={loading || !session?.ready}>
-                  {isFree ? (isEnglish ? 'Open workspace' : '进入工作台') : session?.authMode === 'accounts' && !session?.authenticated ? (isEnglish ? 'Sign in to buy' : '登录后购买') : (isEnglish ? 'View checkout' : '查看结账')} <ArrowRight weight="bold" />
+                  {isFree ? (isEnglish ? 'Open workspace' : '进入工作台') : session?.authMode === 'accounts' && !session?.authenticated ? (isEnglish ? 'Sign in to buy' : '登录后购买') : (isEnglish ? 'Pay' : '支付')} <ArrowRight weight="bold" />
                 </button>
               </article>
             );
@@ -461,12 +459,6 @@ export function PricingPage({ navigate }) {
             <div className="rtp-plan-status rtp-plan-status-error"><Warning size={30} weight="fill" /><h2>{isEnglish ? 'This catalog is unavailable.' : '当前无法读取套餐目录。'}</h2><p>{error || (isEnglish ? 'The service returned no plans. No substitute prices are shown.' : '服务端未返回套餐，页面不会用模拟价格代替。')}</p><button className="rtp-btn rtp-btn-paper" type="button" onClick={refresh}>{isEnglish ? 'Retry' : '重新读取'}</button></div>
           )}
         </section>
-
-        <p className="rtp-pricing-caveat"><Warning weight="bold" /> {stripeReady
-          ? stripeLive
-            ? (isEnglish ? 'Stripe Checkout accepts real payments. Monthly passes are one-time purchases, not auto-renewing subscriptions. Credits arrive after verified payment confirmation.' : 'Stripe 收银台将真实扣款。月卡为单次购买、不自动续费；验签确认付款后发放额度。')
-            : (isEnglish ? 'Checkout is in Stripe test mode only; no real charge or automatic renewal. Credits are granted after verified payment events.' : '目前仅开放 Stripe 测试支付，不会真实扣款或自动续费；验签确认后才发放额度。')
-          : (isEnglish ? 'Checkout is not enabled yet. Catalog prices come from the backend; no payment is collected.' : '尚未开放收款；目录价格来自服务端，目前不能付款。')}</p>
 
         <section className="rtp-credit-rules">
           <div className="rtp-section-heading"><span className="rtp-index-tag">{isEnglish ? 'HOW CREDITS WORK' : '额度怎么用'}</span><h2>{isEnglish ? 'Clear accounting makes confident revision.' : '账算得明白，修改才安心。'}</h2></div>

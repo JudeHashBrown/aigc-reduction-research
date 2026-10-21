@@ -464,7 +464,7 @@
 .rtp-segmented button { min-width: 142px; height: 44px; border: 0; background: transparent; cursor: pointer; font-weight: 850; }
 .rtp-segmented button.is-active { color: white; background: var(--rtp-blue); }
 
-.rtp-plan-grid { max-width: 1160px; margin: 0 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: stretch; }
+.rtp-plan-grid { max-width: 1160px; margin: 0 auto 100px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: stretch; }
 .rtp-plan-grid.is-two { max-width: 830px; grid-template-columns: repeat(2, 1fr); }
 .rtp-plan-card { position: relative; min-height: 560px; padding: 31px; border: 2px solid var(--rtp-ink); background: var(--rtp-white); box-shadow: 8px 8px 0 var(--rtp-ink); display: flex; flex-direction: column; }
 .rtp-plan-card.rtp-plan-blue { color: white; background: var(--rtp-blue); }
@@ -483,9 +483,6 @@
 .rtp-plan-card li svg { width: 17px; height: 17px; flex: none; }
 .rtp-plan-card > p { margin: 0 0 24px; color: inherit; font-family: "Noto Serif SC", serif; font-size: 12px; line-height: 1.65; opacity: .72; }
 .rtp-plan-card > .rtp-btn { width: 100%; margin-top: auto; }
-.rtp-pricing-caveat { width: max-content; max-width: 100%; margin: 31px auto 100px; padding: 12px 15px; border: 1px solid #b8b8b4; background: #ecebe5; display: flex; align-items: center; gap: 9px; color: #606268; font-size: 12px; }
-.rtp-pricing-caveat svg { flex: none; }
-
 .rtp-credit-rules { padding: 0 0 100px; }
 .rtp-rule-grid { display: grid; grid-template-columns: repeat(4, 1fr); border: 2px solid var(--rtp-ink); background: var(--rtp-white); box-shadow: 7px 7px 0 var(--rtp-ink); }
 .rtp-rule-grid article { min-height: 245px; padding: 26px; border-right: 2px solid var(--rtp-ink); }

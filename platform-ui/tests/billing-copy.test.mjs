@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { billableChars } from '../src/billing-text.js';
 import { localizedPlanDescription, localizedPlanName } from '../src/plan-copy.js';
@@ -21,4 +22,10 @@ test('public pricing and checkout use the same English plan copy', () => {
   assert.match(localizedPlanDescription(pass, true), /No automatic renewal/);
   assert.equal(localizedPlanName(pass, false), '学生月卡');
   assert.equal(localizedPlanDescription(pass, false), '一次购买，30 天有效。');
+});
+
+test('pricing cards use direct payment labels without a Stripe caveat banner', () => {
+  const pricing = readFileSync(new URL('../src/pages/PublicPages.jsx', import.meta.url), 'utf8');
+  assert.match(pricing, /isEnglish \? 'Pay' : '支付'/);
+  assert.doesNotMatch(pricing, /查看结账|View checkout|rtp-pricing-caveat/);
 });
