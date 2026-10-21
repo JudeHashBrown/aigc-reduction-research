@@ -106,7 +106,7 @@ def test_provider_modes_and_checkout_options():
             assert result["status"] == "pending"
             assert result["live"] is False
             assert captured["params"]["mode"] == "payment"
-            assert captured["params"]["allowed_payment_method_types"] == ["card", "wechat_pay", "alipay"]
+            assert "allowed_payment_method_types" not in captured["params"]
             assert "payment_method_types" not in captured["params"]
             assert captured["params"]["line_items"][0]["price_data"]["unit_amount"] == 990
             assert "#/checkout/pro?order=" in captured["params"]["success_url"]
@@ -161,7 +161,7 @@ def test_live_mode_requires_opt_in_https_and_matching_webhook():
             result = provider.checkout("buyer", "pack_3k", "checkout_live_001",
                                        origin="https://rightthesis.com")
             assert result["live"] is True
-            assert captured["params"]["allowed_payment_method_types"] == ["card", "wechat_pay", "alipay"]
+            assert "allowed_payment_method_types" not in captured["params"]
             assert "payment_method_types" not in captured["params"]
             assert store.order("buyer", result["order_id"])["live"] is True
             event = {"id": "evt_live123", "livemode": True,
@@ -492,4 +492,4 @@ if __name__ == "__main__":
     test_checkout_failure_expiry_and_late_paid_webhook()
     test_real_sdk_rejects_bad_signature_when_installed()
     test_http_webhook_without_browser_cookie_when_sdk_installed()
-    print("✓ Stripe 离线合同：测试密钥、三种支付方式、金额验核和幂等发放")
+    print("✓ Stripe 离线合同：测试密钥、动态支付方式、金额验核和幂等发放")
