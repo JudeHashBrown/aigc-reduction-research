@@ -1289,8 +1289,12 @@ class Handler(BaseHTTPRequestHandler):
                     raise BillingError("Stripe 仅支持已登录账户购买", 403)
                 target = self._effective_target()
                 origin = f"{target[0]}://{target[1]}" if target else ""
+                user = session.get("user") if ACCOUNTS_MODE else None
+                customer_email = (user.get("email", "") if user and
+                                  user.get("email_verified") else "")
                 result = PAYMENTS.checkout(account_id, product_id,
-                                           idempotency_key, origin=origin)
+                                           idempotency_key, origin=origin,
+                                           customer_email=customer_email)
             except BillingError as exc:
                 return self._send_billing_error(exc)
             return self._send(200, json.dumps(result, ensure_ascii=False))

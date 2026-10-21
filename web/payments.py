@@ -31,7 +31,8 @@ class PaymentProvider:
         }
 
     def checkout(self, account_id: str, product_id: str,
-                 idempotency_key: str, origin: str = "") -> Dict:
+                 idempotency_key: str, origin: str = "",
+                 customer_email: str = "") -> Dict:
         raise BillingError(
             f"{self.display_name} 尚未配置，当前不能收款。",
             503,
@@ -51,7 +52,8 @@ class MockPaymentProvider(PaymentProvider):
         return status
 
     def checkout(self, account_id: str, product_id: str,
-                 idempotency_key: str, origin: str = "") -> Dict:
+                 idempotency_key: str, origin: str = "",
+                 customer_email: str = "") -> Dict:
         result = self.store.mock_checkout(account_id, product_id, idempotency_key)
         result.update({
             "live": False,
@@ -100,7 +102,8 @@ class StripePaymentProvider(PaymentProvider):
         return status
 
     def checkout(self, account_id: str, product_id: str,
-                 idempotency_key: str, origin: str = "") -> Dict:
+                 idempotency_key: str, origin: str = "",
+                 customer_email: str = "") -> Dict:
         if not self.configured:
             return super().checkout(account_id, product_id, idempotency_key)
         parsed = urlparse(origin)
@@ -110,6 +113,8 @@ class StripePaymentProvider(PaymentProvider):
             raise BillingError("支付返回地址必须是可信的 HTTPS 或本机地址", 400)
         if self.live and origin != self.public_origin:
             raise BillingError("正式支付返回地址与站点域名不一致", 400)
+        if not isinstance(customer_email, str) or not customer_email:
+            raise BillingError("账号缺少已验证邮箱，请重新登录后再试", 403)
         order = self.store.prepare_stripe_checkout(
             account_id, product_id, idempotency_key, livemode=self.live)
         now = int(self.store._now())
@@ -125,6 +130,7 @@ class StripePaymentProvider(PaymentProvider):
         back = f"{origin}/#/checkout/pro?order={quote(order['id'], safe='')}"
         params = {
             "mode": "payment",
+            "customer_email": customer_email,
             # Use the payment methods enabled in the Stripe Dashboard. An
             # explicit allowlist bypasses those dynamic Checkout settings.
             "line_items": [{"price_data": {

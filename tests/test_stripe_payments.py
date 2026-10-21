@@ -101,20 +101,27 @@ def test_provider_modes_and_checkout_options():
             provider = StripePaymentProvider(store)
             provider.stripe = fake
             provider.configured = True
+            expect_error(lambda: provider.checkout("buyer", "pack_3k", "no_email_001",
+                                                   origin="http://127.0.0.1:8877"), 403)
+            assert store.orders("buyer") == []
             result = provider.checkout("buyer", "pack_3k", "checkout_test_002",
-                                       origin="http://127.0.0.1:8877")
+                                       origin="http://127.0.0.1:8877",
+                                       customer_email="buyer@example.com")
             assert result["status"] == "pending"
             assert result["live"] is False
             assert captured["params"]["mode"] == "payment"
+            assert captured["params"]["customer_email"] == "buyer@example.com"
             assert "allowed_payment_method_types" not in captured["params"]
             assert "payment_method_types" not in captured["params"]
             assert captured["params"]["line_items"][0]["price_data"]["unit_amount"] == 990
             assert "#/checkout/pro?order=" in captured["params"]["success_url"]
             assert captured["options"]["idempotency_key"].startswith("rightthesis-ord_")
             assert provider.checkout("buyer", "pack_3k", "checkout_test_002",
-                                     origin="http://127.0.0.1:8877")["reused"]
+                                     origin="http://127.0.0.1:8877",
+                                     customer_email="buyer@example.com")["reused"]
             expect_error(lambda: provider.checkout("buyer", "pack_3k", "checkout_test_003",
-                                                    origin="http://evil.example"), 400)
+                                                    origin="http://evil.example",
+                                                    customer_email="buyer@example.com"), 400)
             event = {"id": "evt_fake123", "livemode": False,
                      "type": "checkout.session.completed", "data": {"object": {
                          "id": "cs_test_123", "client_reference_id": result["order_id"],
@@ -157,10 +164,13 @@ def test_live_mode_requires_opt_in_https_and_matching_webhook():
             assert provider.live
             assert provider.public_status()["checkout_enabled"]
             expect_error(lambda: provider.checkout("buyer", "pack_3k", "checkout_live_bad",
-                                                   origin="https://evil.example"), 400)
+                                                   origin="https://evil.example",
+                                                   customer_email="buyer@example.com"), 400)
             result = provider.checkout("buyer", "pack_3k", "checkout_live_001",
-                                       origin="https://rightthesis.com")
+                                       origin="https://rightthesis.com",
+                                       customer_email="buyer@example.com")
             assert result["live"] is True
+            assert captured["params"]["customer_email"] == "buyer@example.com"
             assert "allowed_payment_method_types" not in captured["params"]
             assert "payment_method_types" not in captured["params"]
             assert store.order("buyer", result["order_id"])["live"] is True
@@ -377,7 +387,8 @@ def test_checkout_failure_expiry_and_late_paid_webhook():
             provider.stripe = failing
             provider.configured = True
             expect_error(lambda: provider.checkout("buyer", "pack_3k", "checkout_failed_001",
-                                                   origin="http://127.0.0.1:8877"), 502)
+                                                   origin="http://127.0.0.1:8877",
+                                                   customer_email="buyer@example.com"), 502)
         assert store.orders("buyer")[0]["status"] == "failed"
 
         # A concurrent request may have received the same Stripe session even
