@@ -11,8 +11,10 @@ import mimetypes
 import os
 import re
 import secrets
+import sqlite3
 import sys
 import webbrowser
+from contextlib import closing
 from http.cookies import SimpleCookie, CookieError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -171,6 +173,26 @@ WORKSPACES = WorkspaceStore(_billing_db_path())
 ADMIN = AdminStore(_billing_db_path())
 PRIVACY = PrivacyStore(_billing_db_path())
 PAYMENTS = create_payment_provider(os.environ.get("PAYMENT_PROVIDER", "mock"), BILLING)
+
+
+def _health_status():
+    """Readiness of the durable core; do not expose secrets or private data."""
+    try:
+        with closing(sqlite3.connect(f"file:{_billing_db_path()}?mode=ro", uri=True,
+                                     timeout=2)) as db:
+            result = db.execute("SELECT 1").fetchone()
+            tables = {row[0] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+        required = {"accounts", "manuscripts", "rewrite_jobs", "orders", "ledger_entries"}
+        if result != (1,) or not required <= tables:
+            return 503, {"ok": False, "database": "unavailable"}
+    except (OSError, sqlite3.Error):
+        return 503, {"ok": False, "database": "unavailable"}
+    if ACCOUNTS_MODE and PUBLIC_ORIGIN and urlparse(PUBLIC_ORIGIN).hostname not in {
+        "127.0.0.1", "localhost", "::1"}:
+        if not Client().configured or (PAYMENTS.name == "stripe" and not PAYMENTS.configured):
+            return 503, {"ok": False, "service": "not_configured"}
+    return 200, {"ok": True}
 
 
 def _payment_status() -> dict:
@@ -371,15 +393,59 @@ def _stable_job_id(account_id, request_id):
     return "job_" + hashlib.sha256(raw).hexdigest()[:24]
 
 
-def _new_job(account_id, request_id, fingerprint, manuscript_id=None):
+def _new_job(account_id, request_id, fingerprint, manuscript_id=None, request=None):
     jid = _stable_job_id(account_id, request_id)
     claim, _ = WORKSPACES.claim_job(account_id, request_id, fingerprint, jid,
-                                    MAX_ACTIVE_JOBS, manuscript_id)
+                                    MAX_ACTIVE_JOBS, manuscript_id, request)
     return (None if claim == "busy" else jid), claim
 
 
 def _job_set(jid, **kw):
     WORKSPACES.update_job(jid, **kw)
+
+
+def _run_queued_job(job):
+    jid = job["id"]
+    request = job.get("request") or {}
+    text = request.get("text")
+    strength = request.get("strength")
+    client = Client()
+    try:
+        if not isinstance(text, str) or strength not in {"conservative", "balanced", "deep"}:
+            raise ValueError("排队任务缺少可恢复的正文或策略")
+        if not client.configured:
+            raise RuntimeError("平台改写服务暂不可用")
+        _job_set(jid, phase="locating")
+        result = humanizer_bilingual.humanize(
+            text, client, n_candidates={"conservative": 1, "balanced": 2, "deep": 3}[strength],
+            progress=lambda d, t: _job_set(jid, done=d, total=t, phase="rewriting"),
+            auto_english=True, stage=lambda phase: _job_set(jid, phase=phase))
+        result["strength"] = strength
+        result["notices"] = request.get("notices") or []
+        result["model_usage"] = client.usage_summary()
+        _job_set(jid, phase="finalizing", result=result)
+        billing_result = BILLING.finalize(
+            jid, success=True, accepted=result.get("n_accepted", 0),
+            usage=result["model_usage"])
+        result["billing"] = billing_result
+        _job_set(jid, state="done", phase="complete", result=result, billing=billing_result)
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        print("\n[Humanizer 双语任务失败]\n" + traceback.format_exc(), flush=True)
+        try:
+            billing_result = BILLING.finalize(
+                jid, success=False, accepted=0, usage=client.usage_summary())
+        except Exception as billing_exc:  # noqa: BLE001
+            print("\n[额度释放失败]\n" + str(billing_exc), flush=True)
+            billing_result = {"status": "finalize_error", "error": str(billing_exc)}
+        _job_set(jid, state="error", phase="error", error=str(exc), billing=billing_result)
+    finally:
+        _dispatch_jobs()
+
+
+def _dispatch_jobs():
+    while job := WORKSPACES.start_next_job(MAX_ACTIVE_JOBS):
+        threading.Thread(target=_run_queued_job, args=(job,), daemon=True).start()
 
 
 def _checked_manuscript(payload, creating=False):
@@ -756,7 +822,8 @@ class Handler(BaseHTTPRequestHandler):
                                               ensure_ascii=False))
         path = urlparse(self.path).path
         if path == "/health":
-            return self._send(200, json.dumps({"ok": True}))
+            code, status = _health_status()
+            return self._send(code, json.dumps(status))
         if path == "/api" or path.startswith("/api/"):
             return self._send(405, json.dumps({"error": "method not allowed"}),
                               headers={"Allow": "GET, POST"})
@@ -769,7 +836,8 @@ class Handler(BaseHTTPRequestHandler):
         parsed_path = urlparse(self.path)
         path = parsed_path.path
         if path == "/health":
-            return self._send(200, json.dumps({"ok": True}))
+            code, status = _health_status()
+            return self._send(code, json.dumps(status))
         if path == "/api/session":
             session = self._read_trial_session()
             headers = None
@@ -958,6 +1026,15 @@ class Handler(BaseHTTPRequestHandler):
             if not order:
                 return self._send(404, json.dumps({"error": "订单不存在"},
                                                   ensure_ascii=False))
+            reconcile = getattr(PAYMENTS, "reconcile_order", None)
+            if order["status"] in {"pending", "expired"} and callable(reconcile):
+                try:
+                    reconcile(account_id, order_id)
+                    order = BILLING.order(account_id, order_id)
+                except BillingError as exc:
+                    # A transient Stripe read failure must not invent a paid
+                    # state or hide the account-owned order from the buyer.
+                    print(f"[Stripe 订单核对待重试] {order_id}: {exc}", flush=True)
             return self._send(200, json.dumps({"order": order}, ensure_ascii=False))
         elif path == "/api/config":
             c = Client()
@@ -1346,8 +1423,7 @@ class Handler(BaseHTTPRequestHandler):
                     "error": "平台改写服务暂不可用，请联系管理员检查服务端模型配置。"
                 }, ensure_ascii=False))
             strength = payload.get("strength") or "conservative"
-            n_by_strength = {"conservative": 1, "balanced": 2, "deep": 3}
-            if strength not in n_by_strength:
+            if strength not in {"conservative", "balanced", "deep"}:
                 return self._send(400, json.dumps({"error": "strength 参数无效"},
                                                   ensure_ascii=False))
             request_id = payload.get("request_id")
@@ -1370,10 +1446,11 @@ class Handler(BaseHTTPRequestHandler):
                         "error": "当前稿尚未保存，请等待保存完成后再启动改写。"
                     }, ensure_ascii=False))
             fingerprint = request_fingerprint(text, strength)
-            jid, claim = _new_job(account_id, request_id, fingerprint, manuscript_id)
+            jid, claim = _new_job(account_id, request_id, fingerprint, manuscript_id,
+                                  {"text": text, "strength": strength, "notices": notices})
             if claim == "busy":
                 return self._send(429, json.dumps({
-                    "error": f"已有 {MAX_ACTIVE_JOBS} 个改写任务在运行，请等待完成后再试。"
+                    "error": "当前排队任务已满，请等待已有任务完成后再提交。"
                 }, ensure_ascii=False))
             if claim == "conflict":
                 return self._send(409, json.dumps({
@@ -1401,44 +1478,7 @@ class Handler(BaseHTTPRequestHandler):
             _job_set(jid, billing=reservation)
             if manuscript_id:
                 WORKSPACES.mark_last_job(account_id, manuscript_id, jid)
-
-            def run_humanizer():
-                try:
-                    _job_set(jid, phase="locating")
-                    result = humanizer_bilingual.humanize(
-                        text, client, n_candidates=n_by_strength[strength],
-                        progress=lambda d, t: _job_set(
-                            jid, done=d, total=t, phase="rewriting"),
-                        auto_english=True,
-                        stage=lambda phase: _job_set(jid, phase=phase))
-                    result["strength"] = strength
-                    result["notices"] = notices
-                    result["model_usage"] = client.usage_summary()
-                    # Save the usable manuscript before settling the charge.
-                    # Recovery can finish billing if the process dies between
-                    # these two durable writes.
-                    _job_set(jid, phase="finalizing", result=result)
-                    billing_result = BILLING.finalize(
-                        jid, success=True, accepted=result.get("n_accepted", 0),
-                        usage=result["model_usage"])
-                    result["billing"] = billing_result
-                    _job_set(jid, state="done", phase="complete",
-                             result=result, billing=billing_result)
-                except Exception as exc:                    # noqa: BLE001
-                    import traceback
-                    print("\n[Humanizer 双语任务失败]\n" + traceback.format_exc(), flush=True)
-                    try:
-                        billing_result = BILLING.finalize(
-                            jid, success=False, accepted=0,
-                            usage=client.usage_summary())
-                    except Exception as billing_exc:         # noqa: BLE001
-                        print("\n[额度释放失败]\n" + str(billing_exc), flush=True)
-                        billing_result = {"status": "finalize_error",
-                                          "error": str(billing_exc)}
-                    _job_set(jid, state="error", phase="error",
-                             error=str(exc), billing=billing_result)
-
-            threading.Thread(target=run_humanizer, daemon=True).start()
+            _dispatch_jobs()
             return self._send(200, json.dumps({
                 "job": jid, "reused": False, "billing": reservation,
             }, ensure_ascii=False))
@@ -1558,6 +1598,15 @@ def _runtime_url(port: int) -> str:
 
 def _recover_interrupted_jobs():
     """Finish saved results, or release credit for work killed mid-generation."""
+    for job in WORKSPACES.unreserved_jobs():
+        # A crash may land between the queued claim and the reservation write.
+        # Never dispatch or indefinitely count such a task against queue slots.
+        try:
+            BILLING.finalize(job["id"], success=False, accepted=0)
+        except BillingError as exc:
+            print(f"[排队任务预占恢复待核对] {job['id']}: {exc}", flush=True)
+        WORKSPACES.update_job(job["id"], state="error", phase="error",
+                              error="服务在任务排队时中断；请重新提交。")
     for job in WORKSPACES.running_jobs():
         owner_pid = job.get("owner_pid")
         if owner_pid and owner_pid != os.getpid():
@@ -1601,6 +1650,7 @@ if __name__ == "__main__":
         print(f"多半是端口被占用。换一个端口试试：python3 web/server.py {port + 1}")
         sys.exit(1)
     _recover_interrupted_jobs()
+    _dispatch_jobs()
     print(f"诊断服务已启动 → {url}", flush=True)
     if ACCOUNTS_MODE:
         print("账号模式：邮箱密码（注册/重置需验证邮箱）"

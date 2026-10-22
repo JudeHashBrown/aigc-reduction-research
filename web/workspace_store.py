@@ -59,6 +59,7 @@ class WorkspaceStore:
                     result_json TEXT,
                     error TEXT,
                     billing_json TEXT,
+                    request_json TEXT,
                     manuscript_id TEXT,
                     owner_pid INTEGER,
                     t0 REAL NOT NULL,
@@ -70,6 +71,8 @@ class WorkspaceStore:
             columns = {row[1] for row in db.execute("PRAGMA table_info(rewrite_jobs)")}
             if "owner_pid" not in columns:
                 db.execute("ALTER TABLE rewrite_jobs ADD COLUMN owner_pid INTEGER")
+            if "request_json" not in columns:
+                db.execute("ALTER TABLE rewrite_jobs ADD COLUMN request_json TEXT")
             # Existing documents predate snapshots. Preserve the recoverable
             # source and current draft without inventing intermediate edits.
             db.execute("""INSERT OR IGNORE INTO manuscript_versions
@@ -184,6 +187,7 @@ class WorkspaceStore:
         value = dict(row)
         value["result"] = json.loads(value.pop("result_json")) if value["result_json"] else None
         value["billing"] = json.loads(value.pop("billing_json")) if value["billing_json"] else None
+        value["request"] = json.loads(value.pop("request_json")) if value["request_json"] else None
         return value
 
     def get_job(self, account_id, job_id):
@@ -193,7 +197,7 @@ class WorkspaceStore:
         return self._job(row)
 
     def claim_job(self, account_id, request_id, request_hash, job_id, max_active,
-                  manuscript_id=None):
+                  manuscript_id=None, request=None):
         now = time.time()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -202,16 +206,36 @@ class WorkspaceStore:
                 job = self._job(existing)
                 return ("reused" if job["account_id"] == account_id
                         and job["request_hash"] == request_hash else "conflict"), job
-            active = db.execute("SELECT count(*) FROM rewrite_jobs WHERE state='running'").fetchone()[0]
-            if active >= max_active:
+            queued = db.execute("SELECT count(*) FROM rewrite_jobs WHERE state='queued'").fetchone()[0]
+            account_pending = db.execute("""SELECT count(*) FROM rewrite_jobs
+                WHERE account_id=? AND state IN ('queued','running')""", (account_id,)).fetchone()[0]
+            if queued >= 20 or account_pending >= 3:
                 return "busy", None
             db.execute("""INSERT INTO rewrite_jobs
                 (id, account_id, request_id, request_hash, state, phase,
-                 manuscript_id, owner_pid, t0, updated_at)
-                VALUES (?, ?, ?, ?, 'running', 'preparing', ?, ?, ?, ?)""",
-                (job_id, account_id, request_id, request_hash, manuscript_id,
-                 os.getpid(), now, now))
+                 request_json, manuscript_id, t0, updated_at)
+                VALUES (?, ?, ?, ?, 'queued', 'queued', ?, ?, ?, ?)""",
+                (job_id, account_id, request_id, request_hash,
+                 _json(request) if request is not None else None,
+                 manuscript_id, now, now))
         return "created", self.get_job(account_id, job_id)
+
+    def start_next_job(self, max_active):
+        """Atomically acquire one billed queued job across server processes."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            active = db.execute("SELECT count(*) FROM rewrite_jobs WHERE state='running'").fetchone()[0]
+            if active >= max_active:
+                return None
+            row = db.execute("""SELECT id FROM rewrite_jobs
+                WHERE state='queued' AND billing_json IS NOT NULL
+                ORDER BY t0, id LIMIT 1""").fetchone()
+            if not row:
+                return None
+            db.execute("""UPDATE rewrite_jobs SET state='running',phase='preparing',
+                owner_pid=?,updated_at=? WHERE id=?""", (os.getpid(), time.time(), row["id"]))
+            job = db.execute("SELECT * FROM rewrite_jobs WHERE id=?", (row["id"],)).fetchone()
+        return self._job(job)
 
     def update_job(self, job_id, **changes):
         columns = {
@@ -223,6 +247,9 @@ class WorkspaceStore:
                 values[key] = value
             elif key in {"result", "billing"}:
                 values[key + "_json"] = _json(value)
+        if changes.get("state") in {"done", "error"}:
+            values["request_json"] = None
+            values["owner_pid"] = None
         if not values:
             return
         values["updated_at"] = time.time()
@@ -233,6 +260,13 @@ class WorkspaceStore:
     def running_jobs(self):
         with self._connect() as db:
             rows = db.execute("SELECT * FROM rewrite_jobs WHERE state='running'").fetchall()
+        return [self._job(row) for row in rows]
+
+    def unreserved_jobs(self):
+        """Queued requests left between durable claim and credit reservation."""
+        with self._connect() as db:
+            rows = db.execute("""SELECT * FROM rewrite_jobs
+                WHERE state='queued' AND billing_json IS NULL""").fetchall()
         return [self._job(row) for row in rows]
 
     def list_jobs(self, account_id):

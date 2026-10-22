@@ -574,9 +574,9 @@ export function AuthPage({ navigate, statePath }) {
       <div className="rtp-auth-brand"><Brand navigate={navigate} /></div>
       <section className="rtp-auth-aside">
         <span className="rtp-kicker"><Scan weight="bold" /> {isEnglish ? 'Academic writing, less AI-like' : '让论文表达更自然'}</span>
-        <h1>{isEnglish ? <>Lower AI scores.<br /><em>Keep your research.</em></> : <>降低 AI 生成率，<br /><em>保留研究本色。</em></>}</h1>
-        <p>{isEnglish ? 'RightThesis moves from structured diagnosis to item-by-item review. Refine mechanical phrasing, terminology drift, and argumentative boundaries to help lower the AI-generation rate reported by common detectors, while preserving facts, citations, and intent.' : 'RightThesis 从结构化诊断到逐项审阅，帮你修改机械表达、术语漂移与论证边界，降低常见检测工具显示的 AI 生成率，同时守住事实、引文与原意。'}</p>
-        <div className="rtp-auth-paper"><span>{isEnglish ? 'THE RIGHTTHESIS METHOD' : 'RIGHTTHESIS / 修改方法'}</span><p><Scan weight="bold" /> {isEnglish ? 'Find passages that may raise AI scores' : '定位可能推高 AI 生成率的段落'}</p><p><PencilSimpleLine weight="bold" /> {isEnglish ? 'Review and revise each issue' : '逐项审阅并修改问题表达'}</p><p><ShieldCheck weight="bold" /> {isEnglish ? 'Keep facts, citations, and intent intact' : '保留事实、引文与原意'}</p></div>
+        <h1>{isEnglish ? <>Refine your writing.<br /><em>Keep your research.</em></> : <>让表达更自然，<br /><em>保留研究本色。</em></>}</h1>
+        <p>{isEnglish ? 'RightThesis moves from structured diagnosis to item-by-item review. Refine mechanical phrasing, terminology drift, and argumentative boundaries while preserving facts, citations, and intent. Third-party AI-detection scores are not measured or guaranteed.' : 'RightThesis 从结构化诊断到逐项审阅，帮你修改机械表达、术语漂移与论证边界，同时守住事实、引文与原意。平台不测量或保证第三方 AI 检测分数。'}</p>
+        <div className="rtp-auth-paper"><span>{isEnglish ? 'THE RIGHTTHESIS METHOD' : 'RIGHTTHESIS / 修改方法'}</span><p><Scan weight="bold" /> {isEnglish ? 'Find mechanical or repetitive passages' : '定位机械或重复的表达'}</p><p><PencilSimpleLine weight="bold" /> {isEnglish ? 'Review and revise each issue' : '逐项审阅并修改问题表达'}</p><p><ShieldCheck weight="bold" /> {isEnglish ? 'Keep facts, citations, and intent intact' : '保留事实、引文与原意'}</p></div>
       </section>
       <main className="rtp-auth-main">
         <div className={`rtp-auth-card ${isVerifyRoute ? 'rtp-verify-card' : ''}`}>

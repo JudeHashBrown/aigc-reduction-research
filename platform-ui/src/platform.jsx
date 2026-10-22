@@ -313,8 +313,11 @@ export function beginGoogleLogin(returnTo = "/app") {
   window.location.assign(`/api/auth/google/start?${query.toString()}`);
 }
 
-export async function logoutSession() {
-  if (workspace.id && saveStatus.state !== "saved") await saveWorkspaceNow();
+export async function logoutSession({ skipSave = false } = {}) {
+  if (!skipSave && workspace.id && saveStatus.state !== "saved") {
+    try { await saveWorkspaceNow(); }
+    catch (error) { error.unsavedDraft = true; throw error; }
+  }
   await postApi("/api/auth/logout", {});
   clearWorkspace(true);
   if (typeof window !== "undefined") {
@@ -338,6 +341,38 @@ export function getUnsavedLocalBackup() {
     const saved = JSON.parse(window.localStorage.getItem(storageKey(activeWorkspaceOwner, workspace.id)) || "null");
     return saved?.owner === activeWorkspaceOwner && saved?.dirty ? saved.current : null;
   } catch { return null; }
+}
+
+export function downloadUnsavedDraftBackup() {
+  if (typeof window === "undefined" || typeof document === "undefined") return false;
+  const owner = activeWorkspaceOwner || workspaceOwnerFor(activeSession);
+  if (!owner) return false;
+  const drafts = [];
+  const prefix = `${WORKSPACE_STORAGE_KEY}:${owner}:`;
+  try {
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key?.startsWith(prefix)) continue;
+      const saved = JSON.parse(window.localStorage.getItem(key) || "null");
+      if (saved?.owner === owner && saved?.dirty) drafts.push(saved);
+    }
+    if (workspace.id && saveStatus.state !== "saved"
+        && !drafts.some((draft) => draft.id === workspace.id)) {
+      drafts.push({ ...workspace, owner, dirty: true });
+    }
+    if (!drafts.length) return false;
+    const blob = new Blob([JSON.stringify({ format: "rightthesis-unsaved-v1", drafts }, null, 2)],
+      { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `rightthesis-unsaved-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    return true;
+  } catch { return false; }
 }
 
 export function getUnsavedDrafts() {

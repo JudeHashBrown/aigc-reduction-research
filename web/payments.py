@@ -216,6 +216,96 @@ class StripePaymentProvider(PaymentProvider):
         return self.store.apply_stripe_checkout_event(
             event.get("id"), payload_hash, session)
 
+    @staticmethod
+    def _reconciliation_event_id(kind: str, object_id: str) -> str:
+        # A stable internal event ID makes a missed webhook and a subsequent
+        # authenticated Stripe fetch safe to process in either order.
+        return "evt_" + hashlib.sha256(f"rightthesis:{kind}:{object_id}".encode()).hexdigest()[:32]
+
+    @staticmethod
+    def _listed_objects(response: object) -> tuple[list, bool]:
+        if hasattr(response, "to_dict"):
+            response = response.to_dict()
+        if not isinstance(response, dict) or not isinstance(response.get("data"), list):
+            raise BillingError("Stripe 对账列表格式无效", 502)
+        return response["data"], response.get("has_more") is True
+
+    def reconcile_order(self, account_id: str, order_id: str,
+                        *, audit_refunds: bool = False) -> Dict:
+        """Repair missed Checkout webhooks using Stripe's live object API.
+
+        This method only accepts an account-owned order ID. It never trusts a
+        browser-supplied session, amount, or payment state.
+        """
+        order = self.store.stripe_order_for_reconciliation(account_id, order_id)
+        if not order:
+            raise BillingError("订单不存在", 404)
+        if not self.configured or not self.live or not order["stripe_livemode"]:
+            return {"status": "not_live"}
+        session_id = order["provider_order_id"]
+        if order["status"] in {"pending", "expired"} and session_id:
+            session = self._retrieve_live_object("session", session_id)
+            if session.get("payment_status") == "paid":
+                intent = session.get("payment_intent")
+                if isinstance(intent, str) and intent.startswith("pi_"):
+                    # Record refunds before the grant. If the refund webhook
+                    # was missed, the grant is reduced in the same transaction.
+                    self.reconcile_refunds(intent)
+                digest = hashlib.sha256(json.dumps(
+                    session, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                self.store.apply_stripe_checkout_event(
+                    self._reconciliation_event_id("session", session_id), digest, session)
+        if audit_refunds:
+            updated = self.store.stripe_order_for_reconciliation(account_id, order_id)
+            payment_intent = updated["payment_intent_id"] if updated else None
+            if payment_intent:
+                self.reconcile_refunds(payment_intent)
+        return {"status": "checked"}
+
+    def reconcile_refunds(self, payment_intent_id: str) -> None:
+        if not re.fullmatch(r"pi_[A-Za-z0-9]+", payment_intent_id):
+            raise BillingError("Stripe PaymentIntent 无效", 400)
+        client = self.stripe.StripeClient(self.secret_key)
+        last_id = None
+        for _ in range(100):
+            params = {"payment_intent": payment_intent_id, "limit": 100}
+            if last_id:
+                params["starting_after"] = last_id
+            try:
+                response = client.v1.refunds.list(params=params)
+            except Exception as exc:
+                raise BillingError("Stripe 退款对账暂不可用", 502) from exc
+            refunds, has_more = self._listed_objects(response)
+            if has_more and not refunds:
+                raise BillingError("Stripe 退款分页结果无效", 502)
+            for item in refunds:
+                refund_id = item.get("id") if isinstance(item, dict) else None
+                refund = self._retrieve_live_object("refund", refund_id)
+                if refund.get("payment_intent") != payment_intent_id:
+                    raise BillingError("Stripe 退款与订单不匹配", 409)
+                digest = hashlib.sha256(json.dumps(
+                    refund, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+                self.store.apply_stripe_succeeded_refund(
+                    self._reconciliation_event_id("refund", refund_id), digest, refund)
+            if not has_more:
+                return
+            last_id = refunds[-1]["id"]
+        raise BillingError("Stripe 退款分页超出安全上限，需人工核对", 502)
+
+    def unresolved_disputes(self, payment_intent_id: str) -> list[str]:
+        if not re.fullmatch(r"pi_[A-Za-z0-9]+", payment_intent_id):
+            raise BillingError("Stripe PaymentIntent 无效", 400)
+        try:
+            response = self.stripe.StripeClient(self.secret_key).v1.disputes.list(
+                params={"payment_intent": payment_intent_id, "limit": 100})
+        except Exception as exc:
+            raise BillingError("Stripe 争议对账暂不可用", 502) from exc
+        disputes, has_more = self._listed_objects(response)
+        if has_more:
+            raise BillingError("Stripe 争议超过单页上限，需人工核对", 502)
+        return [item["id"] for item in disputes if isinstance(item, dict)
+                and item.get("status") not in {"won", "warning_closed"}]
+
     def _retrieve_live_event(self, signed_event: Dict) -> Dict:
         event_id = signed_event.get("id")
         signed_object = signed_event.get("data", {}).get("object")

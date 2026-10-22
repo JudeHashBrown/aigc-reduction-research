@@ -271,7 +271,7 @@ export function LandingPage({ navigate }) {
           <div className="rtp-hero-copy">
             <span className="rtp-kicker"><Sparkle weight="fill" /> {isEnglish ? 'Bilingual academic writing workspace' : '中英文学术写作工作台'}</span>
             <h1>{isEnglish ? <>Keep your research.<br /><em>Rewrite the expression.</em></> : <>保留你的研究，<br /><em>重写表达方式。</em></>}</h1>
-            <p>{isEnglish ? 'From structured diagnosis to item-by-item review, RightThesis refines mechanical phrasing, terminology drift, and argumentative boundaries—helping lower the AI-generation rate reported by common detectors and improve the chance of passing AI-generation checks while preserving facts, citations, and intent.' : '从结构化诊断到逐项审阅，RightThesis 帮你修改论文中的机械表达、术语漂移与论证边界，降低常见检测工具显示的 AI 生成率，提高通过 AI 生成检测的可能性，同时牢牢守住事实、引文与原意。'}</p>
+            <p>{isEnglish ? 'From structured diagnosis to item-by-item review, RightThesis helps refine mechanical phrasing, terminology drift, and argumentative boundaries while preserving facts, citations, and intent. External AI-detection scores are not measured or guaranteed by this service.' : '从结构化诊断到逐项审阅，RightThesis 帮你修改论文中的机械表达、术语漂移与论证边界，同时保留事实、引文与原意。平台不测量或保证第三方 AI 检测分数。'}</p>
             <div className="rtp-hero-actions">
               <button className="rtp-btn rtp-btn-blue rtp-btn-lg" onClick={go(navigate, '/auth')}>{isEnglish ? 'Analyze one for free' : '免费分析一篇'} <ArrowRight weight="bold" /></button>
               <button className="rtp-btn rtp-btn-paper rtp-btn-lg" onClick={() => document.getElementById('demo')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{isEnglish ? 'See how it works' : '看看怎么改'}</button>
@@ -309,7 +309,7 @@ export function LandingPage({ navigate }) {
           <div className="rtp-steps">
             {[
               [UploadSimple, '01', isEnglish ? 'Import your draft' : '导入稿件', isEnglish ? 'Paste text or upload a DOCX / PDF. Chapter and paragraph structure stays clear.' : '粘贴文本，或上传 DOCX / PDF。章节与段落结构保持清晰。'],
-              [Scan, '02', isEnglish ? 'Diagnose issues' : '分析问题', isEnglish ? 'Flag mechanical phrasing, terminology drift, argumentative boundaries, and suspicious citation positions that may raise the reported AI-generation rate.' : '识别可能推高 AI 生成率的机械表达、术语漂移、论证边界与可疑引用位置。'],
+              [Scan, '02', isEnglish ? 'Diagnose issues' : '分析问题', isEnglish ? 'Flag reviewable mechanical phrasing, terminology drift, argumentative boundaries, and suspicious citation positions.' : '识别可核查的机械表达、术语漂移、论证边界与可疑引用位置。'],
               [PencilSimpleLine, '03', isEnglish ? 'Rewrite faithfully' : '保真改写', isEnglish ? 'Choose a conservative, balanced, or deep strategy while guards protect facts and key terms.' : '选择保守、平衡或深度策略；事实与关键术语受守卫保护。'],
               [Export, '04', isEnglish ? 'Review & export' : '审阅导出', isEnglish ? 'Review each diagnosed issue, compare the original and current drafts, then export an imported DOCX.' : '逐项复核诊断问题，对照原稿与当前稿，再导出已导入的 DOCX。'],
             ].map(([Icon, no, title, copy]) => (
@@ -329,7 +329,7 @@ export function LandingPage({ navigate }) {
           </article>
           <article className="rtp-value-card rtp-value-yellow">
             <span>{isEnglish ? 'BOUNDED' : '有边界'}</span><h3>{isEnglish ? <>Facts, numbers, citations:<br />protected by default.</> : <>事实、数字、引文，<br />默认不乱动。</>}</h3>
-            <p>{isEnglish ? 'The goal is to reduce AI-detection risk, not decide authorship for you. The system presents only verifiable language and structural signals.' : '目标是降低 AI 生成检测风险，而不是替用户判定来源。系统只呈现可核查的语言与结构信号。'}</p>
+            <p>{isEnglish ? 'The goal is to help you review and refine your writing, not decide authorship for you. The system presents reviewable language and structural signals.' : '目标是帮助你审阅和改善表达，而不是替用户判定文本来源。系统呈现可核查的语言与结构信号。'}</p>
             <ShieldCheck size={92} weight="duotone" />
           </article>
           <article className="rtp-value-card rtp-value-paper">
@@ -598,10 +598,10 @@ export function TermsPage({ navigate }) {
 }
 
 const helpItems = [
-  { category: '开始使用', categoryEn: 'Getting started', q: '支持哪些文件和语言？', qEn: 'Which files and languages are supported?', a: '可粘贴文本，或上传 TXT / DOCX / PDF；中文和英文均可诊断，并在守卫允许的范围内改写。纯图片扫描版 PDF 暂不支持，请先运行 OCR。', aEn: 'Paste text or upload TXT, DOCX, or PDF. Chinese and English can both be diagnosed and rewritten where the safeguards allow it. Image-only scanned PDFs are not supported; run OCR first.' },
+  { category: '开始使用', categoryEn: 'Getting started', q: '支持哪些文件和语言？', qEn: 'Which files and languages are supported?', a: '可粘贴文本，或上传 TXT / DOCX / PDF；中文和英文均可诊断，并在守卫允许的范围内改写。纯图片扫描版 PDF 可尝试本机 OCR（每份最多 20 页），但公式、表格、专名和引文仍需人工核对。', aEn: 'Paste text or upload TXT, DOCX, or PDF. Chinese and English can be diagnosed and rewritten where safeguards allow. Image-only scanned PDFs can use on-server OCR for up to 20 pages; check formulas, tables, names, and citations carefully.' },
   { category: '开始使用', categoryEn: 'Getting started', q: '分析和改写有什么区别？', qEn: 'What is the difference between analysis and rewriting?', a: '分析用于定位表达、术语和论证边界问题；改写会生成修改候选并消耗相应额度。你可以只分析，不进行改写。', aEn: 'Analysis locates issues in expression, terminology, and argumentative boundaries. Rewriting creates revision candidates and uses the corresponding credits. You can run an analysis without rewriting.' },
   { category: '修改与审阅', categoryEn: 'Revision & review', q: '系统会改变我的事实或引用吗？', qEn: 'Will the system change my facts or citations?', a: '保真守卫会优先保护数字、专有名词、引用位置和关键事实。任何自动系统都不能替代作者复核，因此高风险项目会明确标记为“需审阅”。', aEn: 'Faithfulness guards prioritize numbers, proper nouns, citation positions, and key facts. No automated system can replace author review, so high-risk items are clearly marked “Needs review.”' },
-  { category: '修改与审阅', categoryEn: 'Revision & review', q: '能保证通过 AI 生成检测吗？', qEn: 'Can you guarantee that my paper will pass AI-generation checks?', a: '不能保证固定分数或必然通过。RightThesis 的目标是降低常见检测工具显示的 AI 生成率、提高通过检测的可能性；结果会随检测工具、版本、语言与学科而变化。', aEn: 'No fixed score or guaranteed pass is possible. RightThesis aims to lower the AI-generation rate reported by common detectors and improve the likelihood of passing, but results vary by detector, version, language, and discipline.' },
+  { category: '修改与审阅', categoryEn: 'Revision & review', q: '能保证通过 AI 生成检测吗？', qEn: 'Can you guarantee that my paper will pass AI-generation checks?', a: '不能。RightThesis 提供站内语言与结构诊断，不运行第三方 AI 检测，也不预测或保证其分数与审核结果。', aEn: 'No. RightThesis provides in-app language and structure review. It does not run third-party AI detectors or predict or guarantee their scores or review outcomes.' },
   { category: '额度与套餐', categoryEn: 'Credits & plans', q: '月卡和字数包能同时用吗？', qEn: 'Can I use a pass and a character pack together?', a: '可以。两类额度可以同时持有，系统会优先使用更早到期的额度，并在每次任务开始前展示预计消耗。', aEn: 'Yes. You can hold both credit types at once. Credits that expire sooner are used first, and estimated usage appears before every task begins.' },
   { category: '额度与套餐', categoryEn: 'Credits & plans', q: '任务失败还会扣额度吗？', qEn: 'Do failed tasks use credits?', a: '不会。任务创建时会预占额度；失败或没有候选被采纳时会释放。每次确认前的额度预览与额度账本是当前规则的核对依据。', aEn: 'No. Credits are reserved when a task is created, then released if it fails or no candidate is accepted. The pre-confirmation usage preview and credit ledger are the current sources of truth.' },
   { category: '账户与安全', categoryEn: 'Account & security', q: '需要我配置模型服务吗？', qEn: 'Do I need to configure a model service?', a: '不需要。模型服务由 RightThesis 统一配置和维护，你只需要选择适合稿件的改写策略。', aEn: 'No. RightThesis configures and maintains the model service. You only need to choose the rewriting strategy that suits your draft.' },

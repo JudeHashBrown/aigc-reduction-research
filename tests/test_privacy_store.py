@@ -85,7 +85,31 @@ def test_paid_entitlements_block_deletion():
         assert auth.authenticate_session(session["token"])
 
 
+def test_queued_task_blocks_deletion():
+    with tempfile.TemporaryDirectory() as folder:
+        database = Path(folder) / "app.sqlite3"
+        BillingStore(database)
+        workspace = WorkspaceStore(database)
+        auth = AuthStore(database, b"test-secret-more-than-thirty-two-bytes")
+        privacy = PrivacyStore(database)
+        session = auth.rotate_authenticated(
+            auth.create_pre_auth()["token"], provider="google", subject="queued-user",
+            email="queued@example.com")
+        account = session["account_id"]
+        jid = "job_" + "a" * 24
+        workspace.claim_job(account, "queued-request", "queued-hash", jid, 2,
+                            request={"text": "draft", "strength": "conservative"})
+        requested = privacy.request_deletion(account, "queued@example.com")
+        try:
+            privacy.complete_deletion(requested["id"])
+        except PrivacyError as exc:
+            assert exc.status == 409
+        else:
+            raise AssertionError("queued task must block account deletion")
+
+
 if __name__ == "__main__":
     test_export_and_safe_deletion()
     test_paid_entitlements_block_deletion()
+    test_queued_task_blocks_deletion()
     print("✓ 账户数据导出、删除申请、取消及权益保护")

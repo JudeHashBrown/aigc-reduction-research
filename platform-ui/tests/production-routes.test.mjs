@@ -7,6 +7,7 @@ const app = readFileSync(fileURLToPath(new URL("../src/App.jsx", import.meta.url
 const core = readFileSync(fileURLToPath(new URL("../src/pages/LiveCorePages.jsx", import.meta.url)), "utf8");
 const operations = readFileSync(fileURLToPath(new URL("../src/pages/OperationsPages.jsx", import.meta.url)), "utf8");
 const publicPages = readFileSync(fileURLToPath(new URL("../src/pages/PublicPages.jsx", import.meta.url)), "utf8");
+const auth = readFileSync(fileURLToPath(new URL("../src/pages/AuthPage.jsx", import.meta.url)), "utf8");
 
 test("production navigation has no prototype sitemap or demo system routes", () => {
   assert.doesNotMatch(app, /PageMap|pageGroups|SITE MAP|local MVP|rt-map-fab/);
@@ -33,4 +34,11 @@ test("public legal and help copy does not describe the product as a test build",
   assert.match(publicPages, /在账号设置下载账户数据/);
   assert.match(publicPages, /support@righttoken\.ai/);
   assert.doesNotMatch(core, /这台本地服务器|this local server/);
+});
+
+test("public and sign-in copy does not promise unmeasured AI-detector outcomes", () => {
+  for (const page of [publicPages, auth]) {
+    assert.doesNotMatch(page, /降低常见检测工具显示的 AI 生成率|降低 AI 生成率|Lower AI scores|lower the AI-generation rate reported by common detectors|提高通过 AI 生成检测的可能性/);
+  }
+  assert.match(auth, /平台不测量或保证第三方 AI 检测分数/);
 });

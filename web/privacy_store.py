@@ -154,7 +154,7 @@ class PrivacyStore:
                 raise PrivacyError("没有待处理的删除请求。", 404)
             account_id = request["account_id"]
             running = db.execute(
-                "SELECT COUNT(*) FROM rewrite_jobs WHERE account_id=? AND state='running'",
+                "SELECT COUNT(*) FROM rewrite_jobs WHERE account_id=? AND state IN ('queued','running')",
                 (account_id,),
             ).fetchone()[0]
             pending = db.execute(

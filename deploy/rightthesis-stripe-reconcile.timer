@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly RightThesis Stripe payment reconciliation
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=600
+Persistent=true
+Unit=rightthesis-stripe-reconcile.service
+
+[Install]
+WantedBy=timers.target

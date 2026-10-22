@@ -73,6 +73,42 @@ def test_stripe_order_and_webhook_idempotency():
         assert grants[0]["expires_at"] == now[0] + 30 * 86400
 
 
+def test_live_reconciliation_repairs_missed_webhooks_without_double_grants():
+    with tempfile.TemporaryDirectory() as folder:
+        store = BillingStore(Path(folder) / "billing.sqlite3")
+        order = store.prepare_stripe_checkout("buyer", "pack_3k", "checkout_reconcile", livemode=True)
+        store.attach_stripe_checkout(order["id"], "cs_live_reconcile",
+                                     "https://checkout.stripe.com/c/pay/reconcile", int(time.time()) + 3600)
+        session = {"id": "cs_live_reconcile", "object": "checkout.session", "livemode": True,
+                   "client_reference_id": order["id"],
+                   "metadata": {"order_id": order["id"], "account_id": "buyer", "product_id": "pack_3k"},
+                   "mode": "payment", "currency": "cny", "amount_total": 990,
+                   "payment_status": "paid", "payment_intent": "pi_reconcile"}
+        refund = {"id": "re_reconcile", "object": "refund", "payment_intent": "pi_reconcile",
+                  "amount": 990, "currency": "cny", "status": "succeeded"}
+        observed = {"refunds": [refund]}
+        fake = SimpleNamespace(StripeClient=lambda _key: SimpleNamespace(v1=SimpleNamespace(
+            checkout=SimpleNamespace(sessions=SimpleNamespace(retrieve=lambda _id: session)),
+            refunds=SimpleNamespace(retrieve=lambda _id: refund,
+                                    list=lambda **_kw: {"data": observed["refunds"], "has_more": False}),
+            disputes=SimpleNamespace(list=lambda **_kw: (_ for _ in ()).throw(
+                AssertionError("payment reconciliation must not depend on dispute-read permission"))))))
+        with patch.dict(os.environ, {"STRIPE_SECRET_KEY": "sk_live_fake",
+                                  "STRIPE_WEBHOOK_SECRET": "whsec_fake", "STRIPE_LIVE_ENABLED": "1",
+                                  "PUBLIC_ORIGIN": "https://rightthesis.com"}):
+            provider = StripePaymentProvider(store)
+            provider.stripe = fake
+            provider.configured = True
+            expect_error(lambda: provider.reconcile_order("another", order["id"]), 404)
+            provider.reconcile_order("buyer", order["id"], audit_refunds=True)
+            assert store.order("buyer", order["id"])["status"] == "refunded"
+            assert store.summary("buyer")["balance"] == 800
+            provider.reconcile_order("buyer", order["id"], audit_refunds=True)
+            assert len([entry for entry in store.ledger("buyer")
+                        if entry["kind"] == "grant" and entry["reference"] == "order:" + order["id"]]) == 1
+            assert len([entry for entry in store.ledger("buyer") if entry["kind"] == "refund"]) == 1
+
+
 def test_provider_modes_and_checkout_options():
     with tempfile.TemporaryDirectory() as folder:
         store = BillingStore(Path(folder) / "billing.sqlite3")
@@ -496,6 +532,7 @@ def test_http_webhook_without_browser_cookie_when_sdk_installed():
 
 if __name__ == "__main__":
     test_stripe_order_and_webhook_idempotency()
+    test_live_reconciliation_repairs_missed_webhooks_without_double_grants()
     test_provider_modes_and_checkout_options()
     test_live_mode_requires_opt_in_https_and_matching_webhook()
     test_full_refund_revokes_unused_credits_and_handles_event_order()

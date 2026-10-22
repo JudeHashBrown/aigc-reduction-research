@@ -60,6 +60,7 @@ const strategies = [
 ];
 
 const REWRITE_STEPS = [
+  { key: "queued", zh: "安全排队", en: "Queued" },
   { key: "locating", zh: "定位可改段落", en: "Locate target passages" },
   { key: "rewriting", zh: "生成改写候选", en: "Generate alternatives" },
   { key: "checking", zh: "核验事实与引文", en: "Check facts and citations" },
@@ -74,6 +75,7 @@ function rewriteProgressState(progress, isEnglish) {
     : phase === "preparing" ? "locating" : phase;
   const activeIndex = Math.max(0, REWRITE_STEPS.findIndex((item) => item.key === step));
   const title = {
+    queued: isEnglish ? "Queued safely; the rewrite will start when capacity is available" : "任务已安全排队，将在有处理名额时自动开始",
     locating: isEnglish ? "Reading the manuscript and locating editable passages" : "正在梳理文稿，定位可改写段落",
     rewriting: isEnglish ? "Generating and verifying paragraph-level rewrites" : "正在逐段生成并筛选改写候选",
     checking: isEnglish ? "Checking facts, citations, and argument boundaries" : "正在核对事实、引文与论证边界",
@@ -484,10 +486,10 @@ export function WorkbenchPage({ navigate = () => {} }) {
     const reconnect = async () => {
       try {
         let job = await getApi(`/api/job/${encodeURIComponent(jobId)}`);
-        if (job.state === "running") {
+        if (job.state === "running" || job.state === "queued") {
           setBusy("rewrite");
           setMessage(isEnglish ? "Reconnected to the saved rewrite task." : "已重新连接到保存的改写任务。 ");
-          while (!cancelled && job.state === "running") {
+          while (!cancelled && (job.state === "running" || job.state === "queued")) {
             setJobProgress({ done: Number(job.done || 0), total: Number(job.total || 0), phase: job.phase || "rewriting" });
             await pollDelay(1200);
             job = await getApi(`/api/job/${encodeURIComponent(jobId)}`);
@@ -607,12 +609,12 @@ export function WorkbenchPage({ navigate = () => {} }) {
       if (!jobId) throw new Error(isEnglish ? "The service did not return a job ID." : "服务未返回任务编号。" );
       getWorkspace().last_job_id = jobId;
       let failures = 0;
-      const pollingDeadline = Date.now() + 30 * 60 * 1000;
+      const pollingDeadline = Date.now() + 2 * 60 * 60 * 1000;
       for (;;) {
         if (Date.now() > pollingDeadline) {
           throw new Error(isEnglish
-            ? "This rewrite is taking longer than 30 minutes. The server job may still be running; check the credit ledger before retrying."
-            : "本次改写已超过 30 分钟，服务端任务可能仍在运行；重试前请先核对额度账本。");
+            ? "This rewrite is taking longer than two hours. The queued or running server job may still continue; check the task list and credit ledger before retrying."
+            : "本次改写已超过两小时，服务端排队或运行中的任务可能仍会继续；重试前请先核对任务和额度账本。");
         }
         await pollDelay(850);
         let job;
@@ -808,7 +810,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
       </section>}
 
       <section className="rt-action-dock rt-live-action-dock">
-        {!withinJobLimit && <div className="rt-live-limit-note"><WarningCircle weight="fill" />{isEnglish ? `This draft exceeds the ${Number(billing?.max_chars_per_job || 0).toLocaleString()}-character limit for the current entitlement. Split it before rewriting.` : `当前稿件超过本权益 ${Number(billing?.max_chars_per_job || 0).toLocaleString()} 字单任务上限，请拆分后改写。`}</div>}
+        {!withinJobLimit && <div className="rt-live-limit-note"><WarningCircle weight="fill" />{isEnglish ? `This draft exceeds your current ${Number(billing?.max_chars_per_job || 0).toLocaleString()}-character per-task limit. The 60,000-character pass supports longer manuscripts; above that, split by chapter.` : `当前稿件超过本权益 ${Number(billing?.max_chars_per_job || 0).toLocaleString()} 字单任务上限。高频月卡支持最高 60,000 字；超过该长度仍需按章节拆分。`}</div>}
         {!hasEnoughBalance && <div className="rt-live-limit-note"><WarningCircle weight="fill" />{isEnglish ? `This strategy needs about ${estimated.toLocaleString()} characters, but the current balance is ${Number(billing?.balance || 0).toLocaleString()}.` : `当前策略预计需要 ${estimated.toLocaleString()} 字额度，可用余额为 ${Number(billing?.balance || 0).toLocaleString()} 字。`}</div>}
         {report && findings.length > 0 && !hasRewriteTarget && <div className="rt-live-limit-note"><WarningCircle weight="fill" />{isEnglish ? "No passage can be safely sent to automatic rewriting; the remaining signals are ambiguous enumerations or deterministic cleanup." : "当前没有可安全提交自动改写的段落；剩余线索可能是高误报枚举句式或可直接安全清理的表达。"}</div>}
         <button className="rt-button" onClick={analyze} disabled={Boolean(busy)}>{busy === "analyze" ? <CircleNotch className="rt-spin" /> : <Sparkle weight="bold" />}{isEnglish ? "Analyze current text" : "分析当前正文"}</button>

@@ -15,7 +15,9 @@ python3 scripts/backup_database.py backup --database /home/admin/rightthesis/dat
 
 `deploy/rightthesis-oss-upload.service` 和 `.timer` 将在每天 02:50 上传 6 小时内的最新加密备份到香港私有 Bucket `rightthesis-backup-jude-2026` 的 `rightthesis-backups/` 前缀。上传前再次解密校验，不上传原始 SQLite 或 `backup.key`。与主服务器同在香港地域不构成跨地域容灾；务必把解密密钥另存于安全地点，并定期进行下载及还原演练。
 
-2026-10-20 02:35 的首次自动备份与 02:50 的自动 OSS 上传均成功。上传成功后程序会在本地备份目录写 `oss-upload-receipt.json`，每日 03:05 的 `rightthesis-backup-health.timer` 核验新近备份、回执名称与 SHA-256；备份、上传或健康检查失败时由 `rightthesis-backup-alert@.service` 使用现有 SMTP 给 `ADMIN_EMAILS` 发邮件。部署或改动后应手动测试一次告警邮件；邮箱本身故障时告警会失败，仍须定期查看 systemd 日志。用户已选择**暂不跨地域、暂不自动删除旧备份**；应关注 OSS 存储费用，并在制定删除申请与恢复窗口后再配置生命周期规则，切勿自行清理历史档案。
+2026-10-20 02:35 的首次自动备份与 02:50 的自动 OSS 上传均成功。上传成功后程序会在本地备份目录写 `oss-upload-receipt.json`，每日 03:05 的 `rightthesis-backup-health.timer` 核验新近备份、回执名称、SHA-256，并用独立密钥把最新本地加密档案恢复到临时目录、执行 SQLite 完整性检查；它不会触碰在线数据库。备份、上传或健康检查失败时由 `rightthesis-backup-alert@.service` 使用现有 SMTP 给 `ADMIN_EMAILS` 发邮件。部署或改动后应手动测试一次告警邮件；邮箱本身故障时告警会失败，仍须定期查看 systemd 日志。上传凭据只有写权限，这项日常检查**不能证明 OSS 对象可下载**；仍需按下方说明定期用独立身份做 OSS 下载及还原演练。用户已选择**暂不跨地域、暂不自动删除旧备份**；应关注 OSS 存储费用，并在制定删除申请与恢复窗口后再配置生命周期规则，切勿自行清理历史档案。
+
+`GET /health` 和 `HEAD /health` 会检查 SQLite 可读且核心表存在；公网账户模式下还检查模型和已选 Stripe 通道是否已配置。异常返回 503。它是在线服务就绪检查，不向 Stripe、邮件或模型服务发起实时外部请求，因此不能代替独立支付对账与备份恢复告警。
 
 在阿里云 RAM 中创建仅供程序使用的用户 `rightthesis-backup-uploader`，不要授予控制台登录或 `AliyunOSSFullAccess`。创建自定义权限策略并只授予该用户：
 
@@ -48,7 +50,7 @@ python3 scripts/backup_database.py restore --archive /path/to/archive.rtbk --des
 
 ## 支付与对账
 
-以 `GET /api/config` 的 `payment.live` 和 `payment.checkout_enabled` 判断当前环境是否开放正式收银台。真实付款与额度发放只接受已验签且从 Stripe 实时读取核对的事件。退款应在 Stripe 中操作；本地按成功退款累计金额调整未用额度。管理员只读页 `/admin/orders` 展示最近 100 笔订单、平台累计退款和已收到的 Stripe 回调累计退款；“本地一致”**不能发现未送达的 Stripe 事件**，仍需定期在 Stripe 后台核对。如出现“需复核”，先检查事件交付与服务日志，**不要直接修改 SQLite 额度**。银行卡争议目前仍需在 Stripe 后台人工处理。
+以 `GET /api/config` 的 `payment.live` 和 `payment.checkout_enabled` 判断当前环境是否开放正式收银台。真实付款与额度发放只接受已验签且从 Stripe 实时读取核对的事件，或由服务端使用正式密钥直接向 Stripe 读取核对的对象。用户查询待付款订单时会尝试恢复漏送的成功回调；每小时的 `rightthesis-stripe-reconcile.timer` 独立核对全部正式待处理与已付订单、补记漏送成功退款。当前生产受限密钥没有 Disputes 读取权限，service 显式使用 `--skip-disputes`；因此**争议暂不自动告警**，运营人员必须在 Stripe 后台关注争议。待为该密钥增加 Disputes 读取权限、`python3 scripts/stripe_live_preflight.py` 全部通过后，移除 service 的 `--skip-disputes` 并重载、重启 timer。届时未解决争议会触发管理员告警邮件；证据提交和最终处置仍需人工在 Stripe 后台处理。退款仍应在 Stripe 中操作。管理员只读页 `/admin/orders` 展示最近 100 笔订单、平台累计退款和已收到的 Stripe 回调累计退款；如出现“需复核”，先检查事件交付、定时对账与服务日志，**不要直接修改 SQLite 额度**。
 
 正式环境的管理员邮箱通过服务器私有 `ADMIN_EMAILS` 配置，多个邮箱以逗号分隔；未配置时全局订单和隐私申请 API 均拒绝访问。此配置不授予任何退款或修改额度的接口权限。
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=Email operator after a RightThesis backup unit failure (%i)
+Description=Email operator after a RightThesis operations unit failure (%i)
 
 [Service]
 Type=oneshot

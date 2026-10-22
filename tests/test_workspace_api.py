@@ -100,10 +100,14 @@ class WorkspaceApiTests(unittest.TestCase):
         interrupted_id = "job_" + "c" * 24
         jobs.claim_job(account, "request_done", "hash-done", completed_id, 2)
         billing.reserve(account, completed_id, "原稿", "conservative")
+        jobs.update_job(completed_id, billing={"status": "reserved"})
+        jobs.start_next_job(2)
         jobs.update_job(completed_id, result={"text": "修改稿", "n_accepted": 1},
                         phase="finalizing")
         jobs.claim_job(account, "request_lost", "hash-lost", interrupted_id, 2)
         billing.reserve(account, interrupted_id, "待修改", "conservative")
+        jobs.update_job(interrupted_id, billing={"status": "reserved"})
+        jobs.start_next_job(2)
         # Pretend the process that owned these claims died before restart.
         with sqlite3.connect(db_path) as db:
             db.execute("UPDATE rewrite_jobs SET owner_pid=? WHERE id IN (?, ?)",

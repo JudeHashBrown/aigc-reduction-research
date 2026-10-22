@@ -1,6 +1,7 @@
 """服务端接口测试：确保任何输入都返回合法 JSON，不挂、不 500。"""
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -260,6 +261,17 @@ finally:
             FAILS.append(f"零宽字符仍让规则失效，命中 {ids}（必须先归一化再诊断）")
         if not any(n["level"] == "warn" for n in body.get("notices", [])):
             FAILS.append("清除了隐藏字符却没有告知用户")
+
+    # Health must fail closed when the durable core schema disappears. This
+    # mutates only this test's disposable SQLite file, after all other cases.
+    with sqlite3.connect(server_env["BILLING_DB"]) as db:
+        db.execute("DROP TABLE manuscripts")
+    try:
+        op.open(f"http://127.0.0.1:{PORT}/health", timeout=8)
+        FAILS.append("核心数据表缺失时 /health 仍返回成功")
+    except urllib.error.HTTPError as exc:
+        if exc.code != 503:
+            FAILS.append(f"核心数据表缺失时 /health 返回 {exc.code} 而不是 503")
 
     proc.terminate()
     time.sleep(0.4)

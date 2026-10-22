@@ -83,7 +83,15 @@ def test_upload_only_verified_encrypted_archive() -> None:
                 "rightthesis-backups/" + archive.name
             )
             record_success(archive_dir, archive, "rightthesis-backups/" + archive.name)
-            assert check(archive_dir)["archive"] == archive.name
+            assert check(archive_dir, key_file=key)["archive"] == archive.name
+            wrong_key = root / "wrong.key"
+            init_key(wrong_key)
+            try:
+                check(archive_dir, key_file=wrong_key)
+            except Exception:
+                pass
+            else:
+                raise AssertionError("restore drill accepted the wrong backup key")
             assert calls == [("rightthesis-backups/" + archive.name, str(archive))]
             tampered = archive_dir / "rightthesis-tampered.rtbk"
             data = bytearray(archive.read_bytes())

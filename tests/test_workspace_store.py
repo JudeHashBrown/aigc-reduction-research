@@ -60,6 +60,35 @@ class WorkspaceStoreTests(unittest.TestCase):
         self.assertEqual(restarted.claim_job("a", "request_123", "hash", jid, 2)[0], "reused")
         self.assertEqual(restarted.claim_job("a", "request_123", "other", jid, 2)[0], "conflict")
 
+    def test_queued_jobs_survive_restart_and_run_in_order(self):
+        first = "job_" + "1" * 24
+        second = "job_" + "2" * 24
+        for jid in (first, second):
+            status, job = self.store.claim_job(
+                "a", jid, "hash-" + jid, jid, 1,
+                request={"text": "正文", "strength": "conservative"})
+            self.assertEqual(status, "created")
+            self.assertEqual(job["state"], "queued")
+            self.store.update_job(jid, billing={"status": "reserved"})
+        restarted = WorkspaceStore(self.path)
+        running = restarted.start_next_job(1)
+        self.assertEqual(running["id"], first)
+        self.assertEqual(running["request"]["text"], "正文")
+        self.assertIsNone(restarted.start_next_job(1))
+        restarted.update_job(first, state="done")
+        self.assertEqual(restarted.start_next_job(1)["id"], second)
+
+    def test_unreserved_queued_claim_can_be_recovered_after_crash(self):
+        jid = "job_" + "3" * 24
+        self.store.claim_job("a", "request_unreserved", "hash", jid, 2,
+                             request={"text": "正文", "strength": "conservative"})
+        restarted = WorkspaceStore(self.path)
+        self.assertEqual([job["id"] for job in restarted.unreserved_jobs()], [jid])
+        self.assertIsNone(restarted.start_next_job(2))
+        restarted.update_job(jid, state="error", phase="error")
+        self.assertEqual(restarted.unreserved_jobs(), [])
+        self.assertIsNone(restarted.get_job("a", jid)["request"])
+
 
 if __name__ == "__main__":
     unittest.main()

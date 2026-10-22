@@ -48,7 +48,7 @@ import {
 } from "@phosphor-icons/react";
 import { useLocale } from "../locale.jsx";
 import { localizedPlanDescription, localizedPlanName } from "../plan-copy.js";
-import { ensureSession, getApi, postApi, logoutSession, usePlatform } from "../platform.jsx";
+import { downloadUnsavedDraftBackup, ensureSession, getApi, postApi, logoutSession, usePlatform } from "../platform.jsx";
 import "./operations-pages.css";
 
 const OPS_EN = {
@@ -1657,6 +1657,7 @@ export function CheckoutPage({ navigate }) {
   const [busy, setBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState("");
   const [returnedOrder, setReturnedOrder] = useState(null);
+  const [refreshingOrder, setRefreshingOrder] = useState(false);
   const selected = paidCatalog.find((plan) => plan.id === selectedId) || paidCatalog[0];
   const payment = billing?.payment || config?.payment || {};
   const signedIn = session?.authMode === "accounts" && session?.authenticated && session?.kind !== "guest";
@@ -1686,6 +1687,23 @@ export function CheckoutPage({ navigate }) {
     void check();
     return () => { active = false; };
   }, [returnedOrderId, refreshBilling, isEnglish]);
+
+  const refreshReturnedOrder = async () => {
+    if (!returnedOrderId || refreshingOrder) return;
+    setRefreshingOrder(true);
+    setCheckoutError("");
+    try {
+      const result = await getApi(`/api/billing/orders/${encodeURIComponent(returnedOrderId)}`);
+      setReturnedOrder(result.order);
+      if (["paid", "partially_refunded", "refunded"].includes(result.order?.status)) {
+        await refreshBilling();
+      }
+    } catch (error) {
+      setCheckoutError(error.message || (isEnglish ? "Could not refresh the order." : "订单状态刷新失败。"));
+    } finally {
+      setRefreshingOrder(false);
+    }
+  };
 
   const beginCheckout = async () => {
     if (!selected || !canPay || busy) return;
@@ -1763,7 +1781,7 @@ export function CheckoutPage({ navigate }) {
           {returnedOrder?.status === "partially_refunded" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Partial refund confirmed; unused credits adjusted" : "部分退款已确认，未用额度已调整"}</b><p>{isEnglish ? "Order" : "订单"} {returnedOrder.order_id}</p></div>}
           {returnedOrder?.status === "expired" && <div className="ops-payment-result ops-payment-result--pending"><Clock size={30} weight="fill" /><b>{isEnglish ? "Checkout expired without payment" : "收银台已过期，订单未付款"}</b><p>{isEnglish ? "No credits were issued. You can start a new checkout." : "未发放额度；可重新发起结账。"}</p></div>}
           {returnedOrder?.status === "failed" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Checkout could not be created" : "收银台创建失败"}</b><p>{isEnglish ? "No payment was started. You can retry." : "未发起付款；可重试。"}</p></div>}
-          {returnedOrderId && (!returnedOrder || returnedOrder.status === "pending") && <div className="ops-payment-result ops-payment-result--pending"><Clock size={30} weight="fill" /><b>{isEnglish ? (returnResult === "cancel" ? "Back from checkout; payment not completed" : "Waiting for server payment confirmation") : (returnResult === "cancel" ? "已返回平台；订单未付款" : "等待服务端确认付款")}</b><p>{isEnglish ? "Credits are issued only after a verified Stripe callback confirms payment." : "只有 Stripe 签名回调确认成功后才会发放额度。"}</p></div>}
+          {returnedOrderId && (!returnedOrder || returnedOrder.status === "pending") && <div className="ops-payment-result ops-payment-result--pending"><Clock size={30} weight="fill" /><b>{isEnglish ? (returnResult === "cancel" ? "Back from checkout; payment not completed" : "Waiting for server payment confirmation") : (returnResult === "cancel" ? "已返回平台；订单未付款" : "等待服务端确认付款")}</b><p>{isEnglish ? "Credits are issued only after the server verifies the payment directly with Stripe. If this takes longer than 30 seconds, refresh the order status." : "服务端向 Stripe 核实付款后才发放额度；若超过 30 秒，请手动刷新订单状态。"}</p><Button icon={ArrowsClockwise} onClick={refreshReturnedOrder} disabled={refreshingOrder}>{isEnglish ? (refreshingOrder ? "Checking…" : "Refresh payment status") : (refreshingOrder ? "正在核对…" : "刷新付款状态")}</Button></div>}
           <Button tone="blue" icon={CreditCard} className="ops-full-button" disabled={!canPay || !selected || busy || loading} onClick={beginCheckout}>{isEnglish ? (busy ? "Opening Stripe…" : isLive ? "Open secure Stripe Checkout" : "Open Stripe test checkout") : (busy ? "正在前往 Stripe…" : isLive ? "前往 Stripe 安全收银台" : "前往 Stripe 测试收银台")}</Button>
           <Button tone="plain" icon={Receipt} onClick={() => go(navigate, "/app/billing/orders")}>查看订单</Button>
           {!canPay && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{isEnglish ? (!signedIn ? "Sign in before purchasing." : "Checkout opens after the server key and webhook are configured.") : (!signedIn ? "请先登录账户再购买。" : "完成服务端密钥和 Webhook 配置后，购买按钮才会开放。")}</span></div>}
@@ -2064,6 +2082,7 @@ export function AccountSettingsPage({ navigate }) {
   const { session, billing, refresh } = usePlatform();
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState("");
+  const [unsavedSignOut, setUnsavedSignOut] = useState(false);
   const user = session?.user || {};
   const accountId = billing?.account_id || user.account_id || user.id || "—";
   const rawProviders = Array.isArray(user.providers)
@@ -2082,8 +2101,28 @@ export function AccountSettingsPage({ navigate }) {
     if (signingOut) return;
     setSigningOut(true);
     setSignOutError("");
+    setUnsavedSignOut(false);
     try {
       await logoutSession();
+      await refresh();
+      navigate("/auth");
+    } catch (error) {
+      setSignOutError(error.message || (isEnglish ? "Sign-out failed." : "退出登录失败。"));
+      setUnsavedSignOut(error.unsavedDraft === true);
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
+  const downloadAndSignOut = async () => {
+    if (signingOut || !downloadUnsavedDraftBackup()) {
+      setSignOutError(isEnglish ? "Could not download the unsaved draft; sign-out was stopped." : "未能下载未同步稿，已停止退出登录。");
+      return;
+    }
+    setSigningOut(true);
+    setSignOutError("");
+    try {
+      await logoutSession({ skipSave: true });
       await refresh();
       navigate("/auth");
     } catch (error) {
@@ -2141,7 +2180,7 @@ export function AccountSettingsPage({ navigate }) {
             <li><span>03</span><div><b>{isEnglish ? "Saved manuscripts follow the account" : "已保存文稿跟随账户"}</b><p>{isEnglish ? "Saved manuscripts and completed tasks can be reopened after signing in on another device. Unsynced edits remain in this browser until saved." : "已保存文稿和完成的任务可在其他设备登录后重新打开；未同步编辑须保存成功后才会出现在其他设备。"}</p></div></li>
           </ol>
           <div className="ops-header-actions"><Button icon={Wallet} onClick={() => navigate("/app/billing")}>{isEnglish ? "View credits" : "查看额度"}</Button></div>
-          {signOutError && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><b>{isEnglish ? "Could not sign out" : "无法退出登录"}</b><p>{signOutError}</p></div></div>}
+          {signOutError && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><b>{isEnglish ? "Could not sign out" : "无法退出登录"}</b><p>{signOutError}</p>{unsavedSignOut && <><p>{isEnglish ? "If the server cannot save your edits, download the local draft before signing out. The draft also remains on this device." : "若服务端暂时无法保存，请先下载未同步稿再退出；本机草稿也会保留。"}</p><Button icon={DownloadSimple} onClick={downloadAndSignOut} disabled={signingOut}>{isEnglish ? "Download draft and sign out" : "下载未同步稿并退出"}</Button></>}</div></div>}
         </Section>
       </div>
       <AccountDataControls email={user.email || ""} navigate={navigate} />

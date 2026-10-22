@@ -57,7 +57,7 @@ PRODUCTS: Dict[str, Dict] = {
     "pro_month": {
         "id": "pro_month", "name": "高频月卡", "kind": "subscription",
         "price_fen": 7990, "currency": "CNY", "credits": 60000,
-        "max_chars_per_job": 30000, "valid_days": 30,
+        "max_chars_per_job": 60000, "valid_days": 30,
         "description": "一次购买，30 天有效，60,000 字；不自动续费。",
     },
 }
@@ -93,8 +93,8 @@ class BillingStore:
         self._now = now or time.time
         self._schema_lock = threading.Lock()
         self._init_schema()
-        # A reserved job cannot still be running after a process restart.  Only
-        # stale reservations are released; live-process jobs finalize normally.
+        # Release orphaned reservations, but never release a durable queued or
+        # running task merely because it waited longer than two hours.
         self.release_stale(max_age_seconds=2 * 60 * 60)
 
     def _connect(self) -> sqlite3.Connection:
@@ -237,6 +237,10 @@ class BillingStore:
                     conn.execute("ALTER TABLE credit_grants ADD COLUMN revoked_at INTEGER")
                 if "refunded_credits" not in grant_columns:
                     conn.execute("ALTER TABLE credit_grants ADD COLUMN refunded_credits INTEGER NOT NULL DEFAULT 0")
+                # Raise the per-task cap for existing 60k-credit pass holders
+                # without changing price, total credits, or expiry.
+                conn.execute("""UPDATE credit_grants SET max_chars_per_job=60000
+                    WHERE product_id='pro_month' AND max_chars_per_job<60000""")
                 # Older releases already revoked full-refund grants but did
                 # not store a cumulative amount. Mark those orders as applied
                 # so a later refund.updated webhook cannot insert a second
@@ -589,7 +593,25 @@ class BillingStore:
             self._expire_pending_checkouts(conn, account_id, int(self._now()))
             row = conn.execute("SELECT * FROM orders WHERE account_id=? AND id=?",
                                (account_id, order_id)).fetchone()
-            return self._public_order(row) if row else None
+        return self._public_order(row) if row else None
+
+    def stripe_order_for_reconciliation(self, account_id: str, order_id: str) -> Optional[Dict]:
+        """Return only the provider identifiers needed to verify an owned order."""
+        with self._connect() as conn:
+            row = conn.execute("""SELECT id,account_id,status,provider_order_id,
+                payment_intent_id,stripe_livemode FROM orders
+                WHERE id=? AND account_id=? AND provider='stripe'""",
+                (order_id, account_id)).fetchone()
+        return dict(row) if row else None
+
+    def stripe_reconciliation_candidates(self) -> List[Dict]:
+        with self._connect() as conn:
+            rows = conn.execute("""SELECT id,account_id,status,provider_order_id,
+                payment_intent_id,stripe_livemode FROM orders
+                WHERE provider='stripe' AND provider_order_id IS NOT NULL
+                  AND status IN ('pending','expired','paid','partially_refunded')
+                ORDER BY created_at""").fetchall()
+        return [dict(row) for row in rows]
 
     def orders(self, account_id: str, limit: int = 30) -> List[Dict]:
         limit = max(1, min(int(limit), 100))
@@ -1054,10 +1076,13 @@ class BillingStore:
         cutoff = int(self._now()) - max(1, int(max_age_seconds))
         conn = self._connect()
         try:
-            rows = conn.execute(
-                "SELECT job_id FROM usage_reservations WHERE status='reserved' AND created_at<?",
-                (cutoff,),
-            ).fetchall()
+            has_jobs = conn.execute("""SELECT 1 FROM sqlite_master
+                WHERE type='table' AND name='rewrite_jobs'""").fetchone() is not None
+            query = "SELECT job_id FROM usage_reservations WHERE status='reserved' AND created_at<?"
+            if has_jobs:
+                query += """ AND NOT EXISTS (SELECT 1 FROM rewrite_jobs j
+                    WHERE j.id=usage_reservations.job_id AND j.state IN ('queued','running'))"""
+            rows = conn.execute(query, (cutoff,)).fetchall()
         finally:
             conn.close()
         released = 0

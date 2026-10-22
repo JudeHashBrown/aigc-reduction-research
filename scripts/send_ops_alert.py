@@ -1,4 +1,4 @@
-"""Send a minimal backup failure notice using the existing SMTP credentials."""
+"""Send a minimal operations failure notice using existing SMTP credentials."""
 from __future__ import annotations
 
 import argparse
@@ -44,18 +44,18 @@ def main() -> None:
     if not recipients:
         raise RuntimeError("ADMIN_EMAILS has no alert recipient")
     sender = EmailDelivery.from_env()
-    label = "备份告警测试" if args.test else "备份告警"
+    label = "运维告警测试" if args.test else "运维告警"
     message = (
-        f"这是一封测试邮件：{args.unit} 的故障告警通道可用；没有发生备份故障。\n"
+        f"这是一封测试邮件：{args.unit} 的故障告警通道可用；没有发生实际故障。\n"
         if args.test else
         f"{args.unit} 执行失败。请登录香港服务器查看 systemctl status 与 journalctl 日志。\n"
     )
     for recipient in recipients:
         sender.send_operational_alert(
             recipient, f"RightThesis {label}：{args.unit}",
-            message + "不要通过邮件发送备份密钥或论文内容。\n",
+            message + "不要通过邮件发送密钥、支付资料或论文内容。\n",
         )
-    print(f"backup {'test ' if args.test else ''}alert sent to {len(recipients)} operator(s)")
+    print(f"operations {'test ' if args.test else ''}alert sent to {len(recipients)} operator(s)")
 
 
 if __name__ == "__main__":

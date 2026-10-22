@@ -270,6 +270,25 @@ def test_expired_grant_release_has_no_phantom_credits():
         folder.cleanup()
 
 
+def test_long_pass_and_queued_reservation_survive_restart():
+    clock = [1_700_000_000]
+    folder, store = make_store(now=lambda: clock[0])
+    try:
+        store.mock_checkout("student-a", "pro_month", "checkout_long_paper")
+        assert store.summary("student-a")["max_chars_per_job"] == 60_000
+        store.reserve("student-a", "job-long-paper", "甲" * 41_021, "conservative")
+        from workspace_store import WorkspaceStore
+        jobs = WorkspaceStore(store.path)
+        jobs.claim_job("student-a", "request-long", "hash-long", "job-long-paper", 2,
+                       request={"text": "甲" * 41_021, "strength": "conservative"})
+        jobs.update_job("job-long-paper", billing={"status": "reserved"})
+        clock[0] += 2 * 60 * 60 + 1
+        assert BillingStore(store.path, now=lambda: clock[0]).release_stale(2 * 60 * 60) == 0
+        assert jobs.get_job("student-a", "job-long-paper")["state"] == "queued"
+    finally:
+        folder.cleanup()
+
+
 TESTS = [
     test_billable_character_contract,
     test_welcome_grant_and_catalog,
@@ -280,6 +299,7 @@ TESTS = [
     test_concurrent_reservations_cannot_overspend,
     test_expiry_and_stale_reservation_release,
     test_expired_grant_release_has_no_phantom_credits,
+    test_long_pass_and_queued_reservation_survive_restart,
 ]
 
 

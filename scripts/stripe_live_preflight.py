@@ -10,7 +10,7 @@ import stripe
 
 ROOT = Path(__file__).resolve().parent.parent
 NEEDED = {"AUTH_MODE", "PAYMENT_PROVIDER", "PUBLIC_ORIGIN",
-          "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"}
+          "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_LIVE_ENABLED"}
 
 
 def settings() -> dict[str, str]:
@@ -36,6 +36,7 @@ def main() -> int:
         return 1
     origin = urlparse(config["PUBLIC_ORIGIN"])
     if (config["AUTH_MODE"] != "accounts" or config["PAYMENT_PROVIDER"] != "stripe"
+            or config["STRIPE_LIVE_ENABLED"] != "1"
             or origin.scheme != "https" or origin.netloc != "rightthesis.com"
             or not config["STRIPE_SECRET_KEY"].startswith(("rk_live_", "sk_live_"))
             or not config["STRIPE_WEBHOOK_SECRET"].startswith("whsec_")):
@@ -46,6 +47,7 @@ def main() -> int:
         ("Checkout Sessions 读取", lambda: client.v1.checkout.sessions.list(params={"limit": 1})),
         ("Events 读取", lambda: client.v1.events.list(params={"limit": 1})),
         ("Refunds 读取", lambda: client.v1.refunds.list(params={"limit": 1})),
+        ("Disputes 读取", lambda: client.v1.disputes.list(params={"limit": 1})),
     )
     for label, check in checks:
         try:
