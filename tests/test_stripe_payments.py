@@ -12,6 +12,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -561,6 +562,114 @@ def test_http_webhook_without_browser_cookie_when_sdk_installed():
             stop_server(proc)
 
 
+def test_admin_refund_partial_retry_late_failure_and_reissue():
+    """A real-refund shaped offline flow; it never calls the Stripe network."""
+    with tempfile.TemporaryDirectory() as folder:
+        store = BillingStore(Path(folder) / "billing.sqlite3")
+        order = store.prepare_stripe_checkout("buyer", "pack_3k", "admin_refund_1", livemode=True)
+        store.attach_stripe_checkout(order["id"], "cs_live_admin_refund",
+                                     "https://checkout.stripe.com/c/pay/refund",
+                                     int(time.time()) + 3600)
+        store.summary("admin")
+        session = {
+            "id": "cs_live_admin_refund", "client_reference_id": order["id"],
+            "metadata": {"order_id": order["id"], "account_id": "buyer", "product_id": "pack_3k"},
+            "mode": "payment", "currency": "cny", "amount_total": 990,
+            "payment_status": "paid", "payment_intent": "pi_adminrefund",
+        }
+        store.apply_stripe_checkout_event("evt_adminrefundpaid", "paid", session)
+        assert store.summary("buyer")["balance"] == 3800
+        refunds = []
+        calls = []
+
+        def create(*, params, options):
+            calls.append((params, options))
+            refund = {"id": "re_admin_" + str(len(calls)), "object": "refund",
+                      "payment_intent": params["payment_intent"], "amount": params["amount"],
+                      "currency": "cny", "status": "succeeded", "metadata": params["metadata"]}
+            refunds.append(refund)
+            return refund
+
+        def client(_key):
+            return SimpleNamespace(v1=SimpleNamespace(
+                refunds=SimpleNamespace(create=create,
+                                        list=lambda **_kw: {"data": refunds, "has_more": False},
+                                        retrieve=lambda rid: next(r for r in refunds if r["id"] == rid)),
+                disputes=SimpleNamespace(list=lambda **_kw: {"data": [], "has_more": False})))
+
+        with patch.dict(os.environ, {"STRIPE_SECRET_KEY": "rk_live_read_only",
+                                  "STRIPE_REFUND_SECRET_KEY": "rk_live_refund_write",
+                                  "STRIPE_WEBHOOK_SECRET": "whsec_offline", "STRIPE_LIVE_ENABLED": "1",
+                                  "PUBLIC_ORIGIN": "https://rightthesis.com"}):
+            provider = StripePaymentProvider(store)
+            provider.stripe = SimpleNamespace(StripeClient=client)
+            provider.configured = True
+            provider.refund_enabled = True
+            assert provider.refund_enabled
+            first_id, second_id, third_id = (str(uuid.uuid4()) for _ in range(3))
+            first = provider.issue_admin_refund(order["id"], "admin", 490,
+                                                "requested_by_customer", "Customer asked", first_id)
+            assert first["status"] == "succeeded"
+            assert store.order("buyer", order["id"])["status"] == "partially_refunded"
+            assert store.summary("buyer")["balance"] == 2316
+            again = provider.issue_admin_refund(order["id"], "admin", 490,
+                                                "requested_by_customer", "Customer asked", first_id)
+            assert again["reused"] and len(calls) == 1
+            expect_error(lambda: provider.issue_admin_refund(
+                order["id"], "admin", 500, "duplicate", "Second request", first_id), 409)
+            second = provider.issue_admin_refund(order["id"], "admin", 500,
+                                                 "requested_by_customer", "Remaining", second_id)
+            assert second["status"] == "succeeded"
+            assert store.order("buyer", order["id"])["status"] == "refunded"
+            assert store.summary("buyer")["balance"] == 800
+            refunds[0]["status"] = "failed"
+            provider.reconcile_refunds("pi_adminrefund")
+            assert store.order("buyer", order["id"])["refunded_fen"] == 500
+            assert store.summary("buyer")["balance"] == 2285
+            third = provider.issue_admin_refund(order["id"], "admin", 490,
+                                                "requested_by_customer", "Retry after failure", third_id)
+            assert third["status"] == "succeeded"
+            assert len(calls) == 3
+            assert store.order("buyer", order["id"])["status"] == "refunded"
+            assert store.summary("buyer")["balance"] == 800
+            assert len([row for row in store.ledger("buyer") if row["kind"] == "refund"]) == 2
+
+
+def test_admin_refund_pending_blocks_new_attempt():
+    with tempfile.TemporaryDirectory() as folder:
+        store = BillingStore(Path(folder) / "billing.sqlite3")
+        order = store.prepare_stripe_checkout("buyer", "pack_3k", "pending_refund", livemode=True)
+        store.attach_stripe_checkout(order["id"], "cs_live_pending_refund",
+                                     "https://checkout.stripe.com/c/pay/pending",
+                                     int(time.time()) + 3600)
+        store.summary("admin")
+        store.apply_stripe_checkout_event("evt_pendingrefundpaid", "paid", {
+            "id": "cs_live_pending_refund", "client_reference_id": order["id"],
+            "metadata": {"order_id": order["id"], "account_id": "buyer", "product_id": "pack_3k"},
+            "mode": "payment", "currency": "cny", "amount_total": 990,
+            "payment_status": "paid", "payment_intent": "pi_pending_refund"})
+        attempt_id = str(uuid.uuid4())
+        attempt = store.begin_admin_refund(order["id"], "admin", 490,
+                                           "requested_by_customer", "A refund request",
+                                           attempt_id, 0)
+        assert not attempt["reused"]
+        expect_error(lambda: store.begin_admin_refund(
+            order["id"], "admin", 500, "duplicate", "Another request",
+            str(uuid.uuid4()), 0), 409)
+        store.apply_stripe_succeeded_refund("evt_pendingrefundcreated", "pending", {
+            "id": "re_pending_refund", "payment_intent": "pi_pending_refund",
+            "amount": 490, "currency": "cny", "status": "pending",
+            "metadata": {"rightthesis_refund_attempt": attempt_id}})
+        assert store.order("buyer", order["id"])["status"] == "paid"
+        assert store.admin_refund_attempt(attempt_id)["status"] == "submitted"
+        store.apply_stripe_succeeded_refund("evt_pendingrefundupdated", "succeeded", {
+            "id": "re_pending_refund", "payment_intent": "pi_pending_refund",
+            "amount": 490, "currency": "cny", "status": "succeeded",
+            "metadata": {"rightthesis_refund_attempt": attempt_id}})
+        assert store.admin_refund_attempt(attempt_id)["status"] == "succeeded"
+        assert store.order("buyer", order["id"])["status"] == "partially_refunded"
+
+
 if __name__ == "__main__":
     test_stripe_order_and_webhook_idempotency()
     test_global_expiry_sweep_preserves_late_verified_payment()
@@ -572,4 +681,6 @@ if __name__ == "__main__":
     test_checkout_failure_expiry_and_late_paid_webhook()
     test_real_sdk_rejects_bad_signature_when_installed()
     test_http_webhook_without_browser_cookie_when_sdk_installed()
+    test_admin_refund_partial_retry_late_failure_and_reissue()
+    test_admin_refund_pending_blocks_new_attempt()
     print("✓ Stripe 离线合同：测试密钥、动态支付方式、金额验核和幂等发放")

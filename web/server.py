@@ -53,7 +53,7 @@ LEGACY_INDEX = ROOT / "index.html"
 LEGACY_APP = ROOT / "app.js"
 _LOCAL_ENV_KEYS = {
     "LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_TEMPERATURE",
-    "BILLING_DB", "PAYMENT_PROVIDER", "STRIPE_SECRET_KEY",
+    "BILLING_DB", "PAYMENT_PROVIDER", "STRIPE_SECRET_KEY", "STRIPE_REFUND_SECRET_KEY",
     "STRIPE_WEBHOOK_SECRET", "STRIPE_LIVE_ENABLED",
     "TRIAL_MODE", "TRIAL_SESSION_SECRET",
     "TRIAL_SESSION_SECRET_FILE", "TRIAL_PUBLIC_ORIGIN",
@@ -923,7 +923,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(403, json.dumps({"error": "仅管理员可访问。"},
                                                   ensure_ascii=False))
             if path == "/api/admin/orders":
-                return self._send(200, json.dumps({"orders": BILLING.admin_orders()},
+                params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                try:
+                    orders = BILLING.admin_orders(order_id=params.get("order_id", [""])[0])
+                except BillingError as exc:
+                    return self._send_billing_error(exc)
+                return self._send(200, json.dumps({"orders": orders,
+                                                  "refund_enabled": bool(getattr(PAYMENTS, "refund_enabled", False))},
                                                   ensure_ascii=False))
             if path == "/api/admin/users":
                 params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
@@ -1340,6 +1346,32 @@ class Handler(BaseHTTPRequestHandler):
                     "authenticated": False,
                 }, ensure_ascii=False))
         account_id = session["account_id"] if session else ACCOUNT_ID
+        if path.startswith("/api/admin/"):
+            if not _admin_allowed(session):
+                return self._send(403, json.dumps({"error": "仅管理员可访问。"},
+                                                  ensure_ascii=False))
+            refund_match = re.fullmatch(r"/api/admin/orders/(ord_[0-9a-f]{32})/refund", path)
+            if not refund_match:
+                return self._send(404, json.dumps({"error": "not found"}))
+            order_id = refund_match.group(1)
+            if payload.get("confirm_order_id") != order_id:
+                return self._send(400, json.dumps({"error": "请再次确认订单号。"},
+                                                  ensure_ascii=False))
+            try:
+                if PAYMENTS.name != "stripe" or not getattr(PAYMENTS, "refund_enabled", False):
+                    raise BillingError("管理员退款尚未配置独立的 Stripe 退款密钥", 503)
+                attempt = PAYMENTS.issue_admin_refund(
+                    order_id, account_id, payload.get("amount_fen"),
+                    payload.get("reason"), payload.get("note"),
+                    payload.get("attempt_id"))
+            except BillingError as exc:
+                return self._send_billing_error(exc)
+            return self._send(202, json.dumps({"attempt": {
+                "id": attempt["id"], "order_id": attempt["order_id"],
+                "amount_fen": attempt["amount_fen"], "status": attempt["status"],
+                "stripe_refund_id": attempt["stripe_refund_id"],
+                "reused": bool(attempt.get("reused")),
+            }}, ensure_ascii=False))
         if ACCOUNTS_MODE and path == "/api/account/delete-request":
             try:
                 request = PRIVACY.request_deletion(

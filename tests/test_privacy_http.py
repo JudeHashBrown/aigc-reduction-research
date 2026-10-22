@@ -80,6 +80,9 @@ def run():
             assert "auth_sessions" not in exported
             code, admin_orders, _ = request(opener, base, "/api/admin/orders", headers=cookie)
             assert code == 200 and "orders" in admin_orders
+            assert admin_orders["refund_enabled"] is False
+            code, _, _ = request(opener, base, "/api/admin/orders?order_id=not-an-order", headers=cookie)
+            assert code == 400
             code, users, _ = request(opener, base, "/api/admin/users?q=other%40example.com&limit=1&offset=0", headers=cookie)
             assert code == 200 and users["total"] == 1
             assert users["users"][0]["account_id"] == another["account_id"]
@@ -115,6 +118,18 @@ def run():
                                  {"confirm_email": "writer@example.com"}, cookie)
             assert code == 403
             allowed = {**cookie, "Origin": base, "X-CSRF-Token": session["csrf_token"]}
+            refund_path = "/api/admin/orders/ord_" + "0" * 32 + "/refund"
+            refund_body = {"amount_fen": 1, "reason": "requested_by_customer",
+                           "note": "Offline check", "attempt_id": "00000000-0000-4000-8000-000000000000",
+                           "confirm_order_id": "ord_" + "0" * 32}
+            code, _, _ = request(opener, base, refund_path, refund_body, cookie)
+            assert code == 403, "admin refund POST must require CSRF"
+            code, _, _ = request(opener, base, refund_path, refund_body, {
+                "Cookie": f"rightthesis_session={another['token']}",
+                "Origin": base, "X-CSRF-Token": another["csrf_token"]})
+            assert code == 403, "ordinary users cannot issue refunds"
+            code, _, _ = request(opener, base, refund_path, refund_body, allowed)
+            assert code == 503, "refunds remain off without a separate write key"
             code, reply, _ = request(opener, base, "/api/account/delete-request",
                                      {"confirm_email": "writer@example.com"}, allowed)
             assert code == 202 and reply["request"]["status"] == "pending"

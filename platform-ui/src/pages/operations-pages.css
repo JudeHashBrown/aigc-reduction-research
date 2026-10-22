@@ -776,6 +776,23 @@
 .ops-admin-user-detail-grid > div + div { border-left: 1px solid var(--ops-gray-200); }
 .ops-admin-user-detail-grid h3 { margin: 0; padding: 16px; font-size: 16px; }
 .ops-admin-user-hint { padding: 16px; }
+.ops-admin-refund-unavailable { padding: 12px 16px; background: var(--ops-gray-100); color: var(--ops-gray-700); font-size: 13px; }
+.ops-admin-refund-search { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 16px; }
+.ops-admin-refund-search input { flex: 1 1 270px; min-width: 0; min-height: 42px; padding: 9px 11px; border: 1px solid var(--ops-gray-400); background: var(--ops-white); color: var(--ops-ink); font: inherit; }
+.ops-admin-refund-panel { margin-top: 22px; }
+.ops-admin-refund-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--ops-gray-200); }
+.ops-admin-refund-facts > div { min-width: 0; padding: 16px; border-right: 1px solid var(--ops-gray-200); }
+.ops-admin-refund-facts > div:last-child { border-right: 0; }
+.ops-admin-refund-facts small, .ops-admin-refund-facts strong, .ops-admin-refund-facts code { display: block; overflow-wrap: anywhere; }
+.ops-admin-refund-facts small { color: var(--ops-gray-700); font-size: 12px; }
+.ops-admin-refund-facts strong, .ops-admin-refund-facts code { margin-top: 7px; }
+.ops-admin-refund-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 18px; }
+.ops-admin-refund-form label { display: grid; gap: 7px; font-size: 13px; font-weight: 800; }
+.ops-admin-refund-form label:nth-last-child(2) { grid-column: 1 / -1; }
+.ops-admin-refund-form input, .ops-admin-refund-form select, .ops-admin-refund-form textarea { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid var(--ops-gray-400); background: var(--ops-white); color: var(--ops-ink); font: inherit; }
+.ops-admin-refund-form textarea { min-height: 86px; resize: vertical; }
+.ops-admin-refund-caution { margin: 0; padding: 0 18px 16px; color: var(--ops-gray-700); font-size: 13px; }
+.ops-admin-refund-panel > .ops-header-actions { padding: 16px 18px; }
 
 .ops-check-rows > div { min-height: 70px; padding: 12px 15px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; border-bottom: 1px solid var(--ops-gray-200); }
 .ops-check-rows > div:last-child { border-bottom: 0; }
@@ -920,6 +937,10 @@
   .ops-admin-user-summary > div:nth-child(-n+2) { border-bottom: 1px solid var(--ops-gray-200); }
   .ops-admin-user-detail-grid { grid-template-columns: 1fr; }
   .ops-admin-user-detail-grid > div + div { border-left: 0; border-top: 1px solid var(--ops-gray-200); }
+  .ops-admin-refund-facts { grid-template-columns: 1fr; }
+  .ops-admin-refund-facts > div { border-right: 0; border-bottom: 1px solid var(--ops-gray-200); }
+  .ops-admin-refund-form { grid-template-columns: 1fr; }
+  .ops-admin-refund-form label:nth-last-child(2) { grid-column: auto; }
 }
 
 @media (max-width: 620px) {

@@ -164,10 +164,26 @@ class BillingStore:
                         amount_fen INTEGER NOT NULL,
                         currency TEXT NOT NULL,
                         created_at INTEGER NOT NULL,
-                        applied_at INTEGER
+                        applied_at INTEGER,
+                        status TEXT NOT NULL DEFAULT 'succeeded'
                     );
                     CREATE INDEX IF NOT EXISTS idx_stripe_refunds_payment_intent
                         ON stripe_refunds(payment_intent_id);
+                    CREATE TABLE IF NOT EXISTS admin_refund_attempts (
+                        id TEXT PRIMARY KEY,
+                        order_id TEXT NOT NULL REFERENCES orders(id),
+                        actor_account_id TEXT NOT NULL REFERENCES accounts(id),
+                        amount_fen INTEGER NOT NULL CHECK(amount_fen > 0),
+                        reason TEXT NOT NULL,
+                        note TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        stripe_refund_id TEXT,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_refund_open_order
+                        ON admin_refund_attempts(order_id)
+                        WHERE status IN ('created','submitted','unknown');
                     CREATE TABLE IF NOT EXISTS credit_grants (
                         id TEXT PRIMARY KEY,
                         account_id TEXT NOT NULL REFERENCES accounts(id),
@@ -237,6 +253,9 @@ class BillingStore:
                     conn.execute("ALTER TABLE credit_grants ADD COLUMN revoked_at INTEGER")
                 if "refunded_credits" not in grant_columns:
                     conn.execute("ALTER TABLE credit_grants ADD COLUMN refunded_credits INTEGER NOT NULL DEFAULT 0")
+                refund_columns = {row["name"] for row in conn.execute("PRAGMA table_info(stripe_refunds)")}
+                if "status" not in refund_columns:
+                    conn.execute("ALTER TABLE stripe_refunds ADD COLUMN status TEXT NOT NULL DEFAULT 'succeeded'")
                 # Raise the per-task cap for existing 60k-credit pass holders
                 # without changing price, total credits, or expiry.
                 conn.execute("""UPDATE credit_grants SET max_chars_per_job=60000
@@ -629,26 +648,107 @@ class BillingStore:
             ).fetchall()
             return [self._public_order(row) for row in rows]
 
-    def admin_orders(self, limit: int = 100) -> List[Dict]:
-        """Read-only reconciliation view; caller must enforce administrator auth."""
+    def admin_orders(self, limit: int = 100, order_id: str = "") -> List[Dict]:
+        """Administrator order view; an exact ID can retrieve older orders."""
         limit = max(1, min(int(limit), 500))
+        if order_id and not re.fullmatch(r"ord_[0-9a-f]{32}", order_id):
+            raise BillingError("订单号格式无效", 400)
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT o.*,p.primary_email AS account_email,
                           (SELECT COALESCE(SUM(amount_fen),0) FROM stripe_refunds r
-                           WHERE r.payment_intent_id=o.payment_intent_id) AS provider_refunded_fen
+                           WHERE r.payment_intent_id=o.payment_intent_id AND r.status='succeeded') AS provider_refunded_fen,
+                          (SELECT status FROM admin_refund_attempts a WHERE a.order_id=o.id
+                           ORDER BY created_at DESC,id DESC LIMIT 1) AS refund_attempt_status
                    FROM orders o LEFT JOIN auth_profiles p ON p.account_id=o.account_id
+                   WHERE (?='' OR o.id=?)
                    ORDER BY o.created_at DESC,o.id DESC LIMIT ?""",
-                (limit,),
+                (order_id, order_id, limit),
             ).fetchall()
             return [
                 {**self._public_order(row), "account_id": row["account_id"],
                  "account_email": row["account_email"],
+                 "refund_attempt_status": row["refund_attempt_status"],
                  "provider_refunded_fen": int(row["provider_refunded_fen"] or 0),
                  "reconciliation_required": int(row["provider_refunded_fen"] or 0)
                  != int(row["refunded_fen"])}
                 for row in rows
             ]
+
+    def admin_refund_order(self, order_id: str) -> Optional[Dict]:
+        """Minimal payment identifiers for an administrator refund; no document data."""
+        with self._connect() as conn:
+            row = conn.execute("""SELECT id,account_id,provider,status,amount_fen,
+                       refunded_fen,currency,stripe_livemode,payment_intent_id
+                   FROM orders WHERE id=?""", (order_id,)).fetchone()
+        return dict(row) if row else None
+
+    def admin_refund_attempt(self, attempt_id: str) -> Optional[Dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM admin_refund_attempts WHERE id=?",
+                               (attempt_id,)).fetchone()
+        return dict(row) if row else None
+
+    def begin_admin_refund(self, order_id: str, actor_account_id: str,
+                           amount_fen: int, reason: str, note: str,
+                           attempt_id: str, observed_refunded_fen: int) -> Dict:
+        """Durably lock one order before calling Stripe; retries never issue a new refund."""
+        try:
+            if str(uuid.UUID(attempt_id)) != attempt_id:
+                raise ValueError("noncanonical UUID")
+        except (TypeError, ValueError, AttributeError):
+            raise BillingError("退款操作编号无效", 400) from None
+        if (not isinstance(amount_fen, int) or isinstance(amount_fen, bool)
+                or amount_fen <= 0 or reason not in {"requested_by_customer", "duplicate"}
+                or not isinstance(note, str) or not 5 <= len(note.strip()) <= 500):
+            raise BillingError("退款金额、原因或备注无效", 400)
+        now = int(self._now())
+        with self._transaction() as conn:
+            prior = conn.execute("SELECT * FROM admin_refund_attempts WHERE id=?",
+                                 (attempt_id,)).fetchone()
+            if prior:
+                if (prior["order_id"] != order_id or prior["actor_account_id"] != actor_account_id
+                        or prior["amount_fen"] != amount_fen or prior["reason"] != reason
+                        or prior["note"] != note.strip()):
+                    raise BillingError("退款操作编号已用于其他请求", 409)
+                return {**dict(prior), "reused": True}
+            order = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+            if not order:
+                raise BillingError("订单不存在", 404)
+            if (order["provider"] != "stripe" or not order["stripe_livemode"]
+                    or order["status"] not in {"paid", "partially_refunded"}
+                    or not order["payment_intent_id"]):
+                raise BillingError("此订单不能从管理后台发起退款", 409)
+            if (int(order["refunded_fen"]) != observed_refunded_fen
+                    or amount_fen > int(order["amount_fen"]) - int(order["refunded_fen"])):
+                raise BillingError("退款金额超过订单尚未退款金额，请刷新后重试", 409)
+            open_attempt = conn.execute("""SELECT id FROM admin_refund_attempts
+                WHERE order_id=? AND status IN ('created','submitted','unknown')""",
+                                        (order_id,)).fetchone()
+            if open_attempt:
+                raise BillingError("该订单有待核对的退款，请先确认 Stripe 状态", 409)
+            conn.execute("""INSERT INTO admin_refund_attempts
+                (id,order_id,actor_account_id,amount_fen,reason,note,status,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,'created',?,?)""",
+                         (attempt_id, order_id, actor_account_id, amount_fen,
+                          reason, note.strip(), now, now))
+            return {**dict(conn.execute("SELECT * FROM admin_refund_attempts WHERE id=?",
+                                        (attempt_id,)).fetchone()), "reused": False}
+
+    def update_admin_refund_attempt(self, attempt_id: str, status: str,
+                                    stripe_refund_id: Optional[str] = None) -> Dict:
+        if status not in {"submitted", "unknown", "failed", "succeeded"}:
+            raise ValueError("invalid refund attempt status")
+        with self._transaction() as conn:
+            conn.execute("""UPDATE admin_refund_attempts SET
+                status=CASE WHEN status='succeeded' THEN status ELSE ? END,
+                stripe_refund_id=COALESCE(?,stripe_refund_id),updated_at=? WHERE id=?""",
+                         (status, stripe_refund_id, int(self._now()), attempt_id))
+            row = conn.execute("SELECT * FROM admin_refund_attempts WHERE id=?",
+                               (attempt_id,)).fetchone()
+            if not row:
+                raise BillingError("退款操作记录不存在", 404)
+            return dict(row)
 
     def apply_stripe_checkout_event(self, event_id: str, payload_hash: str,
                                     session: Dict) -> Dict:
@@ -742,8 +842,9 @@ class BillingStore:
     def _refund_total(conn: sqlite3.Connection, payment_intent_id: str) -> Optional[Dict]:
         row = conn.execute(
             """SELECT SUM(amount_fen) AS amount_fen, MIN(currency) AS currency,
+                      MAX(refund_id) AS latest_refund_id,
                       COUNT(DISTINCT currency) AS currencies
-               FROM stripe_refunds WHERE payment_intent_id=?""",
+               FROM stripe_refunds WHERE payment_intent_id=? AND status='succeeded'""",
             (payment_intent_id,),
         ).fetchone()
         if not row or row["amount_fen"] is None:
@@ -751,7 +852,8 @@ class BillingStore:
         if row["currencies"] != 1:
             raise BillingError("Stripe 退款币种不一致", 409)
         return {"payment_intent_id": payment_intent_id,
-                "amount_fen": int(row["amount_fen"]), "currency": row["currency"]}
+                "amount_fen": int(row["amount_fen"]), "currency": row["currency"],
+                "latest_refund_id": row["latest_refund_id"]}
 
     @staticmethod
     def _recalculate_grant_remaining(conn: sqlite3.Connection, grant_id: str,
@@ -805,7 +907,7 @@ class BillingStore:
             self._recalculate_grant_remaining(conn, grant["id"], now)
         conn.execute("UPDATE orders SET status=?,refunded_fen=? WHERE id=?",
                      (status, refund["amount_fen"], order_id))
-        conn.execute("UPDATE stripe_refunds SET applied_at=? WHERE payment_intent_id=?",
+        conn.execute("UPDATE stripe_refunds SET applied_at=? WHERE payment_intent_id=? AND status='succeeded'",
                      (now, refund["payment_intent_id"]))
         balance_after = self._active_balance(conn, order["account_id"], now)
         conn.execute(
@@ -814,7 +916,7 @@ class BillingStore:
                VALUES(?,?,?,?,?,?,?)""",
             (order["account_id"], balance_after - balance_before,
              "refund" if status == "refunded" else "partial_refund",
-             reference if status == "refunded" else f"{reference}:{refund['amount_fen']}",
+             f"{reference}:refund:{refund['amount_fen']}:{refund['latest_refund_id']}",
              balance_after, json.dumps({"provider": "stripe", "product_id": order["product_id"],
                                         "refunded_fen": refund["amount_fen"],
                                         "refunded_credits": target_credits,
@@ -823,9 +925,45 @@ class BillingStore:
         )
         return {"status": status, "order_id": order_id}
 
+    def _sync_refund_total(self, conn: sqlite3.Connection, order_id: str,
+                           payment_intent_id: str, now: int,
+                           event_id: str) -> Dict:
+        order = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+        refund = self._refund_total(conn, payment_intent_id)
+        target = int(refund["amount_fen"]) if refund else 0
+        current = int(order["refunded_fen"])
+        if target >= current:
+            return self._reconcile_refund(conn, order_id, refund, now) if refund else {
+                "status": order["status"], "order_id": order_id}
+        # Stripe can later fail a refund previously reported as succeeded.
+        # Restore only the still-valid, unspent entitlement; never roll back use.
+        grant = conn.execute("SELECT * FROM credit_grants WHERE account_id=? AND reference=?",
+                             (order["account_id"], "order:" + order_id)).fetchone()
+        if not grant:
+            raise BillingError("退款失败后无法核对原额度", 409)
+        balance_before = self._active_balance(conn, order["account_id"], now)
+        target_credits = int(order["credits"]) * target // int(order["amount_fen"])
+        conn.execute("""UPDATE credit_grants SET refunded_credits=?,revoked_at=NULL
+                     WHERE id=?""", (target_credits, grant["id"]))
+        self._recalculate_grant_remaining(conn, grant["id"], now)
+        status = "paid" if target == 0 else "partially_refunded"
+        conn.execute("UPDATE orders SET status=?,refunded_fen=? WHERE id=?",
+                     (status, target, order_id))
+        balance_after = self._active_balance(conn, order["account_id"], now)
+        conn.execute("""INSERT INTO ledger_entries
+                     (account_id,delta,kind,reference,balance_after,metadata_json,created_at)
+                     VALUES(?,?,?,?,?,?,?)""",
+                     (order["account_id"], balance_after - balance_before,
+                      "refund_failed", f"order:{order_id}:event:{event_id}",
+                      balance_after, json.dumps({"provider": "stripe",
+                          "event_id": event_id, "refunded_fen": target},
+                          ensure_ascii=False), now))
+        return {"status": status, "order_id": order_id,
+                "refund_failure_reversed": True}
+
     def apply_stripe_succeeded_refund(self, event_id: str, payload_hash: str,
                                       refund_object: Dict) -> Dict:
-        """Revoke unused credits when successful refunds cumulatively cover the order."""
+        """Apply the latest verified Stripe refund state, including late failures."""
         if not isinstance(event_id, str) or not re.fullmatch(r"evt_[A-Za-z0-9]+", event_id):
             raise BillingError("Stripe 事件 ID 无效", 400)
         refund_id = refund_object.get("id")
@@ -838,8 +976,9 @@ class BillingStore:
                 or not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0
                 or not isinstance(currency, str)):
             raise BillingError("Stripe 退款事件字段无效", 400)
-        if refund_status != "succeeded":
-            return {"status": "refund_not_succeeded"}
+        if refund_status not in {"pending", "requires_action", "succeeded",
+                                 "failed", "canceled"}:
+            return {"status": "refund_state_ignored"}
         now = int(self._now())
         with self._transaction() as conn:
             prior = conn.execute(
@@ -856,24 +995,40 @@ class BillingStore:
                              or existing["currency"] != currency.upper()
                              or existing["payment_intent_id"] != payment_intent_id):
                 raise BillingError("Stripe 退款与已有记录冲突", 409)
-            conn.execute(
-                """INSERT OR IGNORE INTO stripe_refunds
-                   (refund_id,payment_intent_id,event_id,amount_fen,currency,created_at)
-                   VALUES(?,?,?,?,?,?)""",
-                (refund_id, payment_intent_id, event_id, amount, currency.upper(), now),
-            )
+            if existing:
+                conn.execute("UPDATE stripe_refunds SET status=? WHERE refund_id=?",
+                             (refund_status, refund_id))
+            else:
+                conn.execute(
+                    """INSERT INTO stripe_refunds
+                       (refund_id,payment_intent_id,event_id,amount_fen,currency,created_at,status)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (refund_id, payment_intent_id, event_id, amount,
+                     currency.upper(), now, refund_status),
+                )
             conn.execute(
                 """INSERT INTO payment_events(provider,event_id,payload_hash,processed_at)
                    VALUES('stripe',?,?,?)""", (event_id, payload_hash, now),
             )
+            attempt_id = (refund_object.get("metadata") or {}).get("rightthesis_refund_attempt")
+            if isinstance(attempt_id, str):
+                conn.execute("""UPDATE admin_refund_attempts SET status=?,
+                    stripe_refund_id=?,updated_at=? WHERE id=? AND amount_fen=?
+                    AND order_id=(SELECT id FROM orders WHERE payment_intent_id=?)
+                    AND (stripe_refund_id IS NULL OR stripe_refund_id=?)""",
+                    ("succeeded" if refund_status == "succeeded" else
+                     "failed" if refund_status in {"failed", "canceled"} else "submitted",
+                     refund_id, now, attempt_id, amount, payment_intent_id, refund_id))
             order = conn.execute(
                 "SELECT id FROM orders WHERE provider='stripe' AND payment_intent_id=?",
                 (payment_intent_id,),
             ).fetchone()
             if not order:
                 return {"status": "pending_order"}
-            refund = self._refund_total(conn, payment_intent_id)
-            return self._reconcile_refund(conn, order["id"], refund, now)
+            result = self._sync_refund_total(conn, order["id"], payment_intent_id,
+                                             now, event_id)
+            return result if refund_status == "succeeded" or result.get(
+                "refund_failure_reversed") else {"status": "refund_not_succeeded"}
 
     def reserve(self, account_id: str, job_id: str, text: str, strength: str,
                 fingerprint: Optional[str] = None) -> Dict:

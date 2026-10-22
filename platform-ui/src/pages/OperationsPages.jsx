@@ -2806,27 +2806,88 @@ function AdminLiveList({ navigate, active, endpoint, field, title, description, 
 export function AdminOrdersPage({ navigate }) {
   const { isEnglish } = useLocale();
   const [orders, setOrders] = useState([]);
+  const [orderSearch, setOrderSearch] = useState("");
+  const [submittedSearch, setSubmittedSearch] = useState("");
+  const [refundEnabled, setRefundEnabled] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [refundMode, setRefundMode] = useState("full");
+  const [partialAmount, setPartialAmount] = useState("");
+  const [refundReason, setRefundReason] = useState("requested_by_customer");
+  const [refundNote, setRefundNote] = useState("");
+  const [confirmOrderId, setConfirmOrderId] = useState("");
+  const [attemptId, setAttemptId] = useState("");
+  const [reviewing, setReviewing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [refundFeedback, setRefundFeedback] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const copy = (zh, en) => isEnglish ? en : zh;
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const result = await getApi("/api/admin/orders");
+      const result = await getApi(`/api/admin/orders${submittedSearch ? `?order_id=${encodeURIComponent(submittedSearch)}` : ""}`);
       setOrders(result.orders || []);
+      setRefundEnabled(result.refund_enabled === true);
     } catch (failure) {
       setError(failure.message || (isEnglish ? "Could not load orders." : "无法读取订单。"));
     } finally {
       setLoading(false);
     }
-  }, [isEnglish]);
+  }, [isEnglish, submittedSearch]);
   useEffect(() => { void refresh(); }, [refresh]);
+  const remainingFen = selected ? Math.max(0, selected.amount_fen - selected.refunded_fen) : 0;
+  const amountFen = refundMode === "full" ? remainingFen : (() => {
+    const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(partialAmount.trim());
+    return match ? Number(match[1]) * 100 + Number((match[2] || "").padEnd(2, "0")) : 0;
+  })();
+  const money = (fen, currency = "CNY") => `${(fen / 100).toFixed(2)} ${currency}`;
+  const openRefund = (order) => {
+    setSelected(order);
+    setRefundMode("full");
+    setPartialAmount("");
+    setRefundReason("requested_by_customer");
+    setRefundNote("");
+    setConfirmOrderId("");
+    setAttemptId(globalThis.crypto?.randomUUID?.() || "");
+    setReviewing(false);
+    setRefundFeedback("");
+  };
+  const canReview = selected && attemptId && amountFen > 0 && amountFen <= remainingFen
+    && refundNote.trim().length >= 5 && refundNote.trim().length <= 500
+    && confirmOrderId === selected.order_id;
+  const submitRefund = async () => {
+    if (!canReview || !reviewing || submitting) return;
+    setSubmitting(true);
+    setRefundFeedback("");
+    try {
+      const result = await postApi(`/api/admin/orders/${selected.order_id}/refund`, {
+        amount_fen: amountFen, reason: refundReason, note: refundNote.trim(),
+        attempt_id: attemptId, confirm_order_id: confirmOrderId,
+      });
+      setRefundFeedback(result.attempt.status === "succeeded"
+        ? copy("Stripe 已确认退款，订单额度已核对。", "Stripe confirmed the refund and credits were reconciled.")
+        : copy("退款请求已提交，等待 Stripe 最终确认；请勿重复提交。", "Refund submitted. Await Stripe's final status; do not submit it again."));
+      setSelected(null);
+      setReviewing(false);
+      await refresh();
+    } catch (failure) {
+      setRefundFeedback(failure.message || copy("退款提交失败，请核对 Stripe 状态。", "Refund request failed; check Stripe status."));
+      setReviewing(false);
+      await refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  };
   return <Page>
     <PageHeader eyebrow="ADMIN / BILLING" title={isEnglish ? "Orders and local ledger" : "订单与本地账本"} description={isEnglish ? "Read-only local order and webhook records. A match here does not prove Stripe has no undelivered events; check Stripe for final settlement." : "只读查看本地订单与回调记录。本地一致不代表 Stripe 没有未送达事件；最终结算仍需到 Stripe 核对。"}>
       <Button icon={ArrowsClockwise} onClick={refresh} disabled={loading}>{loading ? (isEnglish ? "Loading…" : "正在读取…") : (isEnglish ? "Refresh" : "刷新")}</Button>
     </PageHeader>
     {error && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><p>{error}</p></div></div>}
-    {!error && <Section title={isEnglish ? "Latest 100 orders" : "最近 100 笔订单"} kicker="LIVE LEDGER" className="ops-shadow-card">
+    {refundFeedback && <div className="ops-note ops-note--yellow" role="status"><Info size={24} weight="fill" /><div><p>{refundFeedback}</p></div></div>}
+    {!error && <Section title={submittedSearch ? copy("订单查询结果", "Order search result") : copy("最近 100 笔订单", "Latest 100 orders")} kicker="LIVE LEDGER" className="ops-shadow-card">
+      {!refundEnabled && <div className="ops-admin-refund-unavailable">{copy("后台退款尚未启用：需在服务器配置独立的 Stripe 退款权限密钥。现有订单与对账不受影响。", "Admin refunds are not enabled: a separate Stripe refund key is required on the server. Orders and reconciliation remain available.")}</div>}
+      <form className="ops-admin-refund-search" onSubmit={(event) => { event.preventDefault(); setSubmittedSearch(orderSearch.trim()); }}><input aria-label={copy("按完整订单号查询", "Search by full order ID")} placeholder={copy("输入完整订单号，可查询更早订单", "Enter a full order ID to find older orders")} value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} /><Button type="submit">{copy("查询订单", "Find order")}</Button>{submittedSearch && <Button onClick={() => { setOrderSearch(""); setSubmittedSearch(""); }}>{copy("显示最近订单", "Show recent orders")}</Button>}</form>
       <Table rows={orders.map((order) => ({ ...order, id: order.order_id }))} empty={isEnglish ? "No orders" : "暂无订单"} columns={[
         { key: "order_id", label: isEnglish ? "Order" : "订单号" },
         { key: "account_email", label: isEnglish ? "Account" : "账户", render: (row) => row.account_email || row.account_id },
@@ -2835,7 +2896,25 @@ export function AdminOrdersPage({ navigate }) {
         { key: "status", label: isEnglish ? "Status" : "状态", render: (row) => <StatusPill status={row.status} /> },
         { key: "refunded_fen", label: isEnglish ? "Refunded" : "累计退款", render: (row) => `${(row.refunded_fen / 100).toFixed(2)} ${row.currency}` },
         { key: "reconciliation_required", label: isEnglish ? "Local check" : "本地核对", render: (row) => row.reconciliation_required ? (isEnglish ? "Review" : "需复核") : (isEnglish ? "Locally consistent" : "本地一致") },
+        { key: "refund_action", label: copy("操作", "Action"), render: (row) => row.provider === "stripe" && row.live && ["paid", "partially_refunded"].includes(row.status) ? <Button onClick={() => openRefund(row)} disabled={!refundEnabled || row.reconciliation_required || ["created", "submitted", "unknown"].includes(row.refund_attempt_status)}>{copy("退款", "Refund")}</Button> : "—" },
       ]} />
+    </Section>}
+    {selected && <Section title={copy("向原支付方式退款", "Refund to original payment method")} kicker="STRIPE / ADMIN" className="ops-shadow-card ops-admin-refund-panel">
+      <div className="ops-admin-refund-facts">
+        <div><small>{copy("用户", "Customer")}</small><strong>{selected.account_email || selected.account_id}</strong></div>
+        <div><small>{copy("订单号", "Order")}</small><code>{selected.order_id}</code></div>
+        <div><small>{copy("可退金额", "Remaining refundable")}</small><strong>{money(remainingFen, selected.currency)}</strong></div>
+      </div>
+      <div className="ops-admin-refund-form">
+        <label><span>{copy("退款范围", "Refund amount")}</span><select value={refundMode} onChange={(event) => { setRefundMode(event.target.value); setReviewing(false); }}><option value="full">{copy("退还剩余全部金额", "Refund full remaining amount")}</option><option value="partial">{copy("部分退款", "Partial refund")}</option></select></label>
+        {refundMode === "partial" && <label><span>{copy("退款金额（元，最多两位小数）", "Amount (yuan, up to two decimals)")}</span><input inputMode="decimal" value={partialAmount} onChange={(event) => { setPartialAmount(event.target.value); setReviewing(false); }} placeholder="0.00" /></label>}
+        <label><span>{copy("退款原因", "Reason")}</span><select value={refundReason} onChange={(event) => { setRefundReason(event.target.value); setReviewing(false); }}><option value="requested_by_customer">{copy("用户申请", "Requested by customer")}</option><option value="duplicate">{copy("重复付款", "Duplicate payment")}</option></select></label>
+        <label><span>{copy("处理备注（至少 5 字）", "Internal note (at least 5 characters)")}</span><textarea value={refundNote} maxLength={500} onChange={(event) => { setRefundNote(event.target.value); setReviewing(false); }} placeholder={copy("记录申请依据，不填写论文正文", "Record the reason; do not include manuscript content")} /></label>
+        <label><span>{copy("输入完整订单号确认", "Type the full order ID to confirm")}</span><input value={confirmOrderId} onChange={(event) => { setConfirmOrderId(event.target.value); setReviewing(false); }} autoComplete="off" /></label>
+      </div>
+      <p className="ops-admin-refund-caution">{copy("退款将由 Stripe 退回原支付方式；只有 Stripe 确认成功后，平台才会调整该订单未使用的额度。已消耗额度不能追回。", "Stripe refunds the original payment method. Unused credits are adjusted only after Stripe confirms success; spent credits cannot be recovered.")}</p>
+      {reviewing && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><b>{copy("最终确认：真实退款", "Final confirmation: real refund")}</b><p>{copy(`将对订单 ${selected.order_id} 发起 ${money(amountFen, selected.currency)} 退款。此操作可能无法撤销。`, `Refund ${money(amountFen, selected.currency)} for order ${selected.order_id}. This action may be irreversible.`)}</p></div></div>}
+      <div className="ops-header-actions"><Button onClick={() => { setSelected(null); setReviewing(false); }} disabled={submitting}>{copy("取消", "Cancel")}</Button>{reviewing ? <Button tone="blue" onClick={submitRefund} disabled={submitting || !canReview}>{submitting ? copy("正在提交…", "Submitting…") : copy("确认发起真实退款", "Confirm real refund")}</Button> : <Button tone="blue" onClick={() => setReviewing(true)} disabled={!canReview}>{copy("核对退款信息", "Review refund")}</Button>}</div>
     </Section>}
   </Page>;
 }
