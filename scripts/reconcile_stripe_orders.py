@@ -29,6 +29,7 @@ def run(database: Path, *, skip_disputes: bool = False) -> int:
     if not provider.configured or not provider.live:
         print("FAIL: Stripe 正式对账未配置")
         return 1
+    closed = store.expire_stale_stripe_checkouts()
     checked = 0
     failed = 0
     disputes = 0
@@ -49,7 +50,7 @@ def run(database: Path, *, skip_disputes: bool = False) -> int:
             print(f"FAIL: order {order['id']} could not be reconciled ({type(exc).__name__})")
     if skip_disputes:
         print("WARNING: Stripe dispute monitoring disabled; restricted key lacks dispute-read permission")
-    print(f"Stripe reconciliation: checked={checked} failed={failed} disputes={disputes}")
+    print(f"Stripe reconciliation: checked={checked} closed_stale={closed} failed={failed} disputes={disputes}")
     return 1 if failed or disputes else 0
 
 

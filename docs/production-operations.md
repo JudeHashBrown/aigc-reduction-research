@@ -50,7 +50,7 @@ python3 scripts/backup_database.py restore --archive /path/to/archive.rtbk --des
 
 ## 支付与对账
 
-以 `GET /api/config` 的 `payment.live` 和 `payment.checkout_enabled` 判断当前环境是否开放正式收银台。真实付款与额度发放只接受已验签且从 Stripe 实时读取核对的事件，或由服务端使用正式密钥直接向 Stripe 读取核对的对象。用户查询待付款订单时会尝试恢复漏送的成功回调；每小时的 `rightthesis-stripe-reconcile.timer` 独立核对全部正式待处理与已付订单、补记漏送成功退款，并检查已知付款的争议。2026-10-22，正式受限密钥的 Checkout Sessions、Events、Refunds、Disputes 读取权限均已通过 `scripts/stripe_live_preflight.py` 核查；service 已移除临时的 `--skip-disputes`。对账失败或发现未解决争议时触发管理员告警邮件；证据提交和最终处置仍需人工在 Stripe 后台处理。退款仍应在 Stripe 中操作。管理员只读页 `/admin/orders` 展示最近 100 笔订单、平台累计退款和已收到的 Stripe 回调累计退款；如出现“需复核”，先检查事件交付、定时对账与服务日志，**不要直接修改 SQLite 额度**。
+以 `GET /api/config` 的 `payment.live` 和 `payment.checkout_enabled` 判断当前环境是否开放正式收银台。真实付款与额度发放只接受已验签且从 Stripe 实时读取核对的事件，或由服务端使用正式密钥直接向 Stripe 读取核对的对象。用户查询待付款订单时会尝试恢复漏送的成功回调；每小时的 `rightthesis-stripe-reconcile.timer` 先关闭所有账户已过期或未创建成功的本地结账记录，再独立核对全部正式待处理与已付订单、补记漏送成功退款，并检查已知付款的争议。已过期订单仍会接受迟到但经过验证的付款事件。2026-10-22，正式受限密钥的 Checkout Sessions、Events、Refunds、Disputes 读取权限均已通过 `scripts/stripe_live_preflight.py` 核查；service 已移除临时的 `--skip-disputes`。对账失败或发现未解决争议时触发管理员告警邮件；证据提交和最终处置仍需人工在 Stripe 后台处理。退款仍应在 Stripe 中操作。管理员只读页 `/admin/orders` 展示最近 100 笔订单、平台累计退款和已收到的 Stripe 回调累计退款；净收入包含部分退款订单的剩余实收金额。如出现“需复核”，先检查事件交付、定时对账与服务日志，**不要直接修改 SQLite 额度**。
 
 正式环境的管理员邮箱通过服务器私有 `ADMIN_EMAILS` 配置，多个邮箱以逗号分隔；未配置时全局订单和隐私申请 API 均拒绝访问。此配置不授予任何退款或修改额度的接口权限。
 

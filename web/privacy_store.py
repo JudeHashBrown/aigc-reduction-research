@@ -159,7 +159,11 @@ class PrivacyStore:
             ).fetchone()[0]
             pending = db.execute(
                 """SELECT COUNT(*) FROM orders WHERE account_id=?
-                   AND status='pending'""", (account_id,)
+                   AND status='pending'
+                   AND NOT (provider='stripe' AND (
+                       (checkout_expires_at IS NOT NULL AND checkout_expires_at<=?)
+                       OR (provider_order_id IS NULL AND checkout_url IS NULL
+                           AND created_at<=?)))""", (account_id, now, now - 30 * 60)
             ).fetchone()[0]
             paid_balance = db.execute(
                 """SELECT COALESCE(SUM(remaining),0) FROM credit_grants

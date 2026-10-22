@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -108,8 +109,36 @@ def test_queued_task_blocks_deletion():
             raise AssertionError("queued task must block account deletion")
 
 
+def test_expired_checkout_does_not_block_reviewed_deletion():
+    with tempfile.TemporaryDirectory() as folder:
+        database = Path(folder) / "app.sqlite3"
+        billing = BillingStore(database)
+        WorkspaceStore(database)
+        auth = AuthStore(database, b"test-secret-more-than-thirty-two-bytes")
+        privacy = PrivacyStore(database)
+        session = auth.rotate_authenticated(
+            auth.create_pre_auth()["token"], provider="google", subject="expired-checkout-user",
+            email="expired@example.com")
+        account = session["account_id"]
+        order = billing.prepare_stripe_checkout(account, "pack_3k", "privacy_expiry_001", livemode=True)
+        billing.attach_stripe_checkout(order["id"], "cs_live_privacy_expiry",
+                                       "https://checkout.stripe.com/c/pay/privacy", int(time.time()) + 3600)
+        request = privacy.request_deletion(account, "expired@example.com")
+        try:
+            privacy.complete_deletion(request["id"])
+        except PrivacyError as exc:
+            assert exc.status == 409
+        else:
+            raise AssertionError("active checkout must block account deletion")
+        with billing._connect() as db:
+            db.execute("UPDATE orders SET checkout_expires_at=? WHERE id=?",
+                       (int(time.time()) - 1, order["id"]))
+        assert privacy.complete_deletion(request["id"])["status"] == "completed"
+
+
 if __name__ == "__main__":
     test_export_and_safe_deletion()
     test_paid_entitlements_block_deletion()
     test_queued_task_blocks_deletion()
+    test_expired_checkout_does_not_block_reviewed_deletion()
     print("✓ 账户数据导出、删除申请、取消及权益保护")

@@ -525,25 +525,31 @@ class BillingStore:
             return dict(conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone())
 
     @staticmethod
-    def _expire_pending_checkouts(conn: sqlite3.Connection, account_id: str, now: int) -> None:
+    def _expire_pending_checkouts(conn: sqlite3.Connection, account_id: Optional[str], now: int) -> int:
         """Close unusable local checkout records without deciding payment state.
 
         A late, verified paid webhook may still settle an expired local order.
         """
-        conn.execute(
+        expired = conn.execute(
             """UPDATE orders SET status='expired'
-               WHERE account_id=? AND provider='stripe' AND status='pending'
+               WHERE (? IS NULL OR account_id=?) AND provider='stripe' AND status='pending'
                  AND checkout_expires_at IS NOT NULL AND checkout_expires_at<=?""",
-            (account_id, now),
-        )
+            (account_id, account_id, now),
+        ).rowcount
         # An interrupted process can leave a pending order with no redirect URL.
-        conn.execute(
+        failed = conn.execute(
             """UPDATE orders SET status='failed'
-               WHERE account_id=? AND provider='stripe' AND status='pending'
+               WHERE (? IS NULL OR account_id=?) AND provider='stripe' AND status='pending'
                  AND provider_order_id IS NULL AND checkout_url IS NULL
                  AND created_at<=?""",
-            (account_id, now - 30 * 60),
-        )
+            (account_id, account_id, now - 30 * 60),
+        ).rowcount
+        return expired + failed
+
+    def expire_stale_stripe_checkouts(self) -> int:
+        """Sweep all accounts so operations and deletion reviews see current states."""
+        with self._transaction() as conn:
+            return self._expire_pending_checkouts(conn, None, int(self._now()))
 
     def fail_stripe_checkout(self, order_id: str) -> None:
         """Mark a checkout that could not return a usable Stripe redirect."""

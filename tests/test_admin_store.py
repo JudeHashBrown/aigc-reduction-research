@@ -1,6 +1,8 @@
 """Admin summaries are bounded and never reveal manuscript bodies or credentials."""
 import sys
 import tempfile
+import sqlite3
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +36,22 @@ def run():
         assert admin.jobs() == []
         assert admin.economics()["model_cost_available"] is False
         assert admin.service()["controls_available"] is False
+        paid = billing.mock_checkout(account, "pack_3k", "admin_partial_001")
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE orders SET status='partially_refunded',refunded_fen=200 WHERE id=?",
+                       (paid["order_id"],))
+        economics = admin.economics()
+        assert economics["paid_orders"] == 1
+        assert economics["net_sales_fen"] == 790
+
+        now = int(time.time())
+        stale = billing.prepare_stripe_checkout("stale-account", "pack_3k", "admin_stale_001", livemode=True)
+        billing.attach_stripe_checkout(stale["id"], "cs_live_admin_stale",
+                                       "https://checkout.stripe.com/c/pay/stale", now - 10)
+        active = billing.prepare_stripe_checkout("active-account", "pack_3k", "admin_active_001", livemode=True)
+        billing.attach_stripe_checkout(active["id"], "cs_live_admin_active",
+                                       "https://checkout.stripe.com/c/pay/active", now + 3600)
+        assert admin.service()["pending_orders"] == 1
 
 
 if __name__ == "__main__":

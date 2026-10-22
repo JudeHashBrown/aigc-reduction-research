@@ -73,6 +73,37 @@ def test_stripe_order_and_webhook_idempotency():
         assert grants[0]["expires_at"] == now[0] + 30 * 86400
 
 
+def test_global_expiry_sweep_preserves_late_verified_payment():
+    with tempfile.TemporaryDirectory() as folder:
+        now = [1_700_000_000]
+        store = BillingStore(Path(folder) / "billing.sqlite3", now=lambda: now[0])
+        expired = store.prepare_stripe_checkout("buyer-a", "pack_3k", "checkout_expired_a", livemode=True)
+        store.attach_stripe_checkout(expired["id"], "cs_live_expired_a",
+                                     "https://checkout.stripe.com/c/pay/expired-a", now[0] + 100)
+        orphan = store.prepare_stripe_checkout("buyer-b", "pack_3k", "checkout_orphan_b", livemode=True)
+        active = store.prepare_stripe_checkout("buyer-c", "pack_3k", "checkout_active_c", livemode=True)
+        store.attach_stripe_checkout(active["id"], "cs_live_active_c",
+                                     "https://checkout.stripe.com/c/pay/active-c", now[0] + 3600)
+        now[0] += 1801
+        assert store.expire_stale_stripe_checkouts() == 2
+        assert store.expire_stale_stripe_checkouts() == 0
+        with store._connect() as db:
+            statuses = {row["id"]: row["status"] for row in db.execute("SELECT id,status FROM orders")}
+        assert statuses[expired["id"]] == "expired"
+        assert statuses[orphan["id"]] == "failed"
+        assert statuses[active["id"]] == "pending"
+        assert expired["id"] in {row["id"] for row in store.stripe_reconciliation_candidates()}
+        paid = {
+            "id": "cs_live_expired_a", "client_reference_id": expired["id"],
+            "metadata": {"order_id": expired["id"], "account_id": "buyer-a",
+                         "product_id": "pack_3k"},
+            "mode": "payment", "currency": "cny", "amount_total": 990,
+            "payment_status": "paid", "payment_intent": "pi_late_expired_a",
+        }
+        assert store.apply_stripe_checkout_event("evt_lateexpireda", "late-hash", paid)["status"] == "paid"
+        assert store.summary("buyer-a")["balance"] == 3800
+
+
 def test_live_reconciliation_repairs_missed_webhooks_without_double_grants():
     with tempfile.TemporaryDirectory() as folder:
         store = BillingStore(Path(folder) / "billing.sqlite3")
@@ -532,6 +563,7 @@ def test_http_webhook_without_browser_cookie_when_sdk_installed():
 
 if __name__ == "__main__":
     test_stripe_order_and_webhook_idempotency()
+    test_global_expiry_sweep_preserves_late_verified_payment()
     test_live_reconciliation_repairs_missed_webhooks_without_double_grants()
     test_provider_modes_and_checkout_options()
     test_live_mode_requires_opt_in_https_and_matching_webhook()
