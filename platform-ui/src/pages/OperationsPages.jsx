@@ -2880,7 +2880,7 @@ export function AdminOrdersPage({ navigate }) {
     }
   };
   return <Page>
-    <PageHeader eyebrow="ADMIN / BILLING" title={isEnglish ? "Orders and local ledger" : "订单与本地账本"} description={isEnglish ? "Read-only local order and webhook records. A match here does not prove Stripe has no undelivered events; check Stripe for final settlement." : "只读查看本地订单与回调记录。本地一致不代表 Stripe 没有未送达事件；最终结算仍需到 Stripe 核对。"}>
+    <PageHeader eyebrow="ADMIN / BILLING" title={isEnglish ? "Orders and refunds" : "订单与退款"} description={isEnglish ? "Review orders and issue refunds to the original payment method when enabled. Stripe's verified status determines the final result and credit adjustment." : "核对订单；启用后可向原支付方式发起退款。最终结果和额度调整以经核验的 Stripe 状态为准。"}>
       <Button icon={ArrowsClockwise} onClick={refresh} disabled={loading}>{loading ? (isEnglish ? "Loading…" : "正在读取…") : (isEnglish ? "Refresh" : "刷新")}</Button>
     </PageHeader>
     {error && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><p>{error}</p></div></div>}
