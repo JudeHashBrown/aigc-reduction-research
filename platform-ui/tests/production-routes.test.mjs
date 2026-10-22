@@ -29,6 +29,14 @@ test("account data actions live in account settings and old privacy bookmarks re
   assert.match(operations, /postApi\("\/api\/account\/delete-request"/);
 });
 
+test("user management entry is visible only for an authenticated admin account", () => {
+  assert.match(app, /isAdminUser = isAccountUser && \(session\?\.user\?\.role === "admin"/);
+  assert.match(app, /\{isAdminUser && <button role="menuitem" onClick=\{\(\) => navigate\("\/admin\/users"\)\}/);
+  assert.match(operations, /isAdminUser = isAccountUser && \(user\.role === "admin"/);
+  assert.match(operations, /\{isAdminUser && \(\s*<Section title=\{isEnglish \? "User management"/);
+  assert.match(app, /accountAdminDenied[\s\S]*session\?\.user\?\.role !== "admin"/);
+});
+
 test("public legal and help copy does not describe the product as a test build", () => {
   assert.doesNotMatch(publicPages, /产品仍处于测试阶段|测试阶段的模型|still in testing|during testing|当前版本尚未接入客服提交渠道/);
   assert.match(publicPages, /在账号设置下载账户数据/);

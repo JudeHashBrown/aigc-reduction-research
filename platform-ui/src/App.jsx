@@ -188,6 +188,7 @@ function Topbar({ path, navigate }) {
   const displayName = session?.user?.display_name || session?.user?.name || (isEnglish ? "Local researcher" : "本地研究者");
   const avatarLabel = Array.from(displayName.trim())[0] || (isEnglish ? "R" : "研");
   const isAccountUser = session?.authMode === "accounts" && session?.authenticated && session?.kind !== "guest";
+  const isAdminUser = isAccountUser && (session?.user?.role === "admin" || session?.user?.roles?.includes?.("admin"));
   const accessLabel = isAccountUser
     ? (session?.user?.email_verified ? (isEnglish ? "Verified account" : "已验证账户") : (isEnglish ? "Signed-in account" : "已登录账户"))
     : session?.trialMode || session?.kind === "guest"
@@ -275,6 +276,7 @@ function Topbar({ path, navigate }) {
                 <div className="rt-popover rt-user-popover" role="menu" aria-label={isEnglish ? "User menu" : "用户菜单"}>
                   <div><strong>{displayName}</strong><span>{session?.user?.email || accessLabel}</span><small>{session?.user?.email ? accessLabel : ""}</small></div>
                   <button role="menuitem" onClick={() => navigate("/app/settings/account")}><UserCircle size={17} />{isEnglish ? "Account settings" : "账号设置"}</button>
+                  {isAdminUser && <button role="menuitem" onClick={() => navigate("/admin/users")}><UsersThree size={17} />{isEnglish ? "Manage users" : "管理全部用户"}</button>}
                   {isAccountUser
                     ? <button role="menuitem" disabled={signingOut} onClick={handleSignOut}><SignOut size={17} />{signingOut ? (isEnglish ? "Signing out…" : "正在退出…") : (isEnglish ? "Sign out" : "退出登录")}</button>
                     : <button role="menuitem" onClick={() => navigate("/")}><SignOut size={17} />{isEnglish ? "Return home" : "返回首页"}</button>}

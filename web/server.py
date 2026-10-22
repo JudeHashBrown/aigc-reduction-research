@@ -764,6 +764,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _session_response(self, session):
         if ACCOUNTS_MODE:
+            public_user = None
+            if session and session.get("authenticated") and isinstance(session.get("user"), dict):
+                public_user = dict(session["user"])
+                public_user["role"] = "admin" if _admin_allowed(session) else "user"
             providers = {
                 "email_password": True,
                 "google": bool(GOOGLE_OAUTH and GOOGLE_OAUTH.configured),
@@ -772,7 +776,7 @@ class Handler(BaseHTTPRequestHandler):
                 "auth_mode": "accounts",
                 "trial_mode": False,
                 "authenticated": bool(session and session.get("authenticated")),
-                "user": session.get("user") if session and session.get("authenticated") else None,
+                "user": public_user,
                 "csrf_token": session.get("csrf_token") if session else None,
                 "providers": providers,
                 "auth": {
@@ -922,7 +926,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps({"orders": BILLING.admin_orders()},
                                                   ensure_ascii=False))
             if path == "/api/admin/users":
-                return self._send(200, json.dumps({"users": ADMIN.users()}, ensure_ascii=False))
+                params = parse_qs(urlparse(self.path).query, keep_blank_values=True)
+                query = params.get("q", [""])[0]
+                try:
+                    limit = int(params.get("limit", ["20"])[0])
+                    offset = int(params.get("offset", ["0"])[0])
+                except (TypeError, ValueError):
+                    return self._send(400, json.dumps({"error": "分页参数无效。"}, ensure_ascii=False))
+                if len(query) > 120 or not 1 <= limit <= 100 or not 0 <= offset <= 100_000:
+                    return self._send(400, json.dumps({"error": "搜索或分页参数无效。"}, ensure_ascii=False))
+                return self._send(200, json.dumps(
+                    ADMIN.search_users(query, limit, offset), ensure_ascii=False))
+            if path.startswith("/api/admin/users/"):
+                user_id = unquote(path.removeprefix("/api/admin/users/"))
+                if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", user_id):
+                    return self._send(400, json.dumps({"error": "账户编号无效。"}, ensure_ascii=False))
+                detail = ADMIN.user_detail(user_id)
+                if detail is None:
+                    return self._send(404, json.dumps({"error": "账户不存在。"}, ensure_ascii=False))
+                return self._send(200, json.dumps({"user": detail}, ensure_ascii=False))
             if path == "/api/admin/jobs":
                 return self._send(200, json.dumps({"jobs": ADMIN.jobs()}, ensure_ascii=False))
             if path == "/api/admin/plans":

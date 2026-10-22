@@ -17,18 +17,68 @@ class AdminStore:
         return db
 
     def users(self, limit: int = 100):
+        """Compatibility view for the original read-only operator summary."""
+        return self.search_users(limit=limit)["users"]
+
+    def search_users(self, query: str = "", limit: int = 20, offset: int = 0):
+        query = str(query or "").strip()[:120]
+        limit = min(max(int(limit), 1), 100)
+        offset = min(max(int(offset), 0), 100_000)
+        escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        where = """WHERE (?='' OR p.primary_email LIKE ? ESCAPE '\\'
+                    OR p.display_name LIKE ? ESCAPE '\\'
+                    OR a.id LIKE ? ESCAPE '\\')"""
+        params = (query, pattern, pattern, pattern)
         with self._connect() as db:
-            return [dict(row) for row in db.execute("""
+            total = db.execute(
+                f"SELECT COUNT(*) FROM accounts a JOIN auth_profiles p ON p.account_id=a.id {where}",
+                params,
+            ).fetchone()[0]
+            users = [dict(row) for row in db.execute(f"""
                 SELECT a.id AS account_id, p.primary_email, p.display_name,
-                       a.created_at, COUNT(DISTINCT m.id) AS manuscript_count,
+                       a.created_at,
+                       (SELECT COUNT(*) FROM manuscripts m WHERE m.account_id=a.id)
+                         AS manuscript_count,
                        COALESCE((SELECT SUM(g.remaining) FROM credit_grants g
                          WHERE g.account_id=a.id AND g.revoked_at IS NULL
                            AND (g.expires_at IS NULL OR g.expires_at>?)), 0) AS balance
                 FROM accounts a
                 JOIN auth_profiles p ON p.account_id=a.id
-                LEFT JOIN manuscripts m ON m.account_id=a.id
-                GROUP BY a.id ORDER BY a.created_at DESC LIMIT ?
-            """, (int(time.time()), min(max(limit, 1), 100))).fetchall()]
+                {where}
+                ORDER BY a.created_at DESC,a.id DESC LIMIT ? OFFSET ?
+            """, (int(time.time()), *params, limit, offset)).fetchall()]
+            return {"users": users, "total": total, "limit": limit, "offset": offset}
+
+    def user_detail(self, account_id: str) -> dict | None:
+        """Identity, entitlement and payment metadata only; never manuscript text."""
+        with self._connect() as db:
+            row = db.execute("""SELECT a.id AS account_id,p.primary_email,p.display_name,
+                       a.created_at,
+                       (SELECT COUNT(*) FROM manuscripts m WHERE m.account_id=a.id)
+                         AS manuscript_count,
+                       (SELECT COUNT(*) FROM auth_sessions s WHERE s.account_id=a.id
+                         AND s.authenticated=1 AND s.revoked_at IS NULL AND s.expires_at>?)
+                         AS active_sessions,
+                       COALESCE((SELECT SUM(g.remaining) FROM credit_grants g
+                         WHERE g.account_id=a.id AND g.revoked_at IS NULL
+                           AND (g.expires_at IS NULL OR g.expires_at>?)),0) AS balance
+                   FROM accounts a JOIN auth_profiles p ON p.account_id=a.id
+                   WHERE a.id=?""", (int(time.time()), int(time.time()), account_id)).fetchone()
+            if not row:
+                return None
+            grants = [dict(item) for item in db.execute("""SELECT id,kind,product_id,
+                       remaining,granted,expires_at,created_at
+                   FROM credit_grants WHERE account_id=? AND revoked_at IS NULL
+                   ORDER BY created_at DESC LIMIT 30""", (account_id,)).fetchall()]
+            orders = [dict(item) for item in db.execute("""SELECT id,product_id,status,
+                       amount_fen,currency,refunded_fen,created_at,paid_at
+                   FROM orders WHERE account_id=? ORDER BY created_at DESC LIMIT 20""",
+                   (account_id,)).fetchall()]
+            return {**dict(row), "providers": [item[0] for item in db.execute(
+                    "SELECT provider FROM auth_identities WHERE account_id=? ORDER BY provider",
+                    (account_id,)).fetchall()],
+                "grants": grants, "orders": orders}
 
     def jobs(self, limit: int = 100):
         with self._connect() as db:

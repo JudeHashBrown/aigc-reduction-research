@@ -53,6 +53,23 @@ def run():
                                        "https://checkout.stripe.com/c/pay/active", now + 3600)
         assert admin.service()["pending_orders"] == 1
 
+        second = auth.rotate_authenticated(
+            auth.create_pre_auth()["token"], provider="google", subject="admin-second-user",
+            email="second@example.com", display_name="Second")
+        first_page = admin.search_users(limit=1, offset=0)
+        second_page = admin.search_users(limit=1, offset=1)
+        assert first_page["total"] == 2
+        assert len(first_page["users"]) == len(second_page["users"]) == 1
+        assert first_page["users"][0]["account_id"] != second_page["users"][0]["account_id"]
+        assert admin.search_users("second@example.com")["users"][0]["account_id"] == second["account_id"]
+        assert admin.search_users("%")['total'] == 0, "wildcards must be treated literally"
+        detail = admin.user_detail(account)
+        assert detail["active_sessions"] == 1
+        assert detail["manuscript_count"] == 1
+        assert detail["balance"] == billing.summary(account)["balance"]
+        assert "PRIVATE MANUSCRIPT BODY" not in str(detail)
+        assert admin.user_detail("acct_doesnotexist") is None
+
 
 if __name__ == "__main__":
     run()

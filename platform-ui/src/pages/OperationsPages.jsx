@@ -1116,7 +1116,7 @@ function FilterBar({ query, onQuery, placeholder = "搜索", children }) {
   );
 }
 
-function Table({ columns, rows, empty = "暂无记录", onRow }) {
+function Table({ columns, rows, empty = "暂无记录", onRow, rowLabel }) {
   const { isEnglish } = useLocale();
   const localizedColumns = localizeValue(columns, isEnglish);
   const localizedRows = localizeValue(rows, isEnglish);
@@ -1138,7 +1138,7 @@ function Table({ columns, rows, empty = "暂无记录", onRow }) {
                 }
               } : undefined}
               tabIndex={onRow ? 0 : undefined}
-              aria-label={onRow ? (isEnglish ? `View order ${row.id || index + 1}` : `查看订单 ${row.id || index + 1}`) : undefined}
+              aria-label={onRow ? (rowLabel?.(rows[index]) || (isEnglish ? `View order ${row.id || index + 1}` : `查看订单 ${row.id || index + 1}`)) : undefined}
               className={onRow ? "is-clickable" : ""}
             >
               {localizedColumns.map((column) => (
@@ -2094,6 +2094,7 @@ export function AccountSettingsPage({ navigate }) {
         : [];
   const providers = rawProviders.map((provider) => typeof provider === "string" ? provider : provider?.provider).filter(Boolean);
   const isAccountUser = session?.authMode === "accounts" && session?.authenticated && session?.kind !== "guest";
+  const isAdminUser = isAccountUser && (user.role === "admin" || user.roles?.includes?.("admin"));
   const isGuest = session?.kind === "guest" || session?.trialMode;
   const providerLabels = providers.map((provider) => provider === "google" ? "Google" : (isEnglish ? "Email + password" : "邮箱 + 密码"));
 
@@ -2183,6 +2184,12 @@ export function AccountSettingsPage({ navigate }) {
           {signOutError && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><b>{isEnglish ? "Could not sign out" : "无法退出登录"}</b><p>{signOutError}</p>{unsavedSignOut && <><p>{isEnglish ? "If the server cannot save your edits, download the local draft before signing out. The draft also remains on this device." : "若服务端暂时无法保存，请先下载未同步稿再退出；本机草稿也会保留。"}</p><Button icon={DownloadSimple} onClick={downloadAndSignOut} disabled={signingOut}>{isEnglish ? "Download draft and sign out" : "下载未同步稿并退出"}</Button></>}</div></div>}
         </Section>
       </div>
+      {isAdminUser && (
+        <Section title={isEnglish ? "User management" : "用户管理"} kicker="ADMIN" className="ops-shadow-card">
+          <div className="ops-note ops-note--green"><Users size={28} weight="fill" /><div><b>{isEnglish ? "Manage all users" : "管理全部用户"}</b><p>{isEnglish ? "Search accounts and review credit and order records. Manuscript contents are not shown." : "搜索全部账户，查看额度和订单记录；不展示论文正文。"}</p></div></div>
+          <div className="ops-header-actions"><Button tone="blue" icon={Users} onClick={() => navigate("/admin/users")}>{isEnglish ? "Open user management" : "进入用户管理"}</Button></div>
+        </Section>
+      )}
       <AccountDataControls email={user.email || ""} navigate={navigate} />
     </Page>
   );
@@ -2666,13 +2673,93 @@ export function AdminOverviewPage({ navigate }) {
 }
 
 export function AdminUsersPage({ navigate }) {
-  return <AdminLiveList navigate={navigate} active="users" endpoint="/api/admin/users" field="users" title="用户与权益" description="最近 100 位账户的身份与额度摘要；不展示论文内容，不提供直接改额度操作。" columns={[
-    { key: "primary_email", label: "邮箱" },
-    { key: "display_name", label: "名称" },
-    { key: "balance", label: "可用字数" },
-    { key: "manuscript_count", label: "文稿数" },
-    { key: "created_at", label: "注册时间", render: (row) => new Date(row.created_at * 1000).toLocaleString() },
-  ]} />;
+  const { isEnglish } = useLocale();
+  const [query, setQuery] = useState("");
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [result, setResult] = useState({ users: [], total: 0 });
+  const [selectedId, setSelectedId] = useState("");
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [error, setError] = useState("");
+  const pageSize = 20;
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ q: search, limit: String(pageSize), offset: String(page * pageSize) });
+      setResult(await getApi(`/api/admin/users?${params}`));
+    } catch (failure) {
+      setError(failure.message || (isEnglish ? "Could not load users." : "无法读取用户。"));
+    } finally {
+      setLoading(false);
+    }
+  }, [search, page, isEnglish]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!selectedId) { setDetail(null); return; }
+    let cancelled = false;
+    setDetailLoading(true);
+    getApi(`/api/admin/users/${encodeURIComponent(selectedId)}`)
+      .then((response) => { if (!cancelled) setDetail(response.user); })
+      .catch((failure) => { if (!cancelled) setError(failure.message || "无法读取用户详情。"); })
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedId]);
+  const date = (value) => value ? new Date(value * 1000).toLocaleString() : "—";
+  const number = (value) => Number(value || 0).toLocaleString(isEnglish ? "en-US" : "zh-CN");
+  const copy = (zh, en) => isEnglish ? en : zh;
+  return <Page>
+    <PageHeader eyebrow="ADMIN / USERS" title={copy("用户管理", "User management")} description={copy("检索账户、核对权益和订单状态；不展示论文正文。", "Search accounts and review entitlements and orders without exposing manuscript text.")}>
+      <Button icon={ArrowsClockwise} onClick={refresh} disabled={loading}>{loading ? copy("正在读取…", "Loading…") : copy("刷新", "Refresh")}</Button>
+    </PageHeader>
+    <AdminTabs navigate={navigate} active="users" />
+    <Section title={copy("账户列表", "Accounts")} kicker="LIVE / ADMIN" className="ops-shadow-card">
+      <form className="ops-admin-user-search" onSubmit={(event) => { event.preventDefault(); setSelectedId(""); setPage(0); setSearch(query.trim()); }}>
+        <label className="ops-search"><MagnifyingGlass size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} maxLength={120} placeholder={copy("搜索邮箱、名称或账户编号", "Search email, name, or account ID")} aria-label={copy("搜索用户", "Search users")} /></label>
+        <Button tone="blue" type="submit">{copy("搜索", "Search")}</Button>
+        <span>{copy(`共 ${number(result.total)} 位用户`, `${number(result.total)} users`)}</span>
+      </form>
+      {error && <div className="ops-note ops-note--yellow" role="alert">{error}</div>}
+      {!error && <Table rows={(result.users || []).map((user) => ({ ...user, id: user.account_id }))} onRow={(user) => setSelectedId(user.account_id)} rowLabel={(user) => copy(`查看用户 ${user.primary_email}`, `View user ${user.primary_email}`)} empty={loading ? copy("正在读取…", "Loading…") : copy("没有符合条件的用户", "No matching users")} columns={[
+        { key: "primary_email", label: copy("邮箱", "Email") },
+        { key: "display_name", label: copy("名称", "Name") },
+        { key: "balance", label: copy("可用字数", "Available characters"), render: (user) => number(user.balance) },
+        { key: "manuscript_count", label: copy("文稿数", "Manuscripts") },
+        { key: "created_at", label: copy("注册时间", "Registered"), render: (user) => date(user.created_at) },
+      ]} />}
+      <div className="ops-admin-user-pagination">
+        <span>{result.total ? `${page * pageSize + 1}–${Math.min((page + 1) * pageSize, result.total)} / ${number(result.total)}` : "0"}</span>
+        <Button onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={loading || page === 0}>{copy("上一页", "Previous")}</Button>
+        <Button onClick={() => setPage((value) => value + 1)} disabled={loading || (page + 1) * pageSize >= result.total}>{copy("下一页", "Next")}</Button>
+      </div>
+    </Section>
+    {selectedId && <Section title={copy("账户详情", "Account details")} kicker="ACCOUNT / READ ONLY" className="ops-shadow-card ops-admin-user-detail">
+      {detailLoading ? <p className="ops-admin-user-hint">{copy("正在读取账户详情…", "Loading account details…")}</p> : detail && <>
+        <div className="ops-admin-user-summary">
+          <div><small>{copy("账户", "Account")}</small><strong>{detail.primary_email}</strong><code>{detail.account_id}</code></div>
+          <div><small>{copy("可用字数", "Available characters")}</small><strong>{number(detail.balance)}</strong></div>
+          <div><small>{copy("登录设备", "Active sessions")}</small><strong>{number(detail.active_sessions)}</strong></div>
+          <div><small>{copy("登录方式", "Sign-in methods")}</small><strong>{(detail.providers || []).join("、") || "—"}</strong></div>
+        </div>
+        <div className="ops-admin-user-detail-grid">
+          <div><h3>{copy("最近额度来源", "Recent credit grants")}</h3><Table rows={detail.grants || []} empty={copy("暂无额度", "No grants")} columns={[
+            { key: "product_id", label: copy("来源", "Source") },
+            { key: "granted", label: copy("发放", "Granted"), render: (row) => number(row.granted) },
+            { key: "remaining", label: copy("剩余", "Remaining"), render: (row) => number(row.remaining) },
+            { key: "expires_at", label: copy("有效期", "Expires"), render: (row) => date(row.expires_at) },
+          ]} /></div>
+          <div><h3>{copy("最近订单", "Recent orders")}</h3><Table rows={detail.orders || []} empty={copy("暂无订单", "No orders")} columns={[
+            { key: "product_id", label: copy("套餐", "Plan") },
+            { key: "status", label: copy("状态", "Status"), render: (row) => <StatusPill status={row.status} /> },
+            { key: "amount_fen", label: copy("金额", "Amount"), render: (row) => `${(row.amount_fen / 100).toFixed(2)} ${row.currency}` },
+            { key: "created_at", label: copy("创建时间", "Created"), render: (row) => date(row.created_at) },
+          ]} /></div>
+        </div>
+      </>}
+    </Section>}
+  </Page>;
 }
 
 export function AdminJobsPage({ navigate }) {

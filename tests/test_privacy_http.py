@@ -65,6 +65,11 @@ def run():
             code, config, _ = request(opener, base, "/api/config")
             assert code == 200 and config["admin_read_only_configured"] is True
             cookie = {"Cookie": f"rightthesis_session={session['token']}"}
+            code, admin_session, _ = request(opener, base, "/api/session", headers=cookie)
+            assert code == 200 and admin_session["user"]["role"] == "admin"
+            code, ordinary_session, _ = request(opener, base, "/api/session", headers={
+                "Cookie": f"rightthesis_session={another['token']}"})
+            assert code == 200 and ordinary_session["user"]["role"] == "user"
             code, _, _ = request(opener, base, "/api/account/data-export")
             assert code == 401
             code, exported, headers = request(opener, base, "/api/account/data-export",
@@ -75,6 +80,19 @@ def run():
             assert "auth_sessions" not in exported
             code, admin_orders, _ = request(opener, base, "/api/admin/orders", headers=cookie)
             assert code == 200 and "orders" in admin_orders
+            code, users, _ = request(opener, base, "/api/admin/users?q=other%40example.com&limit=1&offset=0", headers=cookie)
+            assert code == 200 and users["total"] == 1
+            assert users["users"][0]["account_id"] == another["account_id"]
+            code, detail, _ = request(opener, base,
+                                      f"/api/admin/users/{another['account_id']}", headers=cookie)
+            assert code == 200 and detail["user"]["primary_email"] == "other@example.com"
+            assert "private source text" not in str(detail)
+            code, _, _ = request(opener, base, "/api/admin/users?limit=invalid", headers=cookie)
+            assert code == 400
+            code, _, _ = request(opener, base,
+                                 f"/api/admin/users/{account}", headers={
+                                     "Cookie": f"rightthesis_session={another['token']}"})
+            assert code == 403
             for endpoint, field in (("users", "users"), ("jobs", "jobs"),
                                     ("plans", "plans"), ("economics", "currency"),
                                     ("service", "jobs_by_state")):
