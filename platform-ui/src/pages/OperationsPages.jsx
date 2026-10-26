@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useState } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -1315,6 +1315,7 @@ function platformPlanKind(kind, isEnglish) {
     subscription: ["月卡额度", "One-time pass credits"],
     pack: ["独立字数包", "Standalone credit pack"],
     trial: ["体验额度", "Trial credits"],
+    admin: ["管理员赠送额度", "Administrator credit grant"],
   };
   return (labels[kind] || [kind || "额度", kind || "Credits"])[isEnglish ? 1 : 0];
 }
@@ -1375,7 +1376,9 @@ function ledgerDetail(entry, isEnglish) {
       : `归还 ${entry.delta} 字；${unavailable} 字已过期或退款撤销，不再可用`;
     return isEnglish ? "Reserved credits returned" : "预占额度已归还";
   }
-  if (entry.kind === "grant") return metadata.product_id || metadata.provider || (isEnglish ? "Credits added" : "额度已入账");
+  if (entry.kind === "grant") return metadata.product_id === "admin_credit"
+    ? (isEnglish ? "Administrator credit grant" : "管理员赠送额度")
+    : metadata.product_id || metadata.provider || (isEnglish ? "Credits added" : "额度已入账");
   return "—";
 }
 
@@ -1395,7 +1398,7 @@ export function BillingPage({ navigate }) {
     priority: index + 1,
     source: planLookup.get(grant.product_id)
       ? localizedPlanName(planLookup.get(grant.product_id), isEnglish)
-      : (grant.product_id || platformPlanKind(grant.kind, isEnglish)),
+      : (grant.kind === "admin" ? platformPlanKind(grant.kind, isEnglish) : (grant.product_id || platformPlanKind(grant.kind, isEnglish))),
     kindLabel: platformPlanKind(grant.kind, isEnglish),
     expiresLabel: grant.expires_at ? formatPlatformTime(grant.expires_at, isEnglish) : t("不过期", "No expiry"),
   }));
@@ -2186,8 +2189,8 @@ export function AccountSettingsPage({ navigate }) {
       </div>
       {isAdminUser && (
         <Section title={isEnglish ? "User management" : "用户管理"} kicker="ADMIN" className="ops-shadow-card">
-          <div className="ops-note ops-note--green"><Users size={28} weight="fill" /><div><b>{isEnglish ? "Manage all users" : "管理全部用户"}</b><p>{isEnglish ? "Search accounts and review credit and order records. Manuscript contents are not shown." : "搜索全部账户，查看额度和订单记录；不展示论文正文。"}</p></div></div>
-          <div className="ops-header-actions"><Button tone="blue" icon={Users} onClick={() => navigate("/admin/users")}>{isEnglish ? "Open user management" : "进入用户管理"}</Button></div>
+          <div className="ops-note ops-note--green"><Users size={28} weight="fill" /><div><b>{isEnglish ? "Manage all users" : "管理全部用户"}</b><p>{isEnglish ? "Search accounts, grant auditable credits and review website page views. Manuscript contents are not shown." : "搜索账户、审计额度发放并查看网站浏览量；不展示论文正文。"}</p></div></div>
+          <div className="ops-header-actions"><Button tone="blue" icon={Users} onClick={() => navigate("/admin/users")}>{isEnglish ? "Open user management" : "进入用户管理"}</Button><Button icon={ChartLineUp} onClick={() => navigate("/admin/traffic")}>{isEnglish ? "View traffic" : "查看访问量"}</Button></div>
         </Section>
       )}
       <AccountDataControls email={user.email || ""} navigate={navigate} />
@@ -2627,7 +2630,7 @@ function AdminHeader({ title, description, children }) {
 function AdminTabs({ navigate, active }) {
   const { isEnglish } = useLocale();
   const items = [
-    ["overview", "总览", "/admin"], ["users", "用户", "/admin/users"], ["jobs", "任务", "/admin/jobs"],
+    ["overview", "总览", "/admin"], ["users", "用户", "/admin/users"], ["traffic", "访问量", "/admin/traffic"], ["jobs", "任务", "/admin/jobs"],
     ["plans", "方案", "/admin/plans"], ["orders", "订单", "/admin/orders"], ["economics", "成本", "/admin/economics"],
     ["service", "服务", "/admin/service"], ["privacy", "隐私", "/admin/privacy"],
   ];
@@ -2679,10 +2682,19 @@ export function AdminUsersPage({ navigate }) {
   const [page, setPage] = useState(0);
   const [result, setResult] = useState({ users: [], total: 0 });
   const [selectedId, setSelectedId] = useState("");
+  const selectedIdRef = useRef("");
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
+  const [creditAmount, setCreditAmount] = useState("");
+  const [validDays, setValidDays] = useState("90");
+  const [grantReason, setGrantReason] = useState("");
+  const [confirmEmail, setConfirmEmail] = useState("");
+  const [grantRequestId, setGrantRequestId] = useState("");
+  const [grantBusy, setGrantBusy] = useState(false);
+  const [grantError, setGrantError] = useState("");
+  const [grantFeedback, setGrantFeedback] = useState("");
   const pageSize = 20;
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -2697,9 +2709,17 @@ export function AdminUsersPage({ navigate }) {
     }
   }, [search, page, isEnglish]);
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => {
     if (!selectedId) { setDetail(null); return; }
     let cancelled = false;
+    setCreditAmount("");
+    setValidDays("90");
+    setGrantReason("");
+    setConfirmEmail("");
+    setGrantRequestId("");
+    setGrantError("");
+    setGrantFeedback("");
     setDetailLoading(true);
     getApi(`/api/admin/users/${encodeURIComponent(selectedId)}`)
       .then((response) => { if (!cancelled) setDetail(response.user); })
@@ -2710,19 +2730,64 @@ export function AdminUsersPage({ navigate }) {
   const date = (value) => value ? new Date(value * 1000).toLocaleString() : "—";
   const number = (value) => Number(value || 0).toLocaleString(isEnglish ? "en-US" : "zh-CN");
   const copy = (zh, en) => isEnglish ? en : zh;
+  const editGrant = (setter, value) => {
+    setter(value);
+    setGrantRequestId("");
+    setGrantFeedback("");
+    setGrantError("");
+  };
+  const submitGrant = async (event) => {
+    event.preventDefault();
+    if (grantBusy || !detail || detail.account_id !== selectedId) return;
+    const targetAccountId = detail.account_id;
+    setGrantError("");
+    setGrantFeedback("");
+    if (confirmEmail.trim().toLowerCase() !== detail.primary_email.toLowerCase()) {
+      setGrantError(copy("确认邮箱与所选用户不一致。", "The confirmation email does not match the selected account."));
+      return;
+    }
+    const requestId = grantRequestId || globalThis.crypto.randomUUID();
+    setGrantRequestId(requestId);
+    setGrantBusy(true);
+    try {
+      const response = await postApi(`/api/admin/users/${encodeURIComponent(targetAccountId)}/credits`, {
+        request_id: requestId,
+        credits: Number(creditAmount),
+        valid_days: Number(validDays),
+        reason: grantReason.trim(),
+        confirm_email: confirmEmail.trim(),
+      });
+      if (selectedIdRef.current !== targetAccountId) return;
+      setDetail(response.user);
+      setGrantFeedback(response.grant?.reused
+        ? copy("这笔发放已处理过，未重复增加额度。", "This request was already processed; no duplicate credits were added.")
+        : copy(`已为 ${detail.primary_email} 发放 ${number(creditAmount)} 字额度。`, `${number(creditAmount)} characters granted to ${detail.primary_email}.`));
+      setGrantRequestId("");
+      setCreditAmount("");
+      setGrantReason("");
+      setConfirmEmail("");
+      void refresh();
+    } catch (failure) {
+      if (selectedIdRef.current === targetAccountId) {
+        setGrantError(failure.message || copy("发放失败，请使用原请求重试。", "Grant failed; retry the original request."));
+      }
+    } finally {
+      setGrantBusy(false);
+    }
+  };
   return <Page>
     <PageHeader eyebrow="ADMIN / USERS" title={copy("用户管理", "User management")} description={copy("检索账户、核对权益和订单状态；不展示论文正文。", "Search accounts and review entitlements and orders without exposing manuscript text.")}>
       <Button icon={ArrowsClockwise} onClick={refresh} disabled={loading}>{loading ? copy("正在读取…", "Loading…") : copy("刷新", "Refresh")}</Button>
     </PageHeader>
     <AdminTabs navigate={navigate} active="users" />
     <Section title={copy("账户列表", "Accounts")} kicker="LIVE / ADMIN" className="ops-shadow-card">
-      <form className="ops-admin-user-search" onSubmit={(event) => { event.preventDefault(); setSelectedId(""); setPage(0); setSearch(query.trim()); }}>
+      <form className="ops-admin-user-search" onSubmit={(event) => { event.preventDefault(); if (grantBusy) return; setSelectedId(""); setPage(0); setSearch(query.trim()); }}>
         <label className="ops-search"><MagnifyingGlass size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} maxLength={120} placeholder={copy("搜索邮箱、名称或账户编号", "Search email, name, or account ID")} aria-label={copy("搜索用户", "Search users")} /></label>
-        <Button tone="blue" type="submit">{copy("搜索", "Search")}</Button>
+        <Button tone="blue" type="submit" disabled={grantBusy}>{copy("搜索", "Search")}</Button>
         <span>{copy(`共 ${number(result.total)} 位用户`, `${number(result.total)} users`)}</span>
       </form>
       {error && <div className="ops-note ops-note--yellow" role="alert">{error}</div>}
-      {!error && <Table rows={(result.users || []).map((user) => ({ ...user, id: user.account_id }))} onRow={(user) => setSelectedId(user.account_id)} rowLabel={(user) => copy(`查看用户 ${user.primary_email}`, `View user ${user.primary_email}`)} empty={loading ? copy("正在读取…", "Loading…") : copy("没有符合条件的用户", "No matching users")} columns={[
+      {!error && <Table rows={(result.users || []).map((user) => ({ ...user, id: user.account_id }))} onRow={(user) => { if (!grantBusy) setSelectedId(user.account_id); }} rowLabel={(user) => copy(`查看用户 ${user.primary_email}`, `View user ${user.primary_email}`)} empty={loading ? copy("正在读取…", "Loading…") : copy("没有符合条件的用户", "No matching users")} columns={[
         { key: "primary_email", label: copy("邮箱", "Email") },
         { key: "display_name", label: copy("名称", "Name") },
         { key: "balance", label: copy("可用字数", "Available characters"), render: (user) => number(user.balance) },
@@ -2731,12 +2796,12 @@ export function AdminUsersPage({ navigate }) {
       ]} />}
       <div className="ops-admin-user-pagination">
         <span>{result.total ? `${page * pageSize + 1}–${Math.min((page + 1) * pageSize, result.total)} / ${number(result.total)}` : "0"}</span>
-        <Button onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={loading || page === 0}>{copy("上一页", "Previous")}</Button>
-        <Button onClick={() => setPage((value) => value + 1)} disabled={loading || (page + 1) * pageSize >= result.total}>{copy("下一页", "Next")}</Button>
+        <Button onClick={() => setPage((value) => Math.max(0, value - 1))} disabled={loading || grantBusy || page === 0}>{copy("上一页", "Previous")}</Button>
+        <Button onClick={() => setPage((value) => value + 1)} disabled={loading || grantBusy || (page + 1) * pageSize >= result.total}>{copy("下一页", "Next")}</Button>
       </div>
     </Section>
-    {selectedId && <Section title={copy("账户详情", "Account details")} kicker="ACCOUNT / READ ONLY" className="ops-shadow-card ops-admin-user-detail">
-      {detailLoading ? <p className="ops-admin-user-hint">{copy("正在读取账户详情…", "Loading account details…")}</p> : detail && <>
+    {selectedId && <Section title={copy("账户详情", "Account details")} kicker="ACCOUNT / LIVE" className="ops-shadow-card ops-admin-user-detail">
+      {detailLoading ? <p className="ops-admin-user-hint">{copy("正在读取账户详情…", "Loading account details…")}</p> : detail?.account_id === selectedId && <>
         <div className="ops-admin-user-summary">
           <div><small>{copy("账户", "Account")}</small><strong>{detail.primary_email}</strong><code>{detail.account_id}</code></div>
           <div><small>{copy("可用字数", "Available characters")}</small><strong>{number(detail.balance)}</strong></div>
@@ -2757,8 +2822,105 @@ export function AdminUsersPage({ navigate }) {
             { key: "created_at", label: copy("创建时间", "Created"), render: (row) => date(row.created_at) },
           ]} /></div>
         </div>
+        <form className="ops-admin-credit-form" onSubmit={submitGrant}>
+          <h3>{copy("赋予额度", "Grant credits")}</h3>
+          <p>{copy("只增加可用字数，不改变该用户的单次处理上限或可用改写模式。操作会记录管理员、原因和账本流水。", "Adds available characters only. The user's per-task limit and rewrite modes stay unchanged. The administrator, reason and ledger entry are recorded.")}</p>
+          <div className="ops-admin-credit-fields">
+            <label>{copy("增加字数", "Characters to add")}<input type="number" min="1" max="1000000" step="1" required value={creditAmount} onChange={(event) => editGrant(setCreditAmount, event.target.value)} placeholder="10000" /></label>
+            <label>{copy("有效期", "Validity")}<select value={validDays} onChange={(event) => editGrant(setValidDays, event.target.value)}><option value="30">{copy("30 天", "30 days")}</option><option value="90">{copy("90 天", "90 days")}</option><option value="365">{copy("365 天", "365 days")}</option><option value="0">{copy("不过期", "No expiry")}</option></select></label>
+            <label>{copy("发放原因（至少 5 字）", "Reason (at least 5 characters)")}<input type="text" minLength={5} maxLength={200} required value={grantReason} onChange={(event) => editGrant(setGrantReason, event.target.value)} placeholder={copy("例如：客服补偿或活动赠送", "For example: service recovery or promotion")} /></label>
+            <label>{copy("再次输入目标用户邮箱", "Re-enter the recipient's email")}<input type="email" required value={confirmEmail} onChange={(event) => editGrant(setConfirmEmail, event.target.value)} placeholder={detail.primary_email} autoComplete="off" /></label>
+          </div>
+          {grantError && <div className="ops-note ops-note--yellow" role="alert">{grantError}</div>}
+          {grantFeedback && <div className="ops-note ops-note--green" role="status">{grantFeedback}</div>}
+          <div className="ops-header-actions"><Button tone="blue" type="submit" disabled={grantBusy}>{grantBusy ? copy("正在发放…", "Granting…") : copy("确认发放额度", "Confirm credit grant")}</Button></div>
+        </form>
+        <div className="ops-admin-credit-audit">
+          <h3>{copy("最近管理员发放记录", "Recent administrator grants")}</h3>
+          <Table rows={detail.admin_grants || []} empty={copy("暂无管理员发放记录", "No administrator grants yet")} columns={[
+            { key: "created_at", label: copy("时间", "Time"), render: (row) => date(row.created_at) },
+            { key: "credits", label: copy("字数", "Characters"), render: (row) => number(row.credits) },
+            { key: "actor_email", label: copy("操作人", "Administrator"), render: (row) => row.actor_email || row.actor_account_id },
+            { key: "reason", label: copy("原因", "Reason") },
+            { key: "expires_at", label: copy("到期", "Expires"), render: (row) => date(row.expires_at) },
+          ]} />
+        </div>
       </>}
     </Section>}
+  </Page>;
+}
+
+const trafficPageNames = {
+  "/": ["首页", "Home"], "/pricing": ["定价", "Pricing"], "/auth": ["登录与注册", "Sign in / register"],
+  "/auth/verify": ["邮箱验证", "Email verification"], "/auth/forgot": ["找回密码", "Password recovery"],
+  "/legal/privacy": ["隐私政策", "Privacy policy"], "/legal/terms": ["服务条款", "Terms"], "/help": ["帮助中心", "Help"],
+  "/app": ["文档首页", "Documents"], "/app/new": ["新建文稿", "New document"], "/app/workbench": ["改写工作台", "Workspace"],
+  "/app/versions": ["版本历史", "Version history"], "/app/billing": ["套餐与额度", "Plans and credits"],
+  "/app/billing/usage": ["额度明细", "Usage"], "/app/billing/orders": ["订单", "Orders"],
+  "/checkout/pro": ["支付确认", "Checkout"], "/app/settings/account": ["账号设置", "Account settings"],
+  "/app/settings/service": ["服务状态", "Service status"],
+};
+
+export function AdminTrafficPage({ navigate }) {
+  const { isEnglish } = useLocale();
+  const [days, setDays] = useState(30);
+  const [traffic, setTraffic] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const requestSerial = useRef(0);
+  const copy = (zh, en) => isEnglish ? en : zh;
+  const number = (value) => Number(value || 0).toLocaleString(isEnglish ? "en-US" : "zh-CN");
+  const refresh = useCallback(async () => {
+    const serial = ++requestSerial.current;
+    setLoading(true);
+    setTraffic(null);
+    setError("");
+    try {
+      const result = await getApi(`/api/admin/traffic?days=${days}`);
+      if (serial === requestSerial.current) setTraffic(result);
+    } catch (failure) {
+      if (serial === requestSerial.current) setError(failure.message || copy("访问数据暂时不可用。", "Traffic data is unavailable."));
+    } finally {
+      if (serial === requestSerial.current) setLoading(false);
+    }
+  }, [days, isEnglish]);
+  useEffect(() => {
+    void refresh();
+    return () => { requestSerial.current += 1; };
+  }, [refresh]);
+  const daily = traffic?.daily || [];
+  const peak = Math.max(1, ...daily.map((item) => item.views));
+  const todayViews = traffic?.today_views || 0;
+  return <Page>
+    <AdminHeader title={copy("网站访问量", "Website traffic")} description={copy("按香港时间统计记录到的页面浏览次数；数据从启用统计后开始累计。", "Recorded page views grouped by Hong Kong time, starting when tracking was enabled.")}>
+      <Button icon={ArrowsClockwise} onClick={refresh} disabled={loading}>{loading ? copy("正在读取…", "Loading…") : copy("刷新", "Refresh")}</Button>
+    </AdminHeader>
+    <AdminTabs navigate={navigate} active="traffic" />
+    <div className="ops-admin-traffic-period" role="group" aria-label={copy("统计周期", "Reporting period")}>
+      {[7, 30, 90].map((value) => <button key={value} type="button" className={days === value ? "is-active" : ""} aria-pressed={days === value} onClick={() => setDays(value)}>{copy(`近 ${value} 天`, `Last ${value} days`)}</button>)}
+    </div>
+    {error && <div className="ops-note ops-note--yellow" role="alert">{error}</div>}
+    {loading && !traffic && !error && <p className="ops-admin-user-hint" role="status">{copy("正在读取访问数据…", "Loading traffic data…")}</p>}
+    {!error && traffic && <>
+      <div className="ops-admin-traffic-metrics">
+        <div><small>{copy("今日页面浏览", "Page views today")}</small><strong>{number(todayViews)}</strong><span>PV · {traffic?.to_date || "—"}</span></div>
+        <div><small>{copy(`近 ${days} 天页面浏览`, `Page views, last ${days} days`)}</small><strong>{number(traffic?.period_views)}</strong><span>{traffic?.from_date || "—"} – {traffic?.to_date || "—"}</span></div>
+        <div><small>{copy("启用以来页面浏览", "Page views since tracking began")}</small><strong>{number(traffic?.all_time_views)}</strong><span>{copy("开始记录：", "Recording since: ")}{traffic?.count_started_on || "—"}</span></div>
+      </div>
+      <Section title={copy("每日浏览趋势", "Daily page views")} kicker="PAGE VIEWS / PV" className="ops-shadow-card">
+        <div className="ops-admin-traffic-chart" role="img" aria-label={copy(`近 ${days} 天每日页面浏览量`, `Daily page views for the last ${days} days`)}>
+          {daily.map((item, index) => <div key={item.date} className="ops-admin-traffic-day" title={`${item.date}: ${number(item.views)} PV`}><span>{days === 7 ? number(item.views) : ""}</span><div style={{ height: `${item.views ? Math.max(3, (item.views / peak) * 160) : 0}px` }} /><small>{days === 7 || index % (days === 30 ? 5 : 10) === 0 ? item.date.slice(5) : ""}</small></div>)}
+        </div>
+      </Section>
+      <Section title={copy("热门页面", "Top pages")} kicker="ROUTES / PV" className="ops-shadow-card ops-admin-traffic-top">
+        <Table rows={(traffic?.top_pages || []).map((item) => ({ ...item, id: item.path }))} empty={copy("这个周期还没有浏览记录", "No page views in this period")} columns={[
+          { key: "page", label: copy("页面", "Page"), render: (item) => trafficPageNames[item.path]?.[isEnglish ? 1 : 0] || item.path },
+          { key: "route", label: copy("路径", "Route"), render: (item) => <code>{item.path}</code> },
+          { key: "views", label: "PV", render: (item) => number(item.views) },
+        ]} />
+      </Section>
+      <p className="ops-admin-traffic-note">{copy("PV 是页面打开或站内切换次数；刷新和重复访问会重复计数，管理员浏览也可能计入。这里不采集 IP、浏览器标识或论文内容，因此不能据此推算独立访客数。", "PV counts page opens and in-site navigation; refreshes and repeat visits count again, and administrator browsing may be included. No IP, browser identifier or manuscript content is stored here, so this is not a unique-visitor count.")}</p>
+    </>}
   </Page>;
 }
 

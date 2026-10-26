@@ -37,6 +37,17 @@ test("user management entry is visible only for an authenticated admin account",
   assert.match(app, /accountAdminDenied[\s\S]*session\?\.user\?\.role !== "admin"/);
 });
 
+test("admin credit grants and page-view reporting stay in the protected admin area", () => {
+  assert.match(app, /"\/admin\/traffic": AdminTrafficPage/);
+  assert.match(app, /accountAdminDenied[\s\S]*session\?\.user\?\.role !== "admin"/);
+  assert.match(operations, /export function AdminTrafficPage/);
+  assert.match(operations, /\/api\/admin\/traffic\?days=/);
+  assert.match(operations, /\/api\/admin\/users\/\$\{encodeURIComponent\(targetAccountId\)\}\/credits/);
+  assert.match(operations, /再次输入目标用户邮箱/);
+  assert.match(app, /fetch\("\/api\/traffic\/page-view"/);
+  assert.match(publicPages, /网站访问统计/);
+});
+
 test("public legal and help copy does not describe the product as a test build", () => {
   assert.doesNotMatch(publicPages, /产品仍处于测试阶段|测试阶段的模型|still in testing|during testing|当前版本尚未接入客服提交渠道/);
   assert.match(publicPages, /在账号设置下载账户数据/);

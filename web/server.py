@@ -14,6 +14,7 @@ import secrets
 import sqlite3
 import sys
 import webbrowser
+from collections import deque
 from contextlib import closing
 from http.cookies import SimpleCookie, CookieError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,6 +40,7 @@ from billing import BillingError, BillingStore, request_fingerprint  # noqa: E40
 from payments import create_payment_provider                         # noqa: E402
 from workspace_store import WorkspaceStore                           # noqa: E402
 from admin_store import AdminStore                                   # noqa: E402
+from traffic_store import TRACKED_ROUTES, TrafficError, TrafficStore  # noqa: E402
 from privacy_store import PrivacyError, PrivacyStore                  # noqa: E402
 from trial_session import (COOKIE_NAME, TrialSessionStore,
                            load_or_create_secret)                    # noqa: E402
@@ -171,8 +173,27 @@ ACCOUNT_ID = "local-demo"
 BILLING = BillingStore(_billing_db_path())
 WORKSPACES = WorkspaceStore(_billing_db_path())
 ADMIN = AdminStore(_billing_db_path())
+TRAFFIC = TrafficStore(_billing_db_path())
 PRIVACY = PrivacyStore(_billing_db_path())
 PAYMENTS = create_payment_provider(os.environ.get("PAYMENT_PROVIDER", "mock"), BILLING)
+_TRAFFIC_RATE_LOCK = threading.Lock()
+_TRAFFIC_RECENT = deque()
+
+
+def _traffic_rate_allowed() -> bool:
+    """Bound public analytics writes before they contend with the billing DB.
+
+    Nginx also limits each client address. This process-wide backstop avoids
+    treating untrusted forwarding headers as an identity or retaining IPs.
+    """
+    now = time.monotonic()
+    with _TRAFFIC_RATE_LOCK:
+        while _TRAFFIC_RECENT and _TRAFFIC_RECENT[0] <= now - 60:
+            _TRAFFIC_RECENT.popleft()
+        if len(_TRAFFIC_RECENT) >= 600:
+            return False
+        _TRAFFIC_RECENT.append(now)
+        return True
 
 
 def _health_status():
@@ -183,7 +204,7 @@ def _health_status():
             result = db.execute("SELECT 1").fetchone()
             tables = {row[0] for row in db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
-        required = {"accounts", "manuscripts", "rewrite_jobs", "orders", "ledger_entries"}
+        required = {"accounts", "manuscripts", "rewrite_jobs", "orders", "ledger_entries", "traffic_daily"}
         if result != (1,) or not required <= tables:
             return 503, {"ok": False, "database": "unavailable"}
     except (OSError, sqlite3.Error):
@@ -943,6 +964,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, json.dumps({"error": "搜索或分页参数无效。"}, ensure_ascii=False))
                 return self._send(200, json.dumps(
                     ADMIN.search_users(query, limit, offset), ensure_ascii=False))
+            if path == "/api/admin/traffic":
+                params = parse_qs(parsed_path.query, keep_blank_values=True)
+                try:
+                    days = int(params.get("days", ["30"])[0])
+                    overview = TRAFFIC.overview(days)
+                except (TypeError, ValueError, TrafficError):
+                    return self._send(400, json.dumps({"error": "统计周期无效。"}, ensure_ascii=False))
+                return self._send(200, json.dumps(overview, ensure_ascii=False))
             if path.startswith("/api/admin/users/"):
                 user_id = unquote(path.removeprefix("/api/admin/users/"))
                 if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", user_id):
@@ -1148,6 +1177,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(200, json.dumps({"ok": True, **outcome}, ensure_ascii=False))
 
     def _handle_post(self):
+        path = urlparse(self.path).path
         raw_length = self.headers.get("Content-Length")
         if raw_length is None:
             return self._send(411, json.dumps({"error": "缺少 Content-Length"},
@@ -1162,6 +1192,8 @@ class Handler(BaseHTTPRequestHandler):
                                               ensure_ascii=False))
         if n > MAX_BODY_BYTES:
             return self._send(413, json.dumps({"error": "请求体过大"}, ensure_ascii=False))
+        if path == "/api/traffic/page-view" and n > 128:
+            return self._send(413, json.dumps({"error": "访问事件过大"}, ensure_ascii=False))
         try:
             payload = json.loads(self.rfile.read(n) or b"{}")
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -1172,7 +1204,21 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(payload, dict):
             return self._send(400, json.dumps({"error": "请求体必须是 JSON 对象"},
                                               ensure_ascii=False))
-        path = urlparse(self.path).path
+        if path == "/api/traffic/page-view":
+            if not ACCOUNTS_MODE:
+                return self._send(404, json.dumps({"error": "not found"}))
+            if set(payload) != {"path"}:
+                return self._send(400, json.dumps({"error": "访问事件格式无效。"}, ensure_ascii=False))
+            if not isinstance(payload["path"], str) or payload["path"] not in TRACKED_ROUTES:
+                return self._send(400, json.dumps({"error": "页面路径无效。"}, ensure_ascii=False))
+            try:
+                if not _traffic_rate_allowed():
+                    return self._send(429, json.dumps({"error": "访问事件过于频繁。"}, ensure_ascii=False),
+                                      headers={"Retry-After": "60"})
+                TRAFFIC.record(payload["path"])
+            except TrafficError as exc:
+                return self._send(exc.status, json.dumps({"error": str(exc)}, ensure_ascii=False))
+            return self._send(204, b"")
         if path in {"/api/session/login", "/api/session/logout"}:
             return self._send(410, json.dumps({
                 "error": "手动会话入口已移除；试用模式会自动创建匿名会话。",
@@ -1350,6 +1396,20 @@ class Handler(BaseHTTPRequestHandler):
             if not _admin_allowed(session):
                 return self._send(403, json.dumps({"error": "仅管理员可访问。"},
                                                   ensure_ascii=False))
+            grant_match = re.fullmatch(r"/api/admin/users/([A-Za-z0-9_-]{1,128})/credits", path)
+            if grant_match:
+                target_account_id = grant_match.group(1)
+                try:
+                    grant = BILLING.grant_admin_credit(
+                        account_id, target_account_id, payload.get("confirm_email"),
+                        payload.get("credits"), payload.get("valid_days"),
+                        payload.get("reason"), payload.get("request_id"),
+                    )
+                except BillingError as exc:
+                    return self._send_billing_error(exc)
+                return self._send(200 if grant["reused"] else 201, json.dumps({
+                    "grant": grant, "user": ADMIN.user_detail(target_account_id),
+                }, ensure_ascii=False))
             refund_match = re.fullmatch(r"/api/admin/orders/(ord_[0-9a-f]{32})/refund", path)
             if not refund_match:
                 return self._send(404, json.dumps({"error": "not found"}))

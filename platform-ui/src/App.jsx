@@ -41,6 +41,7 @@ import {
   ServiceStatusPage,
   AdminOverviewPage,
   AdminUsersPage,
+  AdminTrafficPage,
   AdminJobsPage,
   AdminPlansPage,
   AdminOrdersPage,
@@ -65,6 +66,7 @@ const routeTitles = {
   "/checkout/pro": "支付确认", "/app/settings/account": "账号设置",
   "/app/settings/service": "服务状态",
   "/admin": "运营总览", "/admin/users": "用户", "/admin/jobs": "改写任务",
+  "/admin/traffic": "网站访问量",
   "/admin/plans": "套餐配置", "/admin/orders": "订单与对账",
   "/admin/economics": "收款与模型用量", "/admin/service": "服务状态",
   "/admin/privacy": "隐私审计", "/404": "页面未找到",
@@ -90,6 +92,7 @@ const routeTitlesEnglish = {
   "/app/settings/service": "Service status",
   "/admin": "Operations overview",
   "/admin/users": "Users",
+  "/admin/traffic": "Website traffic",
   "/admin/jobs": "Rewrite jobs",
   "/admin/plans": "Plan settings",
   "/admin/orders": "Orders & reconciliation",
@@ -138,6 +141,7 @@ const routeComponents = {
   "/app/settings/service": ServiceStatusPage,
   "/admin": AdminOverviewPage,
   "/admin/users": AdminUsersPage,
+  "/admin/traffic": AdminTrafficPage,
   "/admin/jobs": AdminJobsPage,
   "/admin/plans": AdminPlansPage,
   "/admin/orders": AdminOrdersPage,
@@ -157,6 +161,7 @@ const appNavigation = [
 const adminNavigation = [
   ["运营总览", "Overview", "/admin", ChartLineUp],
   ["用户", "Users", "/admin/users", UsersThree],
+  ["访问量", "Traffic", "/admin/traffic", ChartLineUp],
   ["改写任务", "Jobs", "/admin/jobs", ListBullets],
   ["套餐配置", "Plans", "/admin/plans", Coins],
   ["订单与对账", "Orders", "/admin/orders", Receipt],
@@ -319,6 +324,7 @@ export function App() {
   const { isEnglish } = useLocale();
   const { session, loading, error, refresh } = usePlatform();
   const [path, setPath] = useState(currentRoute);
+  const lastTrackedPath = useRef("");
 
   const navigate = (nextPath) => {
     if (nextPath === path) return;
@@ -364,6 +370,28 @@ export function App() {
     }
     navigate("/auth");
   }, [accountSignInRequired, path]);
+
+  useEffect(() => {
+    // Count browser page views, including hash-route changes, but never send
+    // document text, account identifiers or the URL's query string.
+    if (path.startsWith("/admin") || path === "/404" || !routeTitles[path]) {
+      lastTrackedPath.current = "";
+      return;
+    }
+    if (loading || !session?.ready || session?.authMode !== "accounts"
+        || accountSignInRequired || accountAdminDenied
+        || lastTrackedPath.current === path) return;
+    lastTrackedPath.current = path;
+    void fetch("/api/traffic/page-view", {
+      method: "POST",
+      credentials: "omit",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+      keepalive: true,
+    }).catch(() => {
+      // Analytics never blocks document, account or payment workflows.
+    });
+  }, [path, loading, session?.ready, session?.authMode, accountSignInRequired, accountAdminDenied]);
 
   const Page = useMemo(() => routeComponents[path] || SystemStatePage, [path]);
   const isPublic = ["/", "/pricing", "/auth", "/auth/verify", "/auth/forgot", "/legal/privacy", "/legal/terms", "/help", "/checkout/pro"].includes(path) || !routeComponents[path];

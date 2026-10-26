@@ -75,10 +75,19 @@ class AdminStore:
                        amount_fen,currency,refunded_fen,created_at,paid_at
                    FROM orders WHERE account_id=? ORDER BY created_at DESC LIMIT 20""",
                    (account_id,)).fetchall()]
+            admin_grants = [dict(item) for item in db.execute("""SELECT a.request_id,
+                       a.actor_account_id,a.credits,a.valid_days,a.reason,a.created_at,
+                       p.primary_email AS actor_email,g.expires_at
+                   FROM admin_credit_grants a
+                   JOIN credit_grants g ON g.id=a.grant_id
+                   LEFT JOIN auth_profiles p ON p.account_id=a.actor_account_id
+                   WHERE a.target_account_id=?
+                   ORDER BY a.created_at DESC,a.request_id DESC LIMIT 20""",
+                   (account_id,)).fetchall()]
             return {**dict(row), "providers": [item[0] for item in db.execute(
                     "SELECT provider FROM auth_identities WHERE account_id=? ORDER BY provider",
                     (account_id,)).fetchall()],
-                "grants": grants, "orders": orders}
+                "grants": grants, "orders": orders, "admin_grants": admin_grants}
 
     def jobs(self, limit: int = 100):
         with self._connect() as db:

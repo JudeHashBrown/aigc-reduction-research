@@ -776,6 +776,33 @@
 .ops-admin-user-detail-grid > div + div { border-left: 1px solid var(--ops-gray-200); }
 .ops-admin-user-detail-grid h3 { margin: 0; padding: 16px; font-size: 16px; }
 .ops-admin-user-hint { padding: 16px; }
+.ops-admin-credit-form { padding: 22px; border-top: 1px solid var(--ops-gray-200); }
+.ops-admin-credit-form h3,
+.ops-admin-credit-audit h3 { margin: 0 0 8px; font-size: 18px; }
+.ops-admin-credit-form p { margin: 0 0 18px; color: var(--ops-gray-700); line-height: 1.6; }
+.ops-admin-credit-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.ops-admin-credit-fields label { display: grid; gap: 7px; font-size: 12px; font-weight: 800; }
+.ops-admin-credit-fields input,
+.ops-admin-credit-fields select { width: 100%; min-height: 42px; border: 1px solid var(--ops-ink); border-radius: 0; padding: 9px 11px; background: var(--ops-white); color: var(--ops-ink); font: inherit; }
+.ops-admin-credit-form .ops-note { margin-top: 16px; }
+.ops-admin-credit-form .ops-header-actions { margin-top: 18px; }
+.ops-admin-credit-audit { border-top: 1px solid var(--ops-gray-200); padding-top: 18px; }
+.ops-admin-credit-audit h3 { padding: 0 22px 10px; }
+.ops-admin-traffic-period { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0; }
+.ops-admin-traffic-period button { min-height: 38px; padding: 8px 14px; border: 1px solid var(--ops-ink); background: var(--ops-white); font-weight: 800; cursor: pointer; }
+.ops-admin-traffic-period button.is-active { background: var(--ops-brand); }
+.ops-admin-traffic-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 18px 0; }
+.ops-admin-traffic-metrics > div { display: grid; gap: 8px; min-width: 0; padding: 20px; border: 1px solid var(--ops-ink); background: var(--ops-white); box-shadow: 5px 5px 0 var(--ops-ink); }
+.ops-admin-traffic-metrics small { font-size: 12px; font-weight: 850; }
+.ops-admin-traffic-metrics strong { font-size: clamp(30px, 4vw, 52px); line-height: 1; }
+.ops-admin-traffic-metrics span { color: var(--ops-gray-700); font-size: 11px; overflow-wrap: anywhere; }
+.ops-admin-traffic-chart { display: flex; align-items: end; gap: 4px; overflow-x: auto; min-height: 235px; padding: 16px 18px 10px; }
+.ops-admin-traffic-day { flex: 1 0 14px; min-width: 14px; height: 205px; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 5px; }
+.ops-admin-traffic-day > span { min-height: 16px; font-size: 10px; font-weight: 750; }
+.ops-admin-traffic-day > div { width: 100%; flex: 0 0 auto; background: var(--ops-blue); }
+.ops-admin-traffic-day > small { min-height: 14px; font-size: 9px; white-space: nowrap; }
+.ops-admin-traffic-top { margin-top: 18px; }
+.ops-admin-traffic-note { margin: 18px 0; color: var(--ops-gray-700); line-height: 1.6; font-size: 12px; }
 .ops-admin-refund-unavailable { padding: 12px 16px; background: var(--ops-gray-100); color: var(--ops-gray-700); font-size: 13px; }
 .ops-admin-refund-search { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 16px; }
 .ops-admin-refund-search input { flex: 1 1 270px; min-width: 0; min-height: 42px; padding: 9px 11px; border: 1px solid var(--ops-gray-400); background: var(--ops-white); color: var(--ops-ink); font: inherit; }
@@ -937,6 +964,7 @@
   .ops-admin-user-summary > div:nth-child(-n+2) { border-bottom: 1px solid var(--ops-gray-200); }
   .ops-admin-user-detail-grid { grid-template-columns: 1fr; }
   .ops-admin-user-detail-grid > div + div { border-left: 0; border-top: 1px solid var(--ops-gray-200); }
+  .ops-admin-traffic-metrics { grid-template-columns: 1fr; }
   .ops-admin-refund-facts { grid-template-columns: 1fr; }
   .ops-admin-refund-facts > div { border-right: 0; border-bottom: 1px solid var(--ops-gray-200); }
   .ops-admin-refund-form { grid-template-columns: 1fr; }
@@ -972,6 +1000,7 @@
   .ops-admin-user-summary { grid-template-columns: 1fr; }
   .ops-admin-user-summary > div { border-right: 0; border-bottom: 1px solid var(--ops-gray-200); }
   .ops-admin-user-summary > div:last-child { border-bottom: 0; }
+  .ops-admin-credit-fields { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

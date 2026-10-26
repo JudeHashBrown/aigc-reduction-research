@@ -199,6 +199,19 @@ class BillingStore:
                         refunded_credits INTEGER NOT NULL DEFAULT 0,
                         UNIQUE(account_id, reference)
                     );
+                    CREATE TABLE IF NOT EXISTS admin_credit_grants (
+                        request_id TEXT PRIMARY KEY,
+                        grant_id TEXT NOT NULL UNIQUE REFERENCES credit_grants(id),
+                        actor_account_id TEXT NOT NULL REFERENCES accounts(id),
+                        target_account_id TEXT NOT NULL REFERENCES accounts(id),
+                        confirmed_email TEXT NOT NULL,
+                        credits INTEGER NOT NULL CHECK(credits BETWEEN 1 AND 1000000),
+                        valid_days INTEGER NOT NULL CHECK(valid_days IN (0,30,90,365)),
+                        reason TEXT NOT NULL,
+                        created_at INTEGER NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_admin_credit_grants_target
+                        ON admin_credit_grants(target_account_id, created_at DESC);
                     CREATE TABLE IF NOT EXISTS usage_reservations (
                         job_id TEXT PRIMARY KEY,
                         account_id TEXT NOT NULL REFERENCES accounts(id),
@@ -348,7 +361,7 @@ class BillingStore:
             self._ensure_account(conn, account_id, now)
             grants = self._active_grants(conn, account_id, now)
             balance = sum(int(row["remaining"]) for row in grants)
-        paid = [row for row in grants if row["kind"] != "welcome"]
+        paid = [row for row in grants if row["kind"] not in {"welcome", "admin"}]
         priorities = {"pro_month": 50, "student_month": 40,
                       "pack_30k": 30, "pack_10k": 20, "pack_3k": 10,
                       "trial": 5, "free": 0}
@@ -423,6 +436,116 @@ class BillingStore:
                                 ensure_ascii=False), now),
                 )
         return self.summary(account_id)
+
+    def grant_admin_credit(self, actor_account_id: str, target_account_id: str,
+                           confirmed_email: str, credits: int, valid_days: int,
+                           reason: str, request_id: str) -> Dict:
+        """Atomically issue an audited, idempotent credit-only admin grant.
+
+        Admin credits increase the balance without changing the recipient's
+        paid-mode eligibility or extending a paid plan's job-size entitlement.
+        """
+        if not all(isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value)
+                   for value in (actor_account_id, target_account_id)):
+            raise BillingError("账户编号无效。", 400)
+        if type(credits) is not int or not 1 <= credits <= 1_000_000:
+            raise BillingError("发放字数须为 1 至 1,000,000 的整数。", 400)
+        if type(valid_days) is not int or valid_days not in {0, 30, 90, 365}:
+            raise BillingError("有效期只能选择 30、90、365 天或永久。", 400)
+        if not isinstance(reason, str) or not 5 <= len(reason.strip()) <= 200:
+            raise BillingError("发放原因须为 5 至 200 字。", 400)
+        reason = reason.strip()
+        if not isinstance(request_id, str):
+            raise BillingError("请求编号必须是 UUID。", 400)
+        try:
+            request_id = str(uuid.UUID(request_id))
+        except (ValueError, AttributeError):
+            raise BillingError("请求编号必须是 UUID。", 400) from None
+        # Account emails are already canonicalized by AuthStore. Reuse its
+        # validator so confirmation follows the same rules as login.
+        from auth import AuthError, normalize_email
+        try:
+            confirmed_email = normalize_email(confirmed_email)
+        except AuthError:
+            raise BillingError("确认邮箱无效。", 400) from None
+
+        now = int(self._now())
+        with self._transaction() as conn:
+            existing = conn.execute(
+                "SELECT * FROM admin_credit_grants WHERE request_id=?", (request_id,),
+            ).fetchone()
+            if existing:
+                same = (existing["actor_account_id"] == actor_account_id
+                        and existing["target_account_id"] == target_account_id
+                        and existing["confirmed_email"] == confirmed_email
+                        and int(existing["credits"]) == credits
+                        and int(existing["valid_days"]) == valid_days
+                        and existing["reason"] == reason)
+                if not same:
+                    raise BillingError("请求编号已用于不同的额度发放。", 409)
+                return {
+                    "request_id": request_id,
+                    "target_account_id": target_account_id,
+                    "credits": credits,
+                    "valid_days": valid_days,
+                    "expires_at": (int(existing["created_at"]) + valid_days * 86400
+                                   if valid_days else None),
+                    "balance_after": self._active_balance(conn, target_account_id, now),
+                    "created_at": int(existing["created_at"]),
+                    "reused": True,
+                }
+
+            actor = conn.execute(
+                "SELECT 1 FROM auth_profiles WHERE account_id=?", (actor_account_id,),
+            ).fetchone()
+            target = conn.execute(
+                "SELECT primary_email FROM auth_profiles WHERE account_id=?",
+                (target_account_id,),
+            ).fetchone()
+            if actor is None or target is None:
+                raise BillingError("管理员或目标账户不存在。", 404)
+            if target["primary_email"] != confirmed_email:
+                raise BillingError("确认邮箱与目标账户不一致。", 409)
+
+            self._ensure_account(conn, target_account_id, now)
+            balance_before = self._active_balance(conn, target_account_id, now)
+            expires_at = now + valid_days * 86400 if valid_days else None
+            grant_id = "gr_" + uuid.uuid4().hex
+            reference = "admin:" + request_id
+            conn.execute(
+                """INSERT INTO credit_grants
+                   (id,account_id,kind,product_id,granted,remaining,max_chars_per_job,
+                    expires_at,reference,created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (grant_id, target_account_id, "admin", "admin_credit", credits,
+                 credits, WELCOME_MAX_CHARS, expires_at, reference, now),
+            )
+            conn.execute(
+                """INSERT INTO ledger_entries
+                   (account_id,delta,kind,reference,balance_after,metadata_json,created_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (target_account_id, credits, "grant", reference,
+                 balance_before + credits,
+                 json.dumps({"product_id": "admin_credit"}, ensure_ascii=False), now),
+            )
+            conn.execute(
+                """INSERT INTO admin_credit_grants
+                   (request_id,grant_id,actor_account_id,target_account_id,
+                    confirmed_email,credits,valid_days,reason,created_at)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (request_id, grant_id, actor_account_id, target_account_id,
+                 confirmed_email, credits, valid_days, reason, now),
+            )
+            return {
+                "request_id": request_id,
+                "target_account_id": target_account_id,
+                "credits": credits,
+                "valid_days": valid_days,
+                "expires_at": expires_at,
+                "balance_after": balance_before + credits,
+                "created_at": now,
+                "reused": False,
+            }
 
     def ledger(self, account_id: str, limit: int = 30) -> List[Dict]:
         limit = max(1, min(int(limit), 100))
@@ -1063,7 +1186,7 @@ class BillingStore:
                 }
 
             grants = self._active_grants(conn, account_id, now)
-            paid = [row for row in grants if row["kind"] != "welcome"]
+            paid = [row for row in grants if row["kind"] not in {"welcome", "admin"}]
             max_chars = max((int(row["max_chars_per_job"]) for row in grants), default=0)
             balance = sum(int(row["remaining"]) for row in grants)
             if strength != "conservative" and not paid:
