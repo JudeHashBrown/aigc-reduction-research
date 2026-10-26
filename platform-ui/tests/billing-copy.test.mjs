@@ -29,3 +29,12 @@ test('pricing cards use direct payment labels without a Stripe caveat banner', (
   assert.match(pricing, /isEnglish \? 'Pay' : '支付'/);
   assert.doesNotMatch(pricing, /查看结账|View checkout|rtp-pricing-caveat/);
 });
+
+test('live checkout copy does not advertise the temporarily excluded wallet', () => {
+  const pages = readFileSync(new URL('../src/pages/OperationsPages.jsx', import.meta.url), 'utf8');
+  const liveCheckout = pages.split('export function CheckoutPage({ navigate }) {')[1]
+    ?.split('function LegacyBillingPage({ navigate }) {')[0];
+  assert.ok(liveCheckout);
+  assert.doesNotMatch(liveCheckout, /微信支付|WeChat Pay|银行卡 \/ 微信/);
+  assert.match(liveCheckout, /银行卡 \/ 支付宝等可用方式/);
+});

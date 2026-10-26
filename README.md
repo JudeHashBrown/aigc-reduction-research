@@ -61,7 +61,7 @@ BILLING_DB=data/billing.sqlite3
 
 ### Stripe Checkout
 
-仅在 `AUTH_MODE=accounts` 下启用。五档套餐价格、额度和有效期均由 `web/billing.py` 服务端目录决定；银行卡、微信支付、支付宝使用同一个 Checkout `payment` 收银台，实际显示哪些方式由 Stripe 按账户、地区、货币和设备判断。两档月卡是单次购买的 30 天权益，**不会自动续费**。
+仅在 `AUTH_MODE=accounts` 下启用。五档套餐价格、额度和有效期均由 `web/billing.py` 服务端目录决定；支付使用同一个 Checkout `payment` 收银台。新建 RightThesis 收银台目前通过 `excluded_payment_method_types` 暂不展示微信支付，其余方式由 Stripe 按账户、地区、货币和设备判断。两档月卡是单次购买的 30 天权益，**不会自动续费**。
 
 1. 在 Stripe 测试模式获取 Secret key，并安装 `requirements.txt` 中的 Stripe Python SDK。
 2. 在另一个终端运行 `stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded --forward-to http://127.0.0.1:8877/api/billing/stripe/webhook`，记录 CLI 输出的 `whsec_`。本地 CLI 的签名密钥不同于 Dashboard webhook 密钥。

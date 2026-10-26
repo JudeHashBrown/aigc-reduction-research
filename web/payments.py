@@ -98,10 +98,10 @@ class StripePaymentProvider(PaymentProvider):
             "live": self.live and self.configured,
             "checkout_enabled": self.configured,
             "refund_enabled": self.refund_enabled,
-            "payment_methods": ["card", "wechat_pay", "alipay"],
-            "notice": ("Stripe 正式收款：银行卡、微信支付、支付宝以收银台实际可用选项为准。"
+            "payment_methods": ["card", "alipay"],
+            "notice": ("Stripe 正式收款：银行卡、支付宝等以收银台实际可用选项为准。"
                        if self.configured and self.live else
-                       "Stripe 测试模式：银行卡、微信支付、支付宝；不会真实扣款。"
+                       "Stripe 测试模式：银行卡、支付宝等；不会真实扣款。"
                        if self.configured else
                        "Stripe 收银台尚未启用；请在服务端配置匹配环境的密钥和回调。"),
         })
@@ -137,8 +137,10 @@ class StripePaymentProvider(PaymentProvider):
         params = {
             "mode": "payment",
             "customer_email": customer_email,
-            # Use the payment methods enabled in the Stripe Dashboard. An
-            # explicit allowlist bypasses those dynamic Checkout settings.
+            # Keep Dashboard-managed dynamic methods, excluding WeChat Pay only
+            # for new RightThesis Checkout Sessions while the provider decline
+            # is investigated. Do not change the account-wide configuration.
+            "excluded_payment_method_types": ["wechat_pay"],
             "line_items": [{"price_data": {
                 "currency": order["currency"].lower(),
                 "unit_amount": order["amount_fen"],

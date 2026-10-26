@@ -1753,7 +1753,7 @@ export function CheckoutPage({ navigate }) {
 
   return (
     <Page className="ops-checkout-page">
-      <PageHeader eyebrow={isLive ? "CHECKOUT / STRIPE" : "CHECKOUT / STRIPE TEST"} title={isEnglish ? "Choose credits" : "选择额度"} description={isEnglish ? `Choose card, WeChat Pay, or Alipay on Stripe Checkout. ${isLive ? "This is a live payment; availability depends on Stripe Checkout." : "Only test transactions are available."}` : `银行卡、微信支付或支付宝均在 Stripe 收银台选择；${isLive ? "正式收款，实际可用方式以收银台为准。" : "当前仅支持测试交易。"}`} onBack={() => go(navigate, "/app/billing")} />
+      <PageHeader eyebrow={isLive ? "CHECKOUT / STRIPE" : "CHECKOUT / STRIPE TEST"} title={isEnglish ? "Choose credits" : "选择额度"} description={isEnglish ? `Choose an available payment method on Stripe Checkout, such as card or Alipay. ${isLive ? "This is a live payment; availability depends on Stripe Checkout." : "Only test transactions are available."}` : `前往 Stripe 收银台选择银行卡、支付宝等可用方式；${isLive ? "正式收款，实际可用方式以收银台为准。" : "当前仅支持测试交易。"}`} onBack={() => go(navigate, "/app/billing")} />
       <div className="ops-checkout-grid">
         <div>
           <Section title="30 天月卡" kicker="ONE-TIME PASS">
@@ -1771,7 +1771,7 @@ export function CheckoutPage({ navigate }) {
           <dl>
             <div><dt>{isEnglish ? "Purchasing account" : "购买账号"}</dt><dd>{session?.user?.email || session?.user?.display_name || (isEnglish ? "Sign in first" : "请先登录")}</dd></div>
             <div><dt>产品金额</dt><dd>{selected ? money(Number(selected.price_fen) / 100) : "—"}</dd></div>
-            <div><dt>付款方式</dt><dd>{isEnglish ? "Card / WeChat Pay / Alipay" : "银行卡 / 微信 / 支付宝"}</dd></div>
+            <div><dt>{isEnglish ? "Payment methods" : "付款方式"}</dt><dd>{isEnglish ? "Card / Alipay and other available methods" : "银行卡 / 支付宝等可用方式"}</dd></div>
             <div className="ops-total"><dt>应付</dt><dd>{selected ? money(Number(selected.price_fen) / 100) : "—"}</dd></div>
           </dl>
           <div className="ops-note ops-note--yellow"><Info size={20} weight="fill" /><div><b>{isEnglish ? (isLive ? "Stripe live payment" : "Stripe test mode") : (isLive ? "Stripe 正式支付" : "Stripe 测试模式")}</b><p>{isEnglish ? (canPay ? (isLive ? "Live payment methods depend on availability in Stripe Checkout." : "Test checkout only; no real charge will be made.") : "Stripe Checkout is not available yet.") : (payment.notice || "支付通道尚未启用。")}</p></div></div>

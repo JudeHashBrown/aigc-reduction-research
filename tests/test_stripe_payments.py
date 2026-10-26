@@ -181,6 +181,8 @@ def test_provider_modes_and_checkout_options():
             assert captured["params"]["customer_email"] == "buyer@example.com"
             assert "allowed_payment_method_types" not in captured["params"]
             assert "payment_method_types" not in captured["params"]
+            assert captured["params"]["excluded_payment_method_types"] == ["wechat_pay"]
+            assert provider.public_status()["payment_methods"] == ["card", "alipay"]
             assert captured["params"]["line_items"][0]["price_data"]["unit_amount"] == 990
             assert "#/checkout/pro?order=" in captured["params"]["success_url"]
             assert captured["options"]["idempotency_key"].startswith("rightthesis-ord_")
@@ -241,6 +243,7 @@ def test_live_mode_requires_opt_in_https_and_matching_webhook():
             assert captured["params"]["customer_email"] == "buyer@example.com"
             assert "allowed_payment_method_types" not in captured["params"]
             assert "payment_method_types" not in captured["params"]
+            assert captured["params"]["excluded_payment_method_types"] == ["wechat_pay"]
             assert store.order("buyer", result["order_id"])["live"] is True
             event = {"id": "evt_live123", "livemode": True,
                      "type": "checkout.session.completed", "data": {"object": {
