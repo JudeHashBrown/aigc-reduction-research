@@ -8,6 +8,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from billing import billable_chars
+
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
@@ -131,8 +133,11 @@ class WorkspaceStore:
 
     def list_manuscripts(self, account_id):
         with self._connect() as db:
-            rows = db.execute("""SELECT id, revision, name, kind, length(source) AS source_chars,
-                length(current) AS current_chars, last_job_id, created_at, updated_at
+            db.create_function("billable_chars", 1, billable_chars, deterministic=True)
+            rows = db.execute("""SELECT id, revision, name, kind,
+                billable_chars(source) AS source_chars,
+                billable_chars(current) AS current_chars,
+                last_job_id, created_at, updated_at
                 FROM manuscripts WHERE account_id=? ORDER BY updated_at DESC""",
                 (account_id,)).fetchall()
         return [dict(row) for row in rows]

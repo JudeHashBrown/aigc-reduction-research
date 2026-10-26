@@ -70,16 +70,29 @@ class BillingError(RuntimeError):
         self.details = details or {}
 
 
-def billable_chars(text: str) -> int:
-    """Count normalized, non-whitespace Unicode code points.
+_NON_BILLABLE_INVISIBLE = frozenset(
+    "\u00ad\u180e\u200b\u200c\u200d\u202a\u202b\u202c\u202d\u202e\u2060\u2066\u2067\u2068\u2069\ufeff"
+)
 
-    The server normalizes text before calling this function.  Keeping the
-    contract here makes browser display, entitlement checks and the ledger use
-    one definition instead of mixing ``len`` with a regular-expression count.
+
+def billable_chars(text: str) -> int:
+    """Count visible, non-whitespace Unicode code points, not English words.
+
+    Saved drafts can reach this function before engine normalization. Ignore
+    the same invisible and control characters removed by the engine and the
+    browser quota preview so the document list agrees with the ledger.
+    Deliberately do not NFC-compose combining characters.
     """
     if not isinstance(text, str):
         raise TypeError("text must be str")
-    return sum(1 for char in text if not char.isspace())
+    return sum(
+        1 for char in text
+        if not char.isspace()
+        and char not in _NON_BILLABLE_INVISIBLE
+        and not ("\ufe00" <= char <= "\ufe0f")
+        and not ("\x00" <= char <= "\x08" or "\x0b" <= char <= "\x0c"
+                 or "\x0e" <= char <= "\x1f" or "\x7f" <= char <= "\x9f")
+    )
 
 
 def request_fingerprint(text: str, strength: str) -> str:
@@ -299,7 +312,7 @@ class BillingStore:
             "id": "free", "name": "免费体验", "kind": "free",
             "price_fen": 0, "currency": "CNY", "credits": WELCOME_CREDITS,
             "max_chars_per_job": WELCOME_MAX_CHARS, "valid_days": None,
-            "description": "中英文规则分析免费；首次保守改写 800 字。",
+            "description": "中英文规则分析免费；首次保守改写 800 字。英文按非空白字符计，不按单词计。",
         }
         return [free] + [dict(product) for product in PRODUCTS.values()]
 

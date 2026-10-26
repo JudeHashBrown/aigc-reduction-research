@@ -51,6 +51,37 @@ def test_english_vocabulary_is_review_only():
     assert not result["guard"]["semantic_changed"]
 
 
+def test_english_format_only_findings_are_manual_and_not_model_targets():
+    for source, pattern_id in (
+            ("The method is clear -- and accurate.", "EN-F01"),
+            ("**The method is clear.**", "EN-F02")):
+        report = H.analyze(source)
+        assert [item["pattern_id"] for item in report["findings"]] == [pattern_id]
+        assert report["findings"][0]["handling"] == "review"
+        assert report["summary"]["safe_fixes"] == 0
+        assert report["summary"]["auto_rewrite_candidates"] == 0
+        fixed = H.autofix(source)
+        assert fixed["text"] == source and not fixed["changed"]
+        client = MockClient(lambda _text: "unsafe replacement")
+        rewritten = H.humanize(source, client, n_candidates=1,
+                                auto_english=True)
+        assert rewritten["text"] == source
+        assert rewritten["n_chunks"] == rewritten["n_accepted"] == 0
+        assert client.calls == []
+
+
+def test_mixed_paragraph_reports_issue_but_has_no_auto_rewrite_target():
+    source = "It was found that the estimate is stable. 这是说明。"
+    report = H.analyze(source)
+    assert any(item["pattern_id"] == "EN-S11" for item in report["findings"])
+    assert report["summary"]["auto_rewrite_candidates"] == 0
+    client = MockClient(lambda _text: "unsafe replacement")
+    result = H.humanize(source, client, n_candidates=1, auto_english=True)
+    assert result["text"] == source
+    assert result["n_chunks"] == result["n_accepted"] == 0
+    assert client.calls == []
+
+
 def test_english_rewrite_preserves_qualifier_and_is_measurable():
     text = "It was found that the method may improve accuracy."
     client = MockClient(lambda _source: "The method may improve accuracy.")

@@ -163,6 +163,61 @@ try:
             if billing.get("status") != "committed" or billing.get("llm_requests") != 0:
                 FAILS.append(f"S11 确定性任务结算错误: {billing}")
 
+    # 报告只有需人工核对的 S01 时，任务入口仍可提交；服务端不得为了
+    # 凑一次“改写”而删除真实列举项，也不得消耗用户额度。
+    review_only_source = "The tool is fast, stable, and simple."
+    code, report = post("/api/v1/analyze", {"text": review_only_source})
+    if code != 200 or not any(
+            item.get("pattern_id") == "EN-S01" and item.get("handling") == "review"
+            for item in report.get("findings", [])):
+        FAILS.append(f"S01 人工复核报告缺失: {code} {report}")
+    else:
+        if report.get("summary", {}).get("auto_rewrite_candidates") != 0:
+            FAILS.append("S01-only 报告错误提示可自动改写")
+        with op.open(f"http://127.0.0.1:{PORT}/api/billing/summary", timeout=8) as response:
+            balance_before = json.loads(response.read())["balance"]
+        code, started = post("/api/v1/rewrite-jobs", {
+            "text": review_only_source,
+            "strength": "conservative",
+            "request_id": "server_s01_review_0001",
+        })
+        if code != 200 or not started.get("job"):
+            FAILS.append(f"S01 报告有问题时改写入口被阻断: {code} {started}")
+        else:
+            job = None
+            for _ in range(80):
+                with op.open(
+                        f"http://127.0.0.1:{PORT}/api/job/{started['job']}",
+                        timeout=8) as response:
+                    job = json.loads(response.read())
+                if job.get("state") in {"done", "error"}:
+                    break
+                time.sleep(0.05)
+            result = (job or {}).get("result") or {}
+            billing = result.get("billing") or {}
+            if (not job or job.get("state") != "done"
+                    or result.get("text") != review_only_source
+                    or result.get("n_chunks") != 0
+                    or result.get("n_accepted") != 0
+                    or billing.get("status") != "released"):
+                FAILS.append(f"S01 人工复核项被自动误改或计费错误: {job}")
+            with op.open(f"http://127.0.0.1:{PORT}/api/billing/summary", timeout=8) as response:
+                balance_after = json.loads(response.read())["balance"]
+            if balance_after != balance_before:
+                FAILS.append("S01 仅人工复核任务消耗了额度")
+
+    for label, source, pattern_id in (
+            ("英文加粗", "**The method is clear.**", "EN-F02"),
+            ("同行中英混排", "It was found that the estimate is stable. 这是说明。", "EN-S11")):
+        code, report = post("/api/v1/analyze", {"text": source})
+        summary = report.get("summary") or {}
+        if (code != 200 or summary.get("auto_rewrite_candidates") != 0
+                or not any(item.get("pattern_id") == pattern_id
+                           for item in report.get("findings", []))):
+            FAILS.append(f"{label} 预检错误: {code} {report}")
+        if label == "英文加粗" and summary.get("safe_fixes") != 0:
+            FAILS.append("英文加粗被误报为可安全自动清理")
+
     # 畸形请求
     for bad in [b"not json", b"", b"[]", b'{"text": 123}', b'{"nope": 1}']:
         req = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/diagnose", data=bad,

@@ -246,6 +246,7 @@ def analyze(text: str) -> Dict:
         mode: sum(1 for item in findings if item.get("handling") == mode)
         for mode in ("safe", "rewrite", "review")
     }
+    auto_rewrite_candidates = _auto_rewrite_candidate_count(text, findings)
     affected = {int(item.get("paragraph") or 0) for item in findings}
     if severity["high"] >= 2 or severity["high"] + severity["medium"] >= 6:
         status, label = "needs_work", "需要重点优化"
@@ -271,6 +272,7 @@ def analyze(text: str) -> Dict:
             "safe_fixes": handling["safe"],
             "rewrite_items": handling["rewrite"],
             "review_items": handling["review"],
+            "auto_rewrite_candidates": auto_rewrite_candidates,
             "affected_paragraphs": len(affected),
             "status": status,
             "status_label": label,
@@ -487,6 +489,43 @@ def _language_runs(text: str) -> List[Tuple[str, str]]:
         else:
             runs.append((language, part))
     return runs
+
+
+def _auto_rewrite_candidate_count(text: str, findings: Sequence[Dict]) -> int:
+    """Preflight the same protected runs and target rules used by humanize.
+
+    This counts eligible targets, not accepted edits: candidates can still be
+    rejected by the fact and semantic guards after the model runs.
+    """
+    total = 0
+    document_offset = 0
+    for language, segment in _language_runs(text):
+        if language not in {"en", "zh"} or not segment.strip():
+            document_offset += len(segment)
+            continue
+        leading_match = re.match(r"^\n+", segment)
+        trailing_match = re.search(r"\n+$", segment)
+        start = len(leading_match.group(0)) if leading_match else 0
+        end = len(segment) - len(trailing_match.group(0)) if trailing_match else len(segment)
+        core = segment[start:end]
+        core_start, core_end = document_offset + start, document_offset + end
+        planned = [item for item in findings
+                   if item.get("language", "zh") == language
+                   and core_start <= int(item.get("start") or 0)
+                   and int(item.get("end") or 0) <= core_end]
+        if planned:
+            if language == "en":
+                report = diagnose(core)
+                total += sum(bool(bilingual_rewrite._english_auto_findings(report, pi))
+                             for pi in range(len(split_paragraphs(core))))
+            else:
+                allowed = {str(item.get("pattern_id")) for item in planned}
+                report = humanizer_cn.analyze(core)
+                total += sum(1 for chunk, eligible in humanizer_cn._rewrite_chunks(
+                    core, report["findings"], allowed_pattern_ids=allowed)
+                    if eligible and chunk)
+        document_offset += len(segment)
+    return total
 
 
 def humanize(text: str, client: Client, n_candidates: int = 2,

@@ -40,6 +40,45 @@ def test_real_three_item_list_is_review_only():
     assert fixed["text"] == text, "三项真实功能不得被机械删除或打散"
 
 
+def test_review_only_list_never_enters_model_even_beside_rewrite_target():
+    review_only = "系统新增导出、搜索和批量重命名。"
+    client = MockClient(lambda _source: "系统新增导出和搜索。")
+    result = H.humanize(review_only, client, n_candidates=1)
+    assert result["text"] == review_only
+    assert result["n_chunks"] == result["n_accepted"] == 0
+    assert client.calls == []
+    assert H.analyze(review_only)["summary"]["auto_rewrite_candidates"] == 0
+
+    mixed_targets = "本文将深入探讨该问题。\n" + review_only
+    client = MockClient(lambda _source: "本文讨论该问题。")
+    result = H.humanize(mixed_targets, client, n_candidates=1)
+    assert len(client.calls) == 1
+    assert review_only not in client.calls[0]["user"]
+    assert result["text"].endswith("\n" + review_only)
+    assert H.analyze(mixed_targets)["summary"]["auto_rewrite_candidates"] == 1
+
+    # The same line is the smallest unit that can safely be withheld.  A
+    # rewrite marker elsewhere in it must not expose the real list to a model.
+    same_line = "本文将深入探讨该问题。" + review_only
+    client = MockClient(lambda _source: "本文讨论该问题。")
+    result = H.humanize(same_line, client, n_candidates=1)
+    assert result["text"] == same_line
+    assert result["n_chunks"] == 0 and client.calls == []
+    assert H.analyze(same_line)["summary"]["auto_rewrite_candidates"] == 0
+
+
+def test_rewrite_target_partition_keeps_model_chunk_limit():
+    source = "甲" * 3600 + "乙" * 3600
+    findings = [
+        {"start": 0, "end": 1, "handling": "rewrite", "pattern_id": "X"},
+        {"start": 3600, "end": 3601, "handling": "rewrite", "pattern_id": "X"},
+    ]
+    planned = H._rewrite_chunks(source, findings)
+    assert "".join(chunk for chunk, _ in planned) == source
+    assert sum(bool(editable) for _, editable in planned) >= 2
+    assert all(len(chunk) <= 3500 for chunk, editable in planned if editable)
+
+
 def test_safe_cleanup_preserves_facts():
     text = ('本次调查共收到 126 份问卷，其中 18 份未完成全部题目。'
             '**本文结论**保持不变。本文将深入探讨这个至关重要的问题。')

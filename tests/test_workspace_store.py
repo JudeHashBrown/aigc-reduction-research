@@ -47,6 +47,25 @@ class WorkspaceStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_version("a", doc["id"], 2)["text"], "edited")
         self.assertIsNone(self.store.get_version("b", doc["id"], 2))
 
+    def test_list_counts_non_whitespace_characters_after_edits(self):
+        source = "A B\n中\t文😀\u200b"
+        doc = self.store.create_manuscript("a", {
+            "name": "mixed", "kind": "text", "source": source,
+            "current": source, "report": None, "notices": [], "document": None,
+        })
+        listing = self.store.list_manuscripts("a")
+        self.assertEqual((listing[0]["source_chars"], listing[0]["current_chars"]),
+                         (5, 5))
+
+        status, _ = self.store.update_manuscript("a", doc["id"], 1, {
+            "current": "English 中文, 2026 😀", "report": None, "notices": [],
+        })
+        self.assertEqual(status, "saved")
+        listing = self.store.list_manuscripts("a")
+        self.assertEqual((listing[0]["source_chars"], listing[0]["current_chars"]),
+                         (5, 15))
+        self.assertEqual(self.store.list_manuscripts("b"), [])
+
     def test_job_result_persists_and_retries_dedupe(self):
         jid = "job_" + "a" * 24
         status, _ = self.store.claim_job("a", "request_123", "hash", jid, 2)

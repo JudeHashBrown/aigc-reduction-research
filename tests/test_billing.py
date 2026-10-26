@@ -39,6 +39,12 @@ def make_store(now=None):
 def test_billable_character_contract():
     assert billable_chars("中 文\nA\t😀") == 4
     assert billable_chars(" \r\n\t\u3000") == 0
+    # 英文按字符，不按单词；数字与标点逐个计，空白不计。
+    assert billable_chars("one two, 3") == 8
+    # 前后端都保留组合附加符；不做 NFC，以免显示与账本计数分歧。
+    assert billable_chars("cafe\u0301") == 5
+    assert billable_chars("café") == 4
+    assert billable_chars("A\u200bB\ufe0f\x00") == 2
     # 按 Unicode 码点计量，而不是 UTF-8 字节数。
     assert billable_chars("😀") == 1
     try:
@@ -60,6 +66,7 @@ def test_welcome_grant_and_catalog():
 
         catalog = {item["id"]: item for item in store.public_catalog()}
         assert catalog["free"]["credits"] == 800
+        assert "不按单词计" in catalog["free"]["description"]
         assert catalog["pack_3k"]["price_fen"] == 990
         assert catalog["student_month"]["credits"] == 20_000
         assert catalog["pro_month"]["credits"] == 60_000
@@ -125,6 +132,47 @@ def test_strength_multiplier_entitlement_and_job_limit():
                                   "conservative"),
             402,
         )
+    finally:
+        folder.cleanup()
+
+
+def test_english_welcome_limit_matches_visible_character_count():
+    folder, store = make_store()
+    try:
+        within_limit = "a" * 800
+        assert billable_chars(within_limit) == 800
+        reservation = store.reserve("english-student", "job-english-800",
+                                    within_limit, "conservative")
+        assert reservation["billable_chars"] == reservation["reserved"] == 800
+        store.finalize("job-english-800", success=False)
+        assert store.summary("english-student")["balance"] == 800
+
+        over_limit = within_limit + "!"
+        error = expect_billing_error(
+            lambda: store.reserve("english-student", "job-english-801",
+                                  over_limit, "conservative"), 402)
+        assert error.details["billable_chars"] == 801
+    finally:
+        folder.cleanup()
+
+
+def test_english_format_only_rewrite_releases_quota():
+    folder, store = make_store()
+    try:
+        source = "**The method is clear.**"
+        reserved = store.reserve("format-student", "job-format-only", source,
+                                 "conservative")
+        client = MockClient(lambda _text: "The method is clear.")
+        result = humanizer.humanize(source, client, n_candidates=1,
+                                    auto_english=True)
+        assert result["text"] == source
+        assert result["n_accepted"] == 0 and client.calls == []
+        settled = store.finalize("job-format-only", success=True,
+                                 accepted=result["n_accepted"],
+                                 usage=client.usage_summary())
+        assert settled["status"] == "released"
+        assert settled["released"] == reserved["reserved"]
+        assert store.summary("format-student")["balance"] == 800
     finally:
         folder.cleanup()
 
@@ -294,6 +342,8 @@ TESTS = [
     test_welcome_grant_and_catalog,
     test_mock_checkout_is_server_priced_and_idempotent,
     test_strength_multiplier_entitlement_and_job_limit,
+    test_english_welcome_limit_matches_visible_character_count,
+    test_english_format_only_rewrite_releases_quota,
     test_failure_zero_acceptance_and_success_settlement,
     test_deterministic_english_s11_rewrite_commits_reserved_quota,
     test_concurrent_reservations_cannot_overspend,

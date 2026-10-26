@@ -220,10 +220,16 @@ def diagnose(text: str, weights_path: Optional[str] = None) -> Dict:
 
     for rule in PAT.FORMAT_RULES:
         for s, e, matched in rule.find(text):
+            # Format rules scan the whole document, but their handling still
+            # depends on the language of the text they matched. English has
+            # no deterministic F01/F02 cleanup, so labelling those as Chinese
+            # code fixes falsely advertises a usable one-click action.
+            span_lang = next((para_langs[pi] for pi, para in enumerate(paras)
+                              if para.start <= s and e <= para.end), "zh")
             findings.append(Finding(
                 rule.rule_id, rule.name, rule.severity, rule.weight,
                 -1, None, s, e, matched, rule.explain,
-                rule.fix, _handling(rule.rule_id, "zh")))
+                rule.fix, _handling(rule.rule_id, span_lang)))
 
     zh_text = "\n".join(p.text for p, lg in zip(paras, para_langs) if lg == "zh")
     en_text = "\n".join(p.text for p, lg in zip(paras, para_langs) if lg == "en")

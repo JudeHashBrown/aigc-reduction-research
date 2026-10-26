@@ -407,6 +407,11 @@ def analyze(text: str) -> Dict:
     sev = {s: sum(1 for f in fs if f.severity == s) for s in ("high", "medium", "low")}
     handling = {s: sum(1 for f in fs if f.handling == s)
                 for s in ("safe", "rewrite", "review")}
+    finding_dicts = [f.to_dict() for f in fs]
+    auto_rewrite_candidates = sum(
+        1 for chunk, editable in _rewrite_chunks(text, finding_dicts)
+        if editable and chunk
+    )
     affected = sorted({f.paragraph for f in fs})
     if sev["high"] >= 2 or (sev["high"] + sev["medium"]) >= 6:
         status, label = "needs_work", "需要重点优化"
@@ -427,11 +432,12 @@ def analyze(text: str) -> Dict:
             "safe_fixes": handling["safe"],
             "rewrite_items": handling["rewrite"],
             "review_items": handling["review"],
+            "auto_rewrite_candidates": auto_rewrite_candidates,
             "affected_paragraphs": len(affected),
             "status": status,
             "status_label": label,
         },
-        "findings": [f.to_dict() for f in fs],
+        "findings": finding_dicts,
         "anchors": anchors(text),
         "categories": CATEGORY_NAMES,
         "disclaimer": (
@@ -777,6 +783,72 @@ def _chunks(text: str, limit: int = 3500) -> List[Tuple[str, bool]]:
     return out or [(text, False)]
 
 
+def _rewrite_chunks(text: str, findings: Sequence[Dict],
+                    allowed_pattern_ids: Optional[set] = None) -> List[Tuple[str, bool]]:
+    """Keep review-only lines outside every model-bound chunk.
+
+    ``_chunks`` protects code and long-form structure. A chunk can still
+    contain multiple lines with different handling, so split only where a
+    rewrite target and a review-only line would otherwise share a prompt.
+    """
+    targets = [item for item in findings
+               if item.get("handling") == "rewrite"
+               and (allowed_pattern_ids is None
+                    or item.get("pattern_id") in allowed_pattern_ids)]
+    review_spans = [item for item in findings
+                    if item.get("handling") == "review"]
+    out: List[Tuple[str, bool]] = []
+    boundary = 0
+
+    def emit(part: str, editable: bool) -> None:
+        if not part:
+            return
+        # Never merge across an original _chunks boundary: it may be the
+        # 3,500-character model limit or the edge of a protected block.
+        if len(out) > boundary and out[-1][1] == editable:
+            out[-1] = (out[-1][0] + part, editable)
+        else:
+            out.append((part, editable))
+
+    offset = 0
+    for chunk, structurally_editable in _chunks(text):
+        boundary = len(out)
+        if not structurally_editable or not targets:
+            emit(chunk, False)
+            offset += len(chunk)
+            continue
+        lines = chunk.splitlines(keepends=True)
+        positions = []
+        cursor = offset
+        for line in lines:
+            body = line.rstrip("\r\n")
+            line_start, line_end = cursor, cursor + len(body)
+            eligible = bool(body and any(
+                item["start"] < line_end and item["end"] > line_start
+                for item in targets) and not any(
+                    item["start"] < line_end and item["end"] > line_start
+                    for item in review_spans))
+            positions.append((body, line[len(body):], eligible))
+            cursor += len(line)
+        preceding = []
+        previous_eligible = False
+        for body, _, eligible in positions:
+            if body:
+                previous_eligible = eligible
+            preceding.append(previous_eligible)
+        following = [False] * len(positions)
+        next_eligible = False
+        for index in range(len(positions) - 1, -1, -1):
+            following[index] = next_eligible
+            if positions[index][0]:
+                next_eligible = positions[index][2]
+        for index, (body, separator, eligible) in enumerate(positions):
+            emit(body, eligible)
+            emit(separator, preceding[index] and following[index])
+        offset += len(chunk)
+    return out or [(text, False)]
+
+
 def humanize(text: str, client: Client, n_candidates: int = 2,
              progress=None, allowed_pattern_ids: Optional[set] = None) -> Dict:
     """Safe Humanizer-zh rewrite with deterministic pre-clean and verification."""
@@ -785,7 +857,9 @@ def humanize(text: str, client: Client, n_candidates: int = 2,
     stage1 = autofix(text, allowed_pattern_ids=allowed_pattern_ids)
     original_report = stage1["before"]
     source = stage1["text"]
-    chunks = _chunks(source)
+    source_report = analyze(source)
+    chunks = _rewrite_chunks(source, source_report["findings"],
+                             allowed_pattern_ids=allowed_pattern_ids)
     editable_total = sum(1 for chunk, editable in chunks if editable and chunk)
     outputs: List[str] = []
     records: List[Dict] = []
@@ -798,7 +872,8 @@ def humanize(text: str, client: Client, n_candidates: int = 2,
             outputs.append(chunk)
             continue
         report = analyze(chunk)
-        report_findings = report["findings"]
+        report_findings = [item for item in report["findings"]
+                           if item["handling"] == "rewrite"]
         if allowed_pattern_ids is not None:
             report_findings = [item for item in report_findings
                                if item["pattern_id"] in allowed_pattern_ids]
@@ -831,7 +906,8 @@ def humanize(text: str, client: Client, n_candidates: int = 2,
             # errors, not “zero accepted candidates”.  Surface them so the job
             # cannot look successfully completed while silently doing nothing.
             raise LLMError(f"第 {done + 1} 个文本块调用失败：{exc}") from exc
-        scored = [_candidate(chunk, raw, allowed_pattern_ids=allowed_pattern_ids)
+        target_pattern_ids = {item["pattern_id"] for item in report_findings}
+        scored = [_candidate(chunk, raw, allowed_pattern_ids=target_pattern_ids)
                   for raw in raw_candidates]
         viable = [c for c in scored if c.get("ok")]
         best = max(viable, key=lambda c: c["score"]) if viable else None

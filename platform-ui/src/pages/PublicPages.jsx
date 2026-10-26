@@ -442,11 +442,12 @@ export function PricingPage({ navigate }) {
                 <span className="rtp-plan-type">{plan.kind === 'subscription' ? '30-DAY PLAN' : isFree ? 'FREE ACCESS' : 'CREDIT PACK'}</span>
                 <h2>{planName(plan, isEnglish)}</h2>
                 <div className="rtp-plan-price"><small>{price.currency}</small>{price.amount}<span>{isFree ? (isEnglish ? ' / included' : ' / 当前免费额度') : plan.kind === 'subscription' ? (isEnglish ? ` / ${plan.valid_days} days` : ` / ${plan.valid_days} 天`) : (isEnglish ? ' / configured pack' : ' / 服务端字数包')}</span></div>
-                <div className="rtp-plan-amount"><b>{formatCredits(plan.credits, isEnglish)}</b><span>{isEnglish ? 'rewrite characters' : '字改写额度'}</span></div>
+                <div className="rtp-plan-amount"><b>{formatCredits(plan.credits, isEnglish)}</b><span>{isEnglish ? 'rewrite characters' : '计费字符改写额度'}</span></div>
                 <ul>
-                  <li><Check weight="bold" />{isEnglish ? `Up to ${formatCredits(plan.max_chars_per_job, true)} characters per task` : `单次上限 ${formatCredits(plan.max_chars_per_job, false)} 字`}</li>
+                  <li><Check weight="bold" />{isEnglish ? `Up to ${formatCredits(plan.max_chars_per_job, true)} non-whitespace characters per task` : `单次上限 ${formatCredits(plan.max_chars_per_job, false)} 个非空白字符`}</li>
                   <li><Check weight="bold" />{plan.valid_days ? (isEnglish ? `Configured validity: ${plan.valid_days} days` : `配置有效期：${plan.valid_days} 天`) : (isEnglish ? 'No configured expiry' : '当前未设置到期时间')}</li>
                   <li><Check weight="bold" />{isEnglish ? 'Works with Chinese and English' : '中英文均可使用'}</li>
+                  {isFree && <li><Check weight="bold" />{isEnglish ? 'English quota counts characters, not words; spaces do not count' : '英文额度按非空白字符计，不按单词计'}</li>}
                   <li><Check weight="bold" />{isFree ? (isEnglish ? 'Conservative rewrite mode' : '开放保守改写模式') : (isEnglish ? 'Conservative, balanced, and deep modes' : '保守、平衡与深度模式')}</li>
                 </ul>
                 <p>{planDescription(plan, isEnglish)}</p>
@@ -464,7 +465,7 @@ export function PricingPage({ navigate }) {
           <div className="rtp-section-heading"><span className="rtp-index-tag">{isEnglish ? 'HOW CREDITS WORK' : '额度怎么用'}</span><h2>{isEnglish ? 'Clear accounting makes confident revision.' : '账算得明白，修改才安心。'}</h2></div>
           <div className="rtp-rule-grid">
             <article><b>01</b><h3>{isEnglish ? 'One server-side catalog' : '以服务端目录为准'}</h3><p>{isEnglish ? 'Plan names, prices, credits, validity, and per-task limits are rendered directly from the backend response.' : '套餐名称、价格、额度、有效期和单次上限均直接渲染后端返回值。'}</p></article>
-            <article><b>02</b><h3>{isEnglish ? 'Count non-whitespace characters' : '按非空白字符计量'}</h3><p>{isEnglish ? 'Chinese and English are both measured by normalized non-whitespace characters, not file size or page count.' : '中英文统一按归一化后的非空白字符数计算，不按文件大小或页数。'}</p></article>
+            <article><b>02</b><h3>{isEnglish ? 'Count non-whitespace characters' : '按非空白字符计量'}</h3><p>{isEnglish ? 'Chinese and English are measured by non-whitespace characters. English letters, digits, and punctuation each count; words, spaces, and line breaks are not the unit.' : '中英文均按非空白字符计量：英文字母、数字、标点逐个计入，不按单词数；空格和换行不计。'}</p></article>
             <article><b>03</b><h3>{isEnglish ? 'Reserve credits before model work' : '模型处理前预占额度'}</h3><p>{isEnglish ? 'Estimated usage appears after you choose a strategy. Deep mode reserves 1.5× credits. Credits are usage units, not a live-payment event.' : '选择策略后展示预计消耗；深度模式预占 1.5 倍额度。额度是使用量单位，不代表真实支付。'}</p></article>
             <article><b>04</b><h3>{isEnglish ? 'Failed tasks release credits' : '失败任务释放额度'}</h3><p>{isEnglish ? 'If a task fails or no candidate is accepted, reserved credits are released back to the current service session.' : '任务失败或没有任何候选被采纳时，预占额度会释放回当前服务会话。'}</p></article>
           </div>
