@@ -50,7 +50,7 @@
 .rt-rewrite-progress-track { position: relative; z-index: 1; overflow: hidden; height: 14px; border: 1px solid #c5d7bd; background: #354339; }
 .rt-rewrite-progress-track > span { display: block; height: 100%; background: linear-gradient(90deg, #96e2ac, #c9ef74); box-shadow: 0 0 20px rgba(201, 239, 116, .42); transition: width .45s ease; }
 .rt-rewrite-progress-track.is-indeterminate > span { width: 34%; animation: rt-progress-travel 1.8s ease-in-out infinite alternate; }
-.rt-rewrite-progress-steps { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.rt-rewrite-progress-steps { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
 .rt-rewrite-progress-steps > div { display: flex; align-items: center; gap: 9px; color: #9daa9d; min-width: 0; }
 .rt-rewrite-progress-steps > div > span { display: grid; flex: none; place-items: center; width: 27px; height: 27px; border: 1px solid #607065; color: #c2d0c3; font-size: 10px; font-weight: 850; }
 .rt-rewrite-progress-steps strong { overflow: hidden; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
@@ -149,6 +149,15 @@
 .rt-live-finding-list > article.is-stale { background: #f7f5ef; color: #45443f; }
 .rt-live-finding-list > button:hover,
 .rt-live-finding-list > button.is-active { border: 2px solid var(--ink); padding: 10px; background: var(--soft-green, #eef8d4); }
+.rt-live-finding-list > article.rt-finding-actionable { display: block; padding: 0; }
+.rt-live-finding-list > article.rt-finding-actionable.is-active { border-color: var(--ink); background: var(--soft-green, #eef8d4); }
+.rt-finding-select { display: grid; grid-template-columns: auto 1fr; gap: 5px 9px; width: 100%; padding: 11px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.rt-finding-select:hover { background: var(--soft-green, #eef8d4); }
+.rt-finding-select:focus-visible,
+.rt-finding-auto:focus-visible { outline: 3px solid #1b6cdd; outline-offset: -3px; }
+.rt-finding-auto { display: flex; align-items: center; gap: 6px; margin: 0 11px 11px; padding: 7px 10px; border: 1px solid var(--ink); background: #dcefff; color: #12375b; font-size: 11px; font-weight: 800; cursor: pointer; }
+.rt-finding-auto span { margin-left: auto; font-size: 10px; }
+.rt-finding-auto:disabled { cursor: not-allowed; opacity: .52; }
 .rt-live-finding-list p,
 .rt-live-finding-list code { grid-column: 1 / -1; margin: 0; }
 .rt-live-finding-list p { color: var(--muted, #62645f); font-size: 12px; line-height: 1.45; }

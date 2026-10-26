@@ -1,0 +1,25 @@
+.rt-change-highlights {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rt-change-removed,
+.rt-change-added {
+  padding: 0 1px;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.rt-change-removed {
+  background: #ffe0d8;
+  color: #702a1f;
+  text-decoration-color: #ac4033;
+}
+
+.rt-change-added {
+  background: #d6f5d7;
+  color: #185c30;
+  text-decoration: none;
+  box-shadow: inset 0 -2px 0 #38a163;
+}

@@ -407,6 +407,113 @@ def autofix(text: str) -> Dict:
     }
 
 
+# A reported three-part list is usually a legitimate academic enumeration.
+# Only this small, unambiguous subset can be rearranged without asking a model
+# to decide which research variable or factual item may be removed.  All three
+# source adjectives remain byte-for-byte identical and in the same order.
+_S01_QUALITY_WORDS = frozenset({
+    "accessible", "accurate", "clear", "concise", "consistent", "effective",
+    "efficient", "fast", "flexible", "interpretable", "practical", "precise",
+    "readable", "reliable", "reproducible", "resilient", "robust", "safe",
+    "scalable", "secure", "simple", "stable", "transparent", "usable",
+})
+_S01_SIMPLE_LIST = re.compile(
+    r"(?P<first>[A-Za-z]+),[ \t]+(?P<second>[A-Za-z]+),[ \t]+and[ \t]+"
+    r"(?P<third>[A-Za-z]+)$", re.I,
+)
+
+
+def find_review_target(text: str, target: Dict) -> Optional[Dict]:
+    """Find an exact, current EN-S01 report item; offsets are Unicode codepoints."""
+    if not isinstance(target, dict) or target.get("pattern_id") != "EN-S01":
+        return None
+    start, end, matched = target.get("start"), target.get("end"), target.get("matched")
+    if (type(start) is not int or type(end) is not int or not isinstance(matched, str)
+            or not 0 <= start < end <= len(text) or end - start > 500
+            or text[start:end] != matched):
+        return None
+    return next((item for item in analyze(text)["findings"]
+                 if item.get("pattern_id") == "EN-S01"
+                 and item.get("handling") == "review"
+                 and item.get("start") == start and item.get("end") == end
+                 and item.get("matched") == matched), None)
+
+
+def edit_review_finding(text: str, target: Dict) -> Dict:
+    """Opt-in, deterministic edit of one safely recognizable EN-S01 finding.
+
+    A normal list of variables, datasets or results is not a stylistic error.
+    If the selected item is not a simple predicate adjective list, return the
+    original untouched with an explicit reason instead of inventing a fix.
+    """
+    finding = find_review_target(text, target)
+    if finding is None:
+        raise ValueError("诊断项与当前正文不一致，请重新分析后再试。")
+    before = analyze(text)
+    start, end = finding["start"], finding["end"]
+    matched = text[start:end]
+    reason_code = "context_requires_review"
+    reason = "此处可能是正常的学术列举；无法安全自动调整，建议保留原文并人工核对。"
+    reason_en = ("This may be a legitimate academic list. No safe automatic "
+                 "edit was applied; please review it in context.")
+    replacement = matched
+    triplet = _S01_SIMPLE_LIST.search(matched)
+    if triplet:
+        words = [triplet.group(key) for key in ("first", "second", "third")]
+        preceding = text[:start] + matched[:triplet.start()]
+        # Only a simple "is A, B, and C." predicate admits this syntax change.
+        # Multiword variables and lists inside longer clauses stay untouched.
+        if (all(word.lower() in _S01_QUALITY_WORDS for word in words)
+                and len({word.lower() for word in words}) == 3
+                and re.search(r"\bis[ \t]+$", preceding, re.I)
+                and text[end:end + 1] == "."):
+            replacement = (matched[:triplet.start()] + words[0] + " and "
+                           + words[1] + " while remaining " + words[2])
+            reason_code = "adjective_syntax_reordered"
+            reason = "已调整简单形容词并列句的句法，三项原词及顺序均保留；请人工核对语气与上下文。"
+            reason_en = ("The simple adjective list was restructured while "
+                         "preserving all three terms and their order. Please review the tone and context.")
+
+    output = text[:start] + replacement + text[end:]
+    comparison = _document_guard(text, output)
+    unsafe = (comparison.get("fabricated") or comparison.get("n_removed")
+              or comparison.get("terms_lost") or comparison.get("semantic_changed"))
+    after = analyze(output)
+    before_s01 = sum(item.get("pattern_id") == "EN-S01" for item in before["findings"])
+    after_s01 = sum(item.get("pattern_id") == "EN-S01" for item in after["findings"])
+    if replacement != matched and (unsafe or after_s01 >= before_s01
+                                   or after["summary"]["findings"] >= before["summary"]["findings"]):
+        output, replacement, after = text, matched, before
+        comparison = _document_guard(text, text)
+        reason_code = "guard_rejected"
+        reason = "候选修改未通过事实或诊断复核，已保留原文；请人工核对。"
+        reason_en = "The proposed edit failed verification, so the original was retained. Please review it manually."
+
+    changed = output != text
+    return {
+        "text": output, "before": before, "after": after,
+        "autofix": {"text": text, "changed": False, "log": []},
+        "chunks": [{"index": int(finding.get("paragraph") or 1) - 1,
+                    "lang": "en", "accepted": changed,
+                    "reason": reason, "targets": ["EN-S01"],
+                    "original": matched, "rewritten": replacement,
+                    "candidates": []}],
+        "n_chunks": 1, "n_accepted": int(changed), "n_safe_changes": int(changed),
+        "changed": changed,
+        "guard": {"fabricated": comparison.get("fabricated", False),
+                  "added": comparison.get("added", {}),
+                  "removed": comparison.get("removed", {}),
+                  "detail": guard.describe(comparison),
+                  "warnings": [], "status": "passed"},
+        "review_target": {"pattern_id": "EN-S01", "start": start, "end": end,
+                          "status": "changed" if changed else "unchanged",
+                          "reason_code": reason_code, "reason": reason,
+                          "reason_en": reason_en},
+        "method": "Deterministic selected-finding edit + factual guard",
+        "disclaimer": before["disclaimer"],
+    }
+
+
 def _english_humanize(text: str, client: Client, n_candidates: int,
                       progress=None, auto_english: bool = False,
                       stage=None) -> Dict:

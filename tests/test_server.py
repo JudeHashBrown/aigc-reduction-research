@@ -206,6 +206,130 @@ try:
             if balance_after != balance_before:
                 FAILS.append("S01 仅人工复核任务消耗了额度")
 
+        # Only an explicit selected finding may use the free deterministic
+        # lane.  It must preserve every adjective and all non-target text.
+        selected = next(item for item in report["findings"]
+                        if item.get("pattern_id") == "EN-S01")
+        target = {key: selected[key] for key in ("pattern_id", "start", "end", "matched")}
+        code, review_document = post("/api/documents", {
+            "name": "review-only.txt", "kind": "text",
+            "source": review_only_source, "current": review_only_source,
+        })
+        review_manuscript_id = (review_document.get("document") or {}).get("id")
+        if code != 201 or not review_manuscript_id:
+            FAILS.append(f"S01 测试文稿未保存: {code} {review_document}")
+        code, missing_document = post("/api/v1/rewrite-jobs", {
+            "text": review_only_source, "request_id": "server_s01_no_doc_01",
+            "review_target": target,
+        })
+        if (code != 400 or missing_document.get("code")
+                != "review_target_requires_manuscript"):
+            FAILS.append(f"无保存文稿的 S01 自动修改未被拒绝: {code} {missing_document}")
+        code, unsaved = post("/api/v1/rewrite-jobs", {
+            "text": review_only_source.replace("The tool", "This tool"),
+            "request_id": "server_s01_unsaved_01",
+            "manuscript_id": review_manuscript_id,
+            "review_target": target,
+        })
+        if code != 409 or "保存" not in unsaved.get("error", ""):
+            FAILS.append(f"未保存当前稿的 S01 自动修改未被拒绝: {code} {unsaved}")
+        code, stale = post("/api/v1/rewrite-jobs", {
+            "text": review_only_source, "request_id": "server_s01_stale_0001",
+            "manuscript_id": review_manuscript_id,
+            "review_target": {**target, "matched": "forged"},
+        })
+        if code != 409 or stale.get("code") != "stale_review_target":
+            FAILS.append(f"过期/伪造 S01 线索未被拒绝: {code} {stale}")
+        code, invalid = post("/api/v1/rewrite-jobs", {
+            "text": review_only_source, "request_id": "server_s01_invalid_01",
+            "manuscript_id": review_manuscript_id,
+            "review_target": {**target, "pattern_id": "EN-S11"},
+        })
+        if code != 400 or invalid.get("code") != "invalid_review_target":
+            FAILS.append(f"不支持的显式诊断项未被拒绝: {code} {invalid}")
+        code, started = post("/api/v1/rewrite-jobs", {
+            "text": review_only_source,
+            "request_id": "server_s01_selected_01",
+            "manuscript_id": review_manuscript_id,
+            "review_target": target,
+        })
+        if code != 200 or not started.get("job"):
+            FAILS.append(f"显式 S01 修改任务启动失败: {code} {started}")
+        else:
+            job = None
+            for _ in range(80):
+                with op.open(
+                        f"http://127.0.0.1:{PORT}/api/job/{started['job']}",
+                        timeout=8) as response:
+                    job = json.loads(response.read())
+                if job.get("state") in {"done", "error"}:
+                    break
+                time.sleep(0.05)
+            result = (job or {}).get("result") or {}
+            billing = result.get("billing") or {}
+            if (not job or job.get("state") != "done"
+                    or result.get("text") != "The tool is fast and stable while remaining simple."
+                    or result.get("n_accepted") != 1
+                    or result.get("review_target", {}).get("status") != "changed"
+                    or billing.get("status") != "not_charged"
+                    or billing.get("charged") != 0
+                    or result.get("model_usage", {}).get("requests") != 0):
+                FAILS.append(f"显式 S01 确定性修改或零计费错误: {job}")
+            code, repeated = post("/api/v1/rewrite-jobs", {
+                "text": review_only_source,
+                "request_id": "server_s01_selected_01",
+                "manuscript_id": review_manuscript_id,
+                "review_target": target,
+            })
+            if code != 200 or repeated.get("reused") is not True:
+                FAILS.append(f"显式 S01 幂等重试失败: {code} {repeated}")
+            with op.open(f"http://127.0.0.1:{PORT}/api/billing/summary", timeout=8) as response:
+                balance_after = json.loads(response.read())["balance"]
+            if balance_after != balance_before:
+                FAILS.append("显式 S01 确定性修改消耗了额度")
+
+    technical_source = ("We examine abnormal returns, stock liquidity, "
+                        "and analyst forecast accuracy.")
+    code, technical_report = post("/api/v1/analyze", {"text": technical_source})
+    technical_findings = [item for item in technical_report.get("findings", [])
+                          if item.get("pattern_id") == "EN-S01"]
+    if code != 200 or not technical_findings:
+        FAILS.append(f"学术变量列举分析失败: {code} {technical_report}")
+    else:
+        code, technical_document = post("/api/documents", {
+            "name": "variables.txt", "kind": "text",
+            "source": technical_source, "current": technical_source,
+        })
+        technical_manuscript_id = (technical_document.get("document") or {}).get("id")
+        if code != 201 or not technical_manuscript_id:
+            FAILS.append(f"学术变量测试文稿未保存: {code} {technical_document}")
+        target = {key: technical_findings[0][key]
+                  for key in ("pattern_id", "start", "end", "matched")}
+        code, started = post("/api/v1/rewrite-jobs", {
+            "text": technical_source, "request_id": "server_s01_variables_01",
+            "manuscript_id": technical_manuscript_id,
+            "review_target": target,
+        })
+        if code != 200 or not started.get("job"):
+            FAILS.append(f"学术变量显式复核任务启动失败: {code} {started}")
+        else:
+            job = None
+            for _ in range(80):
+                with op.open(
+                        f"http://127.0.0.1:{PORT}/api/job/{started['job']}",
+                        timeout=8) as response:
+                    job = json.loads(response.read())
+                if job.get("state") in {"done", "error"}:
+                    break
+                time.sleep(0.05)
+            result = (job or {}).get("result") or {}
+            if (not job or job.get("state") != "done"
+                    or result.get("text") != technical_source
+                    or result.get("n_accepted") != 0
+                    or result.get("review_target", {}).get("reason_code") != "context_requires_review"
+                    or result.get("billing", {}).get("status") != "not_charged"):
+                FAILS.append(f"学术变量列举被不安全修改: {job}")
+
     for label, source, pattern_id in (
             ("英文加粗", "**The method is clear.**", "EN-F02"),
             ("同行中英混排", "It was found that the estimate is stable. 这是说明。", "EN-S11")):

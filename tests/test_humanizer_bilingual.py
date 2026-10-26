@@ -545,6 +545,51 @@ def test_opt_in_english_auto_skips_ambiguous_enumeration():
     assert client.calls == []
 
 
+def test_selected_s01_edit_restructures_only_simple_adjectives():
+    source = ("The tool is fast, stable, and simple. "
+              "The study examined 126 students and preserved all source citations.")
+    finding = next(item for item in H.analyze(source)["findings"]
+                   if item["pattern_id"] == "EN-S01")
+    result = H.edit_review_finding(source, finding)
+    assert result["text"] == (
+        "The tool is fast and stable while remaining simple. "
+        "The study examined 126 students and preserved all source citations.")
+    assert result["review_target"]["status"] == "changed"
+    assert result["n_chunks"] == result["n_accepted"] == 1
+    assert result["guard"]["status"] == "passed"
+    assert result["chunks"][0]["original"] == source[finding["start"]:finding["end"]]
+    assert result["chunks"][0]["rewritten"] == (
+        "tool is fast and stable while remaining simple")
+
+
+def test_selected_s01_edit_preserves_real_academic_variable_list():
+    source = ("We examine abnormal returns, stock liquidity, "
+              "and analyst forecast accuracy.")
+    finding = next(item for item in H.analyze(source)["findings"]
+                   if item["pattern_id"] == "EN-S01")
+    result = H.edit_review_finding(source, finding)
+    assert result["text"] == source
+    assert result["n_accepted"] == 0
+    assert result["review_target"]["status"] == "unchanged"
+    assert result["review_target"]["reason_code"] == "context_requires_review"
+    assert not result["chunks"][0]["accepted"]
+
+
+def test_selected_s01_edit_rejects_stale_or_forged_target():
+    source = "The tool is fast, stable, and simple."
+    finding = next(item for item in H.analyze(source)["findings"]
+                   if item["pattern_id"] == "EN-S01")
+    assert H.find_review_target(source, {**finding, "matched": "changed"}) is None
+    assert H.find_review_target(source, {**finding, "start": True}) is None
+    assert H.find_review_target(source, {**finding, "pattern_id": "EN-S11"}) is None
+    try:
+        H.edit_review_finding(source, {**finding, "end": finding["end"] - 1})
+    except ValueError as exc:
+        assert "不一致" in str(exc)
+    else:
+        raise AssertionError("stale finding was accepted")
+
+
 if __name__ == "__main__":
     tests = [value for name, value in sorted(globals().items())
              if name.startswith("test_") and callable(value)]

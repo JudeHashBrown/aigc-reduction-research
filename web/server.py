@@ -425,15 +425,35 @@ def _job_set(jid, **kw):
     WORKSPACES.update_job(jid, **kw)
 
 
+def _not_charged_review_billing(jid):
+    return {"job_id": jid, "status": "not_charged", "charged": 0,
+            "released": 0, "llm_requests": 0, "input_tokens": 0,
+            "output_tokens": 0}
+
+
 def _run_queued_job(job):
     jid = job["id"]
     request = job.get("request") or {}
     text = request.get("text")
     strength = request.get("strength")
-    client = Client()
+    review_target = request.get("review_target")
+    client = None
     try:
         if not isinstance(text, str) or strength not in {"conservative", "balanced", "deep"}:
             raise ValueError("排队任务缺少可恢复的正文或策略")
+        if review_target is not None:
+            _job_set(jid, phase="checking", done=0, total=1)
+            result = humanizer_bilingual.edit_review_finding(text, review_target)
+            result["strength"] = strength
+            result["notices"] = request.get("notices") or []
+            result["model_usage"] = {"requests": 0, "input_tokens": 0,
+                                     "output_tokens": 0, "total_tokens": 0}
+            billing_result = _not_charged_review_billing(jid)
+            result["billing"] = billing_result
+            _job_set(jid, state="done", phase="complete", done=1, total=1,
+                     result=result, billing=billing_result)
+            return
+        client = Client()
         if not client.configured:
             raise RuntimeError("平台改写服务暂不可用")
         _job_set(jid, phase="locating")
@@ -453,12 +473,16 @@ def _run_queued_job(job):
     except Exception as exc:  # noqa: BLE001
         import traceback
         print("\n[Humanizer 双语任务失败]\n" + traceback.format_exc(), flush=True)
-        try:
-            billing_result = BILLING.finalize(
-                jid, success=False, accepted=0, usage=client.usage_summary())
-        except Exception as billing_exc:  # noqa: BLE001
-            print("\n[额度释放失败]\n" + str(billing_exc), flush=True)
-            billing_result = {"status": "finalize_error", "error": str(billing_exc)}
+        if review_target is not None:
+            billing_result = _not_charged_review_billing(jid)
+        else:
+            try:
+                billing_result = BILLING.finalize(
+                    jid, success=False, accepted=0,
+                    usage=client.usage_summary() if client else None)
+            except Exception as billing_exc:  # noqa: BLE001
+                print("\n[额度释放失败]\n" + str(billing_exc), flush=True)
+                billing_result = {"status": "finalize_error", "error": str(billing_exc)}
         _job_set(jid, state="error", phase="error", error=str(exc), billing=billing_result)
     finally:
         _dispatch_jobs()
@@ -1531,11 +1555,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(r, ensure_ascii=False))
 
         if path == "/api/v1/rewrite-jobs":
-            client = Client()
-            if not client.configured:
-                return self._send(400, json.dumps({
-                    "error": "平台改写服务暂不可用，请联系管理员检查服务端模型配置。"
-                }, ensure_ascii=False))
             strength = payload.get("strength") or "conservative"
             if strength not in {"conservative", "balanced", "deep"}:
                 return self._send(400, json.dumps({"error": "strength 参数无效"},
@@ -1559,9 +1578,45 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(409, json.dumps({
                         "error": "当前稿尚未保存，请等待保存完成后再启动改写。"
                     }, ensure_ascii=False))
-            fingerprint = request_fingerprint(text, strength)
+            review_target = payload.get("review_target")
+            if review_target is not None:
+                if not manuscript_id:
+                    return self._send(400, json.dumps({
+                        "error": "单项自动修改必须关联已保存的当前稿。",
+                        "code": "review_target_requires_manuscript",
+                    }, ensure_ascii=False))
+                if (not isinstance(review_target, dict)
+                        or review_target.get("pattern_id") != "EN-S01"
+                        or type(review_target.get("start")) is not int
+                        or type(review_target.get("end")) is not int
+                        or not isinstance(review_target.get("matched"), str)):
+                    return self._send(400, json.dumps({
+                        "error": "review_target 仅支持有效的 EN-S01 诊断项。",
+                        "code": "invalid_review_target",
+                    }, ensure_ascii=False))
+                finding = humanizer_bilingual.find_review_target(text, review_target)
+                if finding is None:
+                    return self._send(409, json.dumps({
+                        "error": "诊断项与当前正文不一致，请重新分析后再试。",
+                        "code": "stale_review_target",
+                    }, ensure_ascii=False))
+                review_target = {"pattern_id": "EN-S01", "start": finding["start"],
+                                 "end": finding["end"], "matched": finding["matched"]}
+                fingerprint = hashlib.sha256((
+                    "review-target\0" + strength + "\0" + text + "\0" + json.dumps(
+                        review_target, sort_keys=True, ensure_ascii=False)
+                ).encode("utf-8")).hexdigest()
+            else:
+                client = Client()
+                if not client.configured:
+                    return self._send(400, json.dumps({
+                        "error": "平台改写服务暂不可用，请联系管理员检查服务端模型配置。"
+                    }, ensure_ascii=False))
+                fingerprint = request_fingerprint(text, strength)
             jid, claim = _new_job(account_id, request_id, fingerprint, manuscript_id,
-                                  {"text": text, "strength": strength, "notices": notices})
+                                  {"text": text, "strength": strength, "notices": notices,
+                                   **({"review_target": review_target}
+                                      if review_target is not None else {})})
             if claim == "busy":
                 return self._send(429, json.dumps({
                     "error": "当前排队任务已满，请等待已有任务完成后再提交。"
@@ -1573,6 +1628,19 @@ class Handler(BaseHTTPRequestHandler):
             if claim == "reused":
                 return self._send(200, json.dumps({
                     "job": jid, "reused": True,
+                }, ensure_ascii=False))
+
+            if review_target is not None:
+                # A bounded, deterministic edit neither calls the model nor
+                # reserves character credits.  A non-null billing marker lets
+                # the durable queue dispatch and recover it normally.
+                reservation = _not_charged_review_billing(jid)
+                _job_set(jid, billing=reservation)
+                if manuscript_id:
+                    WORKSPACES.mark_last_job(account_id, manuscript_id, jid)
+                _dispatch_jobs()
+                return self._send(200, json.dumps({
+                    "job": jid, "reused": False, "billing": reservation,
                 }, ensure_ascii=False))
 
             try:
@@ -1715,10 +1783,11 @@ def _recover_interrupted_jobs():
     for job in WORKSPACES.unreserved_jobs():
         # A crash may land between the queued claim and the reservation write.
         # Never dispatch or indefinitely count such a task against queue slots.
-        try:
-            BILLING.finalize(job["id"], success=False, accepted=0)
-        except BillingError as exc:
-            print(f"[排队任务预占恢复待核对] {job['id']}: {exc}", flush=True)
+        if not (job.get("request") or {}).get("review_target"):
+            try:
+                BILLING.finalize(job["id"], success=False, accepted=0)
+            except BillingError as exc:
+                print(f"[排队任务预占恢复待核对] {job['id']}: {exc}", flush=True)
         WORKSPACES.update_job(job["id"], state="error", phase="error",
                               error="服务在任务排队时中断；请重新提交。")
     for job in WORKSPACES.running_jobs():
@@ -1733,13 +1802,16 @@ def _recover_interrupted_jobs():
             else:
                 continue
         result = job.get("result")
-        try:
-            billing_result = BILLING.finalize(
-                job["id"], success=bool(result),
-                accepted=int((result or {}).get("n_accepted") or 0),
-                usage=(result or {}).get("model_usage"))
-        except BillingError as exc:
-            billing_result = {"status": "recovery_error", "error": str(exc)}
+        if (job.get("request") or {}).get("review_target"):
+            billing_result = _not_charged_review_billing(job["id"])
+        else:
+            try:
+                billing_result = BILLING.finalize(
+                    job["id"], success=bool(result),
+                    accepted=int((result or {}).get("n_accepted") or 0),
+                    usage=(result or {}).get("model_usage"))
+            except BillingError as exc:
+                billing_result = {"status": "recovery_error", "error": str(exc)}
         if result:
             result["billing"] = billing_result
             WORKSPACES.update_job(job["id"], state="done", phase="complete",
