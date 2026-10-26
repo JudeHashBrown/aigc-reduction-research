@@ -641,9 +641,31 @@ def _paragraph_safety_error(src: str, out: str) -> Optional[Dict]:
     return None
 
 
+def _restore_paragraph_separators(src: str, out: str) -> str:
+    """Keep the source newline skeleton when only separator widths differ.
+
+    Models often turn single newlines into blank lines.  Reattach the exact
+    source separators only if both drafts have the same nonempty paragraph
+    slots.  The usual per-paragraph and fact guards still validate the text
+    after this formatting-only normalization.
+    """
+    source_breaks = re.findall(r"\n+", src)
+    output_breaks = re.findall(r"\n+", out)
+    if (not source_breaks or source_breaks == output_breaks
+            or len(source_breaks) != len(output_breaks)):
+        return out
+    source_parts = re.split(r"\n+", src)
+    output_parts = re.split(r"\n+", out)
+    if (len(source_parts) != len(output_parts)
+            or any(not part.strip() for part in source_parts + output_parts)):
+        return out
+    return "".join(part + separator for part, separator in
+                   zip(output_parts, source_breaks)) + output_parts[-1]
+
+
 def _candidate(src: str, raw: str,
                allowed_pattern_ids: Optional[set] = None) -> Dict:
-    text = _clean_model_output(raw)
+    text = _restore_paragraph_separators(src, _clean_model_output(raw))
     if not text:
         return {"ok": False, "text": src, "score": -10_000, "reason": "模型返回空文本"}
     ratio = len(text) / max(1, len(src))

@@ -198,6 +198,55 @@ def test_multi_paragraph_rewrites_stay_independent_and_usable():
     assert candidate["ok"], candidate
 
 
+def test_candidate_restores_source_separator_width_before_guarding():
+    first = '值得注意的是，该方法能够促进学生学习。'
+    second = '值得注意的是，该因素会影响模型性能。'
+    revised_first = '该方法可促进学生学习。'
+    revised_second = '该因素影响模型性能。'
+    for source_gap, model_gap in (("\n", "\n\n"), ("\n\n", "\n")):
+        source = first + source_gap + second
+        model_output = revised_first + model_gap + revised_second
+        candidate = H._candidate(source, model_output)
+        assert candidate["ok"], candidate
+        assert candidate["text"] == revised_first + source_gap + revised_second
+        assert candidate["drop"] > 0
+
+
+def test_separator_repair_does_not_accept_added_or_moved_paragraphs():
+    source = ('值得注意的是，该方法能够促进学生学习。\n\n'
+              '第二段完整报告主要实验结果和相关观察。第三句进一步说明现有局限。')
+    extra = ('该方法可促进学生学习。\n第二段完整报告主要实验结果和相关观察。'
+             '\n第三句进一步说明现有局限。')
+    assert not H._candidate(source, extra)["ok"]
+
+    moved = ('该方法可促进学生学习。第二段完整报告主要实验结果和相关观察。'
+             '\n第三句进一步说明现有局限。')
+    candidate = H._candidate(source, moved)
+    assert not candidate["ok"], candidate
+    assert "段" in candidate["reason"]
+
+
+def test_rewrite_restores_docx_paragraph_skeleton_for_export():
+    import docx_io
+    from test_docx import make_docx
+
+    paragraphs = [
+        '值得注意的是，该方法能够促进学生学习。',
+        '值得注意的是，该因素会影响模型性能。',
+    ]
+    data = make_docx(paragraphs)
+    source, meta = docx_io.extract(data)
+    assert source == "\n\n".join(paragraphs)
+    model_output = '该方法可促进学生学习。\n该因素影响模型性能。'
+    result = H.humanize(source, MockClient(lambda _text: model_output), n_candidates=1)
+    expected = '该方法可促进学生学习。\n\n该因素影响模型性能。'
+    assert result["text"] == expected
+    assert result["n_accepted"] == 1
+    exported = docx_io.replace(data, result["text"].split("\n\n"), meta)
+    extracted, _ = docx_io.extract(exported)
+    assert extracted == expected
+
+
 def test_clear_text_can_remain_unchanged():
     text = "先保存文件，再关闭窗口。未保存的修改会丢失。"
     report = H.analyze(text)
