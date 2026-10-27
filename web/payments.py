@@ -32,7 +32,7 @@ class PaymentProvider:
 
     def checkout(self, account_id: str, product_id: str,
                  idempotency_key: str, origin: str = "",
-                 customer_email: str = "") -> Dict:
+                 customer_email: str = "", currency: str = "CNY") -> Dict:
         raise BillingError(
             f"{self.display_name} 尚未配置，当前不能收款。",
             503,
@@ -53,8 +53,9 @@ class MockPaymentProvider(PaymentProvider):
 
     def checkout(self, account_id: str, product_id: str,
                  idempotency_key: str, origin: str = "",
-                 customer_email: str = "") -> Dict:
-        result = self.store.mock_checkout(account_id, product_id, idempotency_key)
+                 customer_email: str = "", currency: str = "CNY") -> Dict:
+        result = self.store.mock_checkout(account_id, product_id,
+                                          idempotency_key, currency=currency)
         result.update({
             "live": False,
             "notice": "模拟支付已完成，未发生真实扣款。",
@@ -99,9 +100,9 @@ class StripePaymentProvider(PaymentProvider):
             "checkout_enabled": self.configured,
             "refund_enabled": self.refund_enabled,
             "payment_methods": ["card", "alipay"],
-            "notice": ("Stripe 正式收款：银行卡、支付宝等以收银台实际可用选项为准。"
+            "notice": ("Stripe 正式收款：可用支付方式以收银台实际显示为准。"
                        if self.configured and self.live else
-                       "Stripe 测试模式：银行卡、支付宝等；不会真实扣款。"
+                       "Stripe 测试模式：可用支付方式以收银台实际显示为准；不会真实扣款。"
                        if self.configured else
                        "Stripe 收银台尚未启用；请在服务端配置匹配环境的密钥和回调。"),
         })
@@ -109,9 +110,10 @@ class StripePaymentProvider(PaymentProvider):
 
     def checkout(self, account_id: str, product_id: str,
                  idempotency_key: str, origin: str = "",
-                 customer_email: str = "") -> Dict:
+                 customer_email: str = "", currency: str = "CNY") -> Dict:
         if not self.configured:
-            return super().checkout(account_id, product_id, idempotency_key)
+            return super().checkout(account_id, product_id, idempotency_key,
+                                    currency=currency)
         parsed = urlparse(origin)
         if (parsed.scheme not in {"http", "https"} or not parsed.netloc
                 or (parsed.scheme == "http" and parsed.hostname not in
@@ -122,7 +124,8 @@ class StripePaymentProvider(PaymentProvider):
         if not isinstance(customer_email, str) or not customer_email:
             raise BillingError("账号缺少已验证邮箱，请重新登录后再试", 403)
         order = self.store.prepare_stripe_checkout(
-            account_id, product_id, idempotency_key, livemode=self.live)
+            account_id, product_id, idempotency_key, livemode=self.live,
+            currency=currency)
         now = int(self.store._now())
         if order["status"] != "pending":
             raise BillingError("订单已处理，请刷新额度页面", 409)
@@ -131,16 +134,23 @@ class StripePaymentProvider(PaymentProvider):
                 raise BillingError("收银台链接已过期，请重新下单", 409)
             return {"order_id": order["id"], "status": order["status"],
                     "provider": "stripe", "checkout_url": order["checkout_url"],
-                    "reused": True, "live": self.live}
+                    "reused": True, "live": self.live,
+                    "currency": order["currency"],
+                    "amount_minor": int(order["amount_fen"])}
         snapshot = json.loads(order["product_snapshot_json"])
         back = f"{origin}/#/checkout/pro?order={quote(order['id'], safe='')}"
         params = {
             "mode": "payment",
             "customer_email": customer_email,
-            # Keep Dashboard-managed dynamic methods, excluding WeChat Pay only
-            # for new RightThesis Checkout Sessions while the provider decline
-            # is investigated. Do not change the account-wide configuration.
-            "excluded_payment_method_types": ["wechat_pay"],
+            # Checkout must display and settle the order's fixed currency and
+            # amount, not silently localize them through Adaptive Pricing.
+            "adaptive_pricing": {"enabled": False},
+            # The Hong Kong account's USD Checkout does not offer Alipay;
+            # exclude it explicitly rather than suggesting an unavailable
+            # method. WeChat Pay remains hidden pending provider review.
+            "excluded_payment_method_types": (["wechat_pay", "alipay"]
+                                              if order["currency"] == "USD"
+                                              else ["wechat_pay"]),
             "line_items": [{"price_data": {
                 "currency": order["currency"].lower(),
                 "unit_amount": order["amount_fen"],
@@ -179,7 +189,9 @@ class StripePaymentProvider(PaymentProvider):
             order["id"], session_id, checkout_url, expires_at)
         return {"order_id": order["id"], "status": "pending",
                 "provider": "stripe", "checkout_url": checkout_url,
-                "reused": False, "live": self.live}
+                "reused": False, "live": self.live,
+                "currency": order["currency"],
+                "amount_minor": int(order["amount_fen"])}
 
     def webhook(self, raw_body: bytes, signature: str) -> Dict:
         if not self.configured:

@@ -1,10 +1,8 @@
-"""Local-MVP billing and entitlement ledger.
+"""Server-side product catalog, credit ledger, and atomic rewrite reservations.
 
-The editing engine stays payment-agnostic.  This module owns the server-side
-product catalog, immutable orders, expiring credit grants, and atomic usage
-reservations.  It deliberately supports only a clearly-labelled mock checkout
-for now: real Stripe / epay callbacks require an authenticated public control
-plane and provider-specific signature verification.
+The editing engine stays payment-agnostic. Payment adapters verify completed
+transactions before calling this module to grant credits. Historical usage
+reservations retain their original meter while new jobs use word-based units.
 """
 from __future__ import annotations
 
@@ -14,7 +12,9 @@ import re
 import sqlite3
 import threading
 import time
+import unicodedata
 import uuid
+from bisect import bisect_right
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -22,6 +22,11 @@ from typing import Callable, Dict, List, Optional
 
 WELCOME_CREDITS = 800
 WELCOME_MAX_CHARS = 800
+METERING_VERSION = 2
+# Word-based metering must not let one very long token (or mostly free
+# punctuation/whitespace) fan out into dozens of costly model requests.
+MAX_TEXT_CODEPOINTS_PER_UNIT = 16
+MIN_TEXT_DENSITY_LIMIT = 256
 STRENGTH_MULTIPLIER_MILLI = {
     "conservative": 1000,
     "balanced": 1000,
@@ -34,33 +39,72 @@ PRODUCTS: Dict[str, Dict] = {
         "id": "pack_3k", "name": "小字数包", "kind": "pack",
         "price_fen": 990, "currency": "CNY", "credits": 3000,
         "max_chars_per_job": 3000, "valid_days": 90,
-        "description": "适合章节或短稿，不自动续费。",
+        "description": "含 3,000 计费额度，适合章节或短稿，不自动续费。保守、平衡模式每 1 个汉字或 1 个英文单词扣 1 额度；深度模式按 1.5 倍。",
     },
     "pack_10k": {
         "id": "pack_10k", "name": "论文包", "kind": "pack",
         "price_fen": 2990, "currency": "CNY", "credits": 10000,
         "max_chars_per_job": 10000, "valid_days": 90,
-        "description": "适合一篇短论文或多轮局部修改。",
+        "description": "含 10,000 计费额度，适合短论文或多轮局部修改。保守、平衡模式每 1 个汉字或 1 个英文单词扣 1 额度；深度模式按 1.5 倍。",
     },
     "pack_30k": {
         "id": "pack_30k", "name": "大论文包", "kind": "pack",
         "price_fen": 6990, "currency": "CNY", "credits": 30000,
         "max_chars_per_job": 30000, "valid_days": 90,
-        "description": "适合长论文，支持异步分块处理。",
+        "description": "含 30,000 计费额度，适合长论文。保守、平衡模式每 1 个汉字或 1 个英文单词扣 1 额度；深度模式按 1.5 倍。",
     },
     "student_month": {
         "id": "student_month", "name": "学生月卡", "kind": "subscription",
         "price_fen": 3990, "currency": "CNY", "credits": 20000,
         "max_chars_per_job": 10000, "valid_days": 30,
-        "description": "一次购买，30 天有效，20,000 字；不自动续费。",
+        "description": "一次购买，30 天有效，含 20,000 计费额度；不自动续费。保守、平衡模式每 1 个汉字或 1 个英文单词扣 1 额度；深度模式按 1.5 倍。",
     },
     "pro_month": {
         "id": "pro_month", "name": "高频月卡", "kind": "subscription",
         "price_fen": 7990, "currency": "CNY", "credits": 60000,
         "max_chars_per_job": 60000, "valid_days": 30,
-        "description": "一次购买，30 天有效，60,000 字；不自动续费。",
+        "description": "一次购买，30 天有效，含 60,000 计费额度；不自动续费。保守、平衡模式每 1 个汉字或 1 个英文单词扣 1 额度；深度模式按 1.5 倍。",
     },
 }
+
+# Stripe uses the smallest currency unit for both CNY and USD. Keep the
+# original CNY price_fen fields for existing clients and historical orders;
+# these are fixed USD prices, not an exchange-rate conversion at checkout.
+USD_PRICE_CENTS = {
+    "pack_3k": 190,
+    "pack_10k": 590,
+    "pack_30k": 1290,
+    "student_month": 790,
+    "pro_month": 1490,
+}
+ENGLISH_PRODUCT_NAMES = {
+    "pack_3k": "Small credit pack",
+    "pack_10k": "Thesis credit pack",
+    "pack_30k": "Large thesis credit pack",
+    "student_month": "Student 30-day pass",
+    "pro_month": "Frequent-use 30-day pass",
+}
+
+
+def _product_for_currency(product_id: str, currency: str) -> Dict:
+    """Select an authoritative catalog price; never trust a browser amount."""
+    if product_id not in PRODUCTS:
+        raise BillingError("未知套餐", 400)
+    if not isinstance(currency, str) or currency not in {"CNY", "USD"}:
+        raise BillingError("不支持的支付币种", 400)
+    product = PRODUCTS[product_id]
+    amount_minor = (product["price_fen"] if currency == "CNY"
+                    else USD_PRICE_CENTS[product_id])
+    return {
+        **product,
+        "name": (product["name"] if currency == "CNY"
+                 else ENGLISH_PRODUCT_NAMES[product_id]),
+        # price_fen is retained for compatibility with old order snapshots.
+        "price_fen": amount_minor,
+        "price_minor": amount_minor,
+        "currency": currency,
+        "metering_version": METERING_VERSION,
+    }
 
 
 class BillingError(RuntimeError):
@@ -74,17 +118,84 @@ _NON_BILLABLE_INVISIBLE = frozenset(
     "\u00ad\u180e\u200b\u200c\u200d\u202a\u202b\u202c\u202d\u202e\u2060\u2066\u2067\u2068\u2069\ufeff"
 )
 
+# Format characters added after the Unicode database bundled with Python 3.9.
+# Browsers classify these as Cf and discard them before word segmentation.
+_NEW_FORMAT_RANGES = ((0x890, 0x891), (0x13439, 0x1343F))
 
-def billable_chars(text: str) -> int:
-    """Count visible, non-whitespace Unicode code points, not English words.
+# Unicode Script=Latin letters, aligned with the browser's Unicode-property
+# regex. Python's standard unicodedata has no Script property; name-prefix
+# checks miss ordinal indicators and modifier letters (ª, º, ᵃ). Keep these
+# exact ranges even when Python's Unicode database lags the browser's: each
+# range contains only Script=Latin letters in the browser implementation.
+_LATIN_LETTER_RANGES = (
+    (0x41, 0x5A), (0x61, 0x7A), (0xAA, 0xAA), (0xBA, 0xBA),
+    (0xC0, 0xD6), (0xD8, 0xF6), (0xF8, 0x2B8), (0x2E0, 0x2E4),
+    (0x1D00, 0x1D25), (0x1D2C, 0x1D5C), (0x1D62, 0x1D65),
+    (0x1D6B, 0x1D77), (0x1D79, 0x1DBE), (0x1E00, 0x1EFF),
+    (0x2071, 0x2071), (0x207F, 0x207F), (0x2090, 0x209C),
+    (0x212A, 0x212B), (0x2132, 0x2132), (0x214E, 0x214E),
+    (0x2183, 0x2184), (0x2C60, 0x2C7F), (0xA722, 0xA787),
+    (0xA78B, 0xA7DC), (0xA7F1, 0xA7FF), (0xAB30, 0xAB5A),
+    (0xAB5C, 0xAB64), (0xAB66, 0xAB69), (0xFB00, 0xFB06),
+    (0xFF21, 0xFF3A), (0xFF41, 0xFF5A), (0x10780, 0x10785),
+    (0x10787, 0x107B0), (0x107B2, 0x107BA), (0x1DF00, 0x1DF1E),
+    (0x1DF25, 0x1DF2A),
+)
+_LATIN_LETTER_STARTS = tuple(start for start, _ in _LATIN_LETTER_RANGES)
 
-    Saved drafts can reach this function before engine normalization. Ignore
-    the same invisible and control characters removed by the engine and the
-    browser quota preview so the document list agrees with the ledger.
-    Deliberately do not NFC-compose combining characters.
-    """
-    if not isinstance(text, str):
-        raise TypeError("text must be str")
+# Browser Unicode properties contain a few characters newer than the
+# standard-library Unicode database on some supported Python runtimes.
+_NEW_DECIMAL_RANGES = (
+    (0x10D40, 0x10D49), (0x116D0, 0x116E3), (0x11BF0, 0x11BF9),
+    (0x11DE0, 0x11DE9), (0x11F50, 0x11F59), (0x16130, 0x16139),
+    (0x16AC0, 0x16AC9), (0x16D70, 0x16D79), (0x1CCF0, 0x1CCF9),
+    (0x1E4F0, 0x1E4F9), (0x1E5F1, 0x1E5FA),
+)
+_NEW_MARK_RANGES = (
+    (0x897, 0x89F), (0x8CA, 0x8D2), (0xC3C, 0xC3C),
+    (0xCF3, 0xCF3), (0xECE, 0xECE), (0x1715, 0x1715),
+    (0x180F, 0x180F), (0x1AC1, 0x1ADD), (0x1AE0, 0x1AEB),
+    (0x1DFA, 0x1DFA), (0x10D69, 0x10D6D), (0x10EFA, 0x10EFF),
+    (0x10F82, 0x10F85), (0x11070, 0x11070), (0x11073, 0x11074),
+    (0x110C2, 0x110C2), (0x11241, 0x11241), (0x113B8, 0x113C0),
+    (0x113C2, 0x113C2), (0x113C5, 0x113C5), (0x113C7, 0x113CA),
+    (0x113CC, 0x113D0), (0x113D2, 0x113D2), (0x113E1, 0x113E2),
+    (0x11B60, 0x11B67), (0x11F00, 0x11F01), (0x11F03, 0x11F03),
+    (0x11F34, 0x11F3A), (0x11F3E, 0x11F42), (0x11F5A, 0x11F5A),
+    (0x13440, 0x13440), (0x13447, 0x13455), (0x1611E, 0x1612F),
+    (0x1CF00, 0x1CF2D), (0x1CF30, 0x1CF46), (0x1E08F, 0x1E08F),
+    (0x1E2AE, 0x1E2AE), (0x1E4EC, 0x1E4EF), (0x1E5EE, 0x1E5EF),
+    (0x1E6E3, 0x1E6E3), (0x1E6E6, 0x1E6E6), (0x1E6EE, 0x1E6EF),
+    (0x1E6F5, 0x1E6F5),
+)
+_NEW_PUNCT_RANGES = (
+    (0x61D, 0x61D), (0x1B4E, 0x1B4F), (0x1B7D, 0x1B7F),
+    (0x2E53, 0x2E5D), (0x10D6E, 0x10D6E), (0x10ED0, 0x10ED0),
+    (0x10F86, 0x10F89), (0x113D4, 0x113D5), (0x113D7, 0x113D8),
+    (0x116B9, 0x116B9), (0x11B00, 0x11B09), (0x11BE1, 0x11BE1),
+    (0x11F43, 0x11F4F), (0x12FF1, 0x12FF2), (0x16D6D, 0x16D6F),
+    (0x1E5FF, 0x1E5FF),
+)
+
+
+def _in_ranges(char: str, ranges: tuple[tuple[int, int], ...]) -> bool:
+    code = ord(char)
+    return any(start <= code <= end for start, end in ranges)
+
+
+def _is_billable_visible(char: str) -> bool:
+    """Drop whitespace, control/format characters, and variation selectors."""
+    category = unicodedata.category(char)
+    return (not char.isspace()
+            and char not in _NON_BILLABLE_INVISIBLE
+            and category not in {"Cc", "Cf"}
+            and not _in_ranges(char, _NEW_FORMAT_RANGES)
+            and not ("\ufe00" <= char <= "\ufe0f")
+            and not ("\U000e0100" <= char <= "\U000e01ef"))
+
+
+def _legacy_billable_chars(text: str) -> int:
+    """The v1 counter, used only to recognize already-reserved old jobs."""
     return sum(
         1 for char in text
         if not char.isspace()
@@ -93,6 +204,67 @@ def billable_chars(text: str) -> int:
         and not ("\x00" <= char <= "\x08" or "\x0b" <= char <= "\x0c"
                  or "\x0e" <= char <= "\x1f" or "\x7f" <= char <= "\x9f")
     )
+
+
+def _is_han(char: str) -> bool:
+    name = unicodedata.name(char, "")
+    return (name.startswith("CJK UNIFIED IDEOGRAPH")
+            or name.startswith("CJK COMPATIBILITY IDEOGRAPH")
+            or char == "\u3007")
+
+
+def _is_latin_word_char(char: str) -> bool:
+    category = unicodedata.category(char)
+    if category == "Nd" or _in_ranges(char, _NEW_DECIMAL_RANGES):
+        return True
+    index = bisect_right(_LATIN_LETTER_STARTS, ord(char)) - 1
+    return index >= 0 and ord(char) <= _LATIN_LETTER_RANGES[index][1]
+
+
+def billable_chars(text: str) -> int:
+    """Count v2 billing units, retaining the public v1 function name.
+
+    One Han ideograph costs one unit; a contiguous Latin-letter/decimal-digit
+    word costs one unit, including combining accents and internal apostrophes.
+    Hyphens and other punctuation split words without costing units. Other
+    visible letters/symbols (including Kana, Hangul and emoji) cost one unit
+    per code point so unsupported scripts do not become free. Invisible
+    format/control characters and variation selectors are removed first.
+    """
+    if not isinstance(text, str):
+        raise TypeError("text must be str")
+    # Whitespace separates English words even though it costs no units.
+    # Invisible formatting is instead erased, so ``A\u200bB`` remains one word.
+    visible = [char for char in text if char.isspace() or _is_billable_visible(char)]
+    units = 0
+    in_latin_word = False
+    for index, char in enumerate(visible):
+        if char.isspace():
+            in_latin_word = False
+            continue
+        category = unicodedata.category(char)
+        if _is_han(char):
+            units += 1
+            in_latin_word = False
+        elif _is_latin_word_char(char):
+            if not in_latin_word:
+                units += 1
+            in_latin_word = True
+        elif category.startswith("M") or _in_ranges(char, _NEW_MARK_RANGES):
+            # A decomposed accent is part of a Latin word. In other scripts,
+            # preserve the v1 per-code-point fallback instead of free input.
+            if not in_latin_word:
+                units += 1
+        elif (char in {"'", "\u2019"} and in_latin_word
+              and index + 1 < len(visible)
+              and _is_latin_word_char(visible[index + 1])):
+            pass
+        elif category.startswith("P") or _in_ranges(char, _NEW_PUNCT_RANGES):
+            in_latin_word = False
+        else:
+            units += 1
+            in_latin_word = False
+    return units
 
 
 def request_fingerprint(text: str, strength: str) -> str:
@@ -231,6 +403,7 @@ class BillingStore:
                         request_hash TEXT NOT NULL,
                         strength TEXT NOT NULL,
                         billable_chars INTEGER NOT NULL CHECK(billable_chars >= 0),
+                        metering_version INTEGER NOT NULL DEFAULT 1 CHECK(metering_version IN (1,2)),
                         multiplier_milli INTEGER NOT NULL CHECK(multiplier_milli >= 1000),
                         reserved INTEGER NOT NULL CHECK(reserved >= 0),
                         status TEXT NOT NULL,
@@ -275,6 +448,20 @@ class BillingStore:
                     if name not in columns:
                         conn.execute(f"ALTER TABLE orders ADD COLUMN {name} {declaration}")
                 grant_columns = {row["name"] for row in conn.execute("PRAGMA table_info(credit_grants)")}
+                reservation_columns = {row["name"] for row in conn.execute("PRAGMA table_info(usage_reservations)")}
+                if "metering_version" not in reservation_columns:
+                    try:
+                        conn.execute("""ALTER TABLE usage_reservations
+                            ADD COLUMN metering_version INTEGER NOT NULL DEFAULT 1
+                            CHECK(metering_version IN (1,2))""")
+                    except sqlite3.OperationalError as exc:
+                        # Multiple server workers can race on startup after a
+                        # deployment; only a completed peer migration is safe.
+                        if ("duplicate column name" not in str(exc).lower()
+                                or "metering_version" not in {
+                                    row["name"] for row in conn.execute(
+                                        "PRAGMA table_info(usage_reservations)")}):
+                            raise
                 if "revoked_at" not in grant_columns:
                     conn.execute("ALTER TABLE credit_grants ADD COLUMN revoked_at INTEGER")
                 if "refunded_credits" not in grant_columns:
@@ -310,11 +497,23 @@ class BillingStore:
     def public_catalog() -> List[Dict]:
         free = {
             "id": "free", "name": "免费体验", "kind": "free",
+            "metering_version": METERING_VERSION,
             "price_fen": 0, "currency": "CNY", "credits": WELCOME_CREDITS,
+            "price_minor": 0,
+            "prices": {"CNY": {"currency": "CNY", "amount_minor": 0},
+                       "USD": {"currency": "USD", "amount_minor": 0}},
             "max_chars_per_job": WELCOME_MAX_CHARS, "valid_days": None,
-            "description": "中英文规则分析免费；首次保守改写 800 字。英文按非空白字符计，不按单词计。",
+            "description": "中英文规则分析免费；首次保守改写享 800 计费额度。保守改写每 1 个汉字或 1 个英文单词扣 1 额度。",
         }
-        return [free] + [dict(product) for product in PRODUCTS.values()]
+        return [free] + [
+            {**product, "metering_version": METERING_VERSION,
+             "price_minor": product["price_fen"],
+             "prices": {
+                 "CNY": {"currency": "CNY", "amount_minor": product["price_fen"]},
+                 "USD": {"currency": "USD",
+                         "amount_minor": USD_PRICE_CENTS[product["id"]]},
+             }} for product in PRODUCTS.values()
+        ]
 
     def _ensure_account(self, conn: sqlite3.Connection, account_id: str, now: int):
         conn.execute(
@@ -342,7 +541,8 @@ class BillingStore:
                (account_id,delta,kind,reference,balance_after,metadata_json,created_at)
                VALUES(?,?,?,?,?,?,?)""",
             (account_id, WELCOME_CREDITS, "grant", reference, WELCOME_CREDITS,
-             json.dumps({"product_id": "free"}, ensure_ascii=False), now),
+             json.dumps({"product_id": "free", "metering_version": METERING_VERSION},
+                        ensure_ascii=False), now),
         )
 
     @staticmethod
@@ -386,6 +586,7 @@ class BillingStore:
             "account_id": account_id,
             "plan_id": plan_id,
             "plan_name": plan["name"],
+            "metering_version": METERING_VERSION,
             "balance": balance,
             "max_chars_per_job": max_chars,
             "allowed_strengths": (["conservative", "balanced", "deep"]
@@ -406,8 +607,8 @@ class BillingStore:
         """Idempotently raise an anonymous account to a target trial balance.
 
         ``target_credits`` includes the normal welcome grant.  With the
-        defaults this adds a 2,200-character ``trial:v1`` bonus after the
-        existing 800-character welcome grant, for 3,000 total.  Repeated
+        defaults this adds a 2,200-unit ``trial:v1`` bonus after the
+        existing 800-unit welcome grant, for 3,000 total. Repeated
         login/summary calls never mint another bonus.
         """
         try:
@@ -445,7 +646,8 @@ class BillingStore:
                     (account_id, bonus, "grant", reference,
                      balance_before + bonus,
                      json.dumps({"product_id": "trial",
-                                 "target_credits": target_credits},
+                                 "target_credits": target_credits,
+                                 "metering_version": METERING_VERSION},
                                 ensure_ascii=False), now),
                 )
         return self.summary(account_id)
@@ -462,7 +664,7 @@ class BillingStore:
                    for value in (actor_account_id, target_account_id)):
             raise BillingError("账户编号无效。", 400)
         if type(credits) is not int or not 1 <= credits <= 1_000_000:
-            raise BillingError("发放字数须为 1 至 1,000,000 的整数。", 400)
+            raise BillingError("发放额度须为 1 至 1,000,000 的整数。", 400)
         if type(valid_days) is not int or valid_days not in {0, 30, 90, 365}:
             raise BillingError("有效期只能选择 30、90、365 天或永久。", 400)
         if not isinstance(reason, str) or not 5 <= len(reason.strip()) <= 200:
@@ -539,7 +741,9 @@ class BillingStore:
                    VALUES(?,?,?,?,?,?,?)""",
                 (target_account_id, credits, "grant", reference,
                  balance_before + credits,
-                 json.dumps({"product_id": "admin_credit"}, ensure_ascii=False), now),
+                 json.dumps({"product_id": "admin_credit",
+                             "metering_version": METERING_VERSION},
+                            ensure_ascii=False), now),
             )
             conn.execute(
                 """INSERT INTO admin_credit_grants
@@ -583,13 +787,11 @@ class BillingStore:
         ]
 
     def mock_checkout(self, account_id: str, product_id: str,
-                      idempotency_key: str) -> Dict:
-        if product_id not in PRODUCTS:
-            raise BillingError("未知套餐", 400)
+                      idempotency_key: str, currency: str = "CNY") -> Dict:
         if not isinstance(idempotency_key, str) or not re.fullmatch(
                 r"[A-Za-z0-9_-]{8,100}", idempotency_key):
             raise BillingError("idempotency_key 格式无效", 400)
-        product = PRODUCTS[product_id]
+        product = _product_for_currency(product_id, currency)
         now = int(self._now())
         reused = False
         with self._transaction() as conn:
@@ -599,20 +801,25 @@ class BillingStore:
                 (account_id, idempotency_key),
             ).fetchone()
             if existing:
-                if existing["product_id"] != product_id:
-                    raise BillingError("同一幂等键不能购买不同套餐", 409)
+                if (existing["product_id"] != product_id
+                        or existing["currency"] != currency
+                        or existing["provider"] != "mock"):
+                    raise BillingError("同一幂等键不能更换套餐或支付币种", 409)
                 order_id = existing["id"]
+                amount_minor = int(existing["amount_fen"])
                 reused = True
             else:
                 order_id = "ord_" + uuid.uuid4().hex
+                amount_minor = product["price_minor"]
                 conn.execute(
                     """INSERT INTO orders
                        (id,account_id,product_id,provider,provider_order_id,
-                        idempotency_key,status,amount_fen,currency,credits,created_at,paid_at)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        idempotency_key,status,amount_fen,currency,credits,created_at,paid_at,
+                        product_snapshot_json)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (order_id, account_id, product_id, "mock", "mock_" + order_id,
                      idempotency_key, "paid", product["price_fen"], product["currency"],
-                     product["credits"], now, now),
+                     product["credits"], now, now, json.dumps(product, ensure_ascii=False)),
                 )
                 expires_at = now + int(product["valid_days"]) * 86400
                 grant_id = "gr_" + uuid.uuid4().hex
@@ -633,26 +840,28 @@ class BillingStore:
                        VALUES(?,?,?,?,?,?,?)""",
                     (account_id, product["credits"], "grant", "order:" + order_id,
                      balance_before + product["credits"],
-                     json.dumps({"product_id": product_id, "provider": "mock"},
+                     json.dumps({"product_id": product_id, "provider": "mock",
+                                 "metering_version": METERING_VERSION},
                                 ensure_ascii=False), now),
                 )
         return {
             "order_id": order_id,
             "status": "paid",
             "provider": "mock",
+            "currency": currency,
+            "amount_minor": amount_minor,
             "reused": reused,
             "summary": self.summary(account_id),
         }
 
     def prepare_stripe_checkout(self, account_id: str, product_id: str,
-                                idempotency_key: str, livemode: bool = False) -> Dict:
-        if product_id not in PRODUCTS:
-            raise BillingError("未知套餐", 400)
+                                idempotency_key: str, livemode: bool = False,
+                                currency: str = "CNY") -> Dict:
         if not isinstance(idempotency_key, str) or not re.fullmatch(
                 r"[A-Za-z0-9_-]{8,100}", idempotency_key):
             raise BillingError("idempotency_key 格式无效", 400)
         now = int(self._now())
-        product = dict(PRODUCTS[product_id])
+        product = _product_for_currency(product_id, currency)
         with self._transaction() as conn:
             self._ensure_account(conn, account_id, now)
             self._expire_pending_checkouts(conn, account_id, now)
@@ -661,9 +870,11 @@ class BillingStore:
                 (account_id, idempotency_key),
             ).fetchone()
             if existing:
-                if (existing["product_id"] != product_id or existing["provider"] != "stripe"
+                if (existing["product_id"] != product_id
+                        or existing["currency"] != currency
+                        or existing["provider"] != "stripe"
                         or bool(existing["stripe_livemode"]) != livemode):
-                    raise BillingError("同一幂等键不能购买不同套餐", 409)
+                    raise BillingError("同一幂等键不能更换套餐或支付币种", 409)
                 return dict(existing)
             order_id = "ord_" + uuid.uuid4().hex
             conn.execute(
@@ -739,13 +950,23 @@ class BillingStore:
 
     @staticmethod
     def _public_order(row: sqlite3.Row) -> Dict:
+        try:
+            snapshot = json.loads(row["product_snapshot_json"] or "null")
+        except (TypeError, ValueError):
+            snapshot = None
+        metering_version = (snapshot.get("metering_version", 1)
+                            if isinstance(snapshot, dict) else 1)
         return {
             "order_id": row["id"], "product_id": row["product_id"],
             "provider": row["provider"], "status": row["status"],
-            "amount_fen": int(row["amount_fen"]), "currency": row["currency"],
+            "amount_fen": int(row["amount_fen"]),
+            "amount_minor": int(row["amount_fen"]),
+            "currency": row["currency"],
             "credits": int(row["credits"]), "created_at": int(row["created_at"]),
+            "metering_version": metering_version,
             "paid_at": row["paid_at"],
             "refunded_fen": int(row["refunded_fen"]),
+            "refunded_minor": int(row["refunded_fen"]),
             "live": bool(row["stripe_livemode"]) if row["provider"] == "stripe" else False,
         }
 
@@ -958,7 +1179,9 @@ class BillingStore:
                     (order["account_id"], order["credits"], "grant", reference,
                      balance_before + order["credits"],
                      json.dumps({"product_id": order["product_id"],
-                                 "provider": "stripe"}, ensure_ascii=False), now),
+                                 "provider": "stripe",
+                                 "metering_version": product.get("metering_version", 1)},
+                                ensure_ascii=False), now),
                 )
             elif payment_intent_id and not order["payment_intent_id"]:
                 conn.execute("UPDATE orders SET payment_intent_id=? WHERE id=?",
@@ -1170,11 +1393,9 @@ class BillingStore:
                 fingerprint: Optional[str] = None) -> Dict:
         if strength not in STRENGTH_MULTIPLIER_MILLI:
             raise BillingError("strength 参数无效", 400)
-        chars = billable_chars(text)
-        if chars <= 0:
-            raise BillingError("没有可计费文字", 400)
+        units = billable_chars(text)
         multiplier = STRENGTH_MULTIPLIER_MILLI[strength]
-        required = (chars * multiplier + 999) // 1000
+        required = (units * multiplier + 999) // 1000
         fingerprint = fingerprint or request_fingerprint(text, strength)
         now = int(self._now())
         reused = False
@@ -1184,19 +1405,46 @@ class BillingStore:
                 "SELECT * FROM usage_reservations WHERE job_id=?", (job_id,),
             ).fetchone()
             if existing:
+                existing_version = int(existing["metering_version"])
+                expected_units = (units if existing_version == METERING_VERSION
+                                  else _legacy_billable_chars(text))
                 same = (existing["account_id"] == account_id
                         and existing["request_hash"] == fingerprint
                         and existing["strength"] == strength
-                        and int(existing["billable_chars"]) == chars)
+                        and int(existing["billable_chars"]) == expected_units)
                 if not same:
                     raise BillingError("任务幂等键与原请求不一致", 409)
                 return {
-                    "job_id": job_id, "billable_chars": chars,
+                    "job_id": job_id, "billable_chars": int(existing["billable_chars"]),
+                    "metering_version": existing_version,
                     "reserved": int(existing["reserved"]),
                     "status": existing["status"],
                     "balance_after": self._active_balance(conn, account_id, now),
                     "reused": True,
                 }
+
+            if units <= 0:
+                raise BillingError("没有可计费文字", 400)
+
+            # This applies only to new v2 reservations.  Existing v1 jobs
+            # already passed the original character-based preflight and must
+            # remain retryable/releasable after the metering change.
+            text_length = len(text)
+            density_limit = max(MIN_TEXT_DENSITY_LIMIT,
+                                MAX_TEXT_CODEPOINTS_PER_UNIT * units)
+            if text_length > density_limit:
+                raise BillingError(
+                    f"正文长度 {text_length} 字符相对于 {units} 个计费单位过长，"
+                    f"安全上限为 {density_limit} 字符。请删减过长的连续字符或大量标点、空白后重试；未扣额度。",
+                    422,
+                    {"code": "text_density_limit", "text_chars": text_length,
+                     "max_text_chars": density_limit, "billable_chars": units,
+                     "billable_units": units, "metering_version": METERING_VERSION,
+                     "error_en": (f"The text is too long for {units} billable text units "
+                                  f"({text_length} characters; safety limit {density_limit}). "
+                                  "Shorten unusually long words or excess punctuation/whitespace "
+                                  "and retry. No credits were charged.")},
+                )
 
             grants = self._active_grants(conn, account_id, now)
             paid = [row for row in grants if row["kind"] not in {"welcome", "admin"}]
@@ -1207,25 +1455,25 @@ class BillingStore:
                     "balance": balance, "max_chars_per_job": max_chars,
                     "upgrade_required": True,
                 })
-            if chars > max_chars:
+            if units > max_chars:
                 raise BillingError(
-                    f"本次 {chars} 字，超过当前单次 {max_chars} 字上限。", 402,
-                    {"billable_chars": chars, "max_chars_per_job": max_chars,
+                    f"本次正文为 {units} 个计费单位，超过当前单次正文 {max_chars} 个计费单位上限。", 402,
+                    {"billable_chars": units, "max_chars_per_job": max_chars,
                      "upgrade_required": True},
                 )
             if required > balance:
                 raise BillingError(
-                    f"需要 {required} 字额度，当前剩余 {balance} 字。", 402,
+                    f"需要 {required} 计费额度，当前剩余 {balance} 额度。", 402,
                     {"required": required, "balance": balance,
                      "upgrade_required": True},
                 )
 
             conn.execute(
                 """INSERT INTO usage_reservations
-                   (job_id,account_id,request_hash,strength,billable_chars,
+                   (job_id,account_id,request_hash,strength,billable_chars,metering_version,
                     multiplier_milli,reserved,status,created_at)
-                   VALUES(?,?,?,?,?,?,?,?,?)""",
-                (job_id, account_id, fingerprint, strength, chars, multiplier,
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (job_id, account_id, fingerprint, strength, units, METERING_VERSION, multiplier,
                  required, "reserved", now),
             )
             remaining = required
@@ -1254,11 +1502,13 @@ class BillingStore:
                    (account_id,delta,kind,reference,balance_after,metadata_json,created_at)
                    VALUES(?,?,?,?,?,?,?)""",
                 (account_id, -required, "reserve", "job:" + job_id, balance_after,
-                 json.dumps({"strength": strength, "billable_chars": chars,
+                 json.dumps({"strength": strength, "billable_chars": units,
+                             "metering_version": METERING_VERSION,
                              "multiplier_milli": multiplier}, ensure_ascii=False), now),
             )
         return {
-            "job_id": job_id, "billable_chars": chars, "reserved": required,
+            "job_id": job_id, "billable_chars": units,
+            "metering_version": METERING_VERSION, "reserved": required,
             "status": "reserved", "balance_after": balance_after,
             "reused": reused,
         }
@@ -1274,6 +1524,7 @@ class BillingStore:
             if not reservation:
                 raise BillingError("计费预占不存在", 404)
             account_id = reservation["account_id"]
+            metering_version = int(reservation["metering_version"])
             if reservation["status"] != "reserved":
                 released = 0
                 if reservation["status"] == "released":
@@ -1285,6 +1536,7 @@ class BillingStore:
                     released = max(0, int(entry["delta"])) if entry else 0
                 return {
                     "job_id": job_id, "status": reservation["status"],
+                    "metering_version": metering_version,
                     "charged": int(reservation["reserved"])
                                if reservation["status"] == "committed" else 0,
                     "released": released,
@@ -1328,6 +1580,7 @@ class BillingStore:
                        VALUES(?,?,?,?,?,?,?)""",
                     (account_id, 0, "settle", "job:" + job_id, balance,
                      json.dumps({"accepted": int(accepted), "input_tokens": input_tokens,
+                                 "metering_version": metering_version,
                                  "output_tokens": output_tokens,
                                  "total_tokens": total_tokens,
                                  "llm_requests": llm_requests}, ensure_ascii=False), now),
@@ -1355,6 +1608,7 @@ class BillingStore:
                        VALUES(?,?,?,?,?,?,?)""",
                     (account_id, released, "release", "job:" + job_id, balance,
                      json.dumps({"reason": "failed_or_no_accepted_candidate",
+                                 "metering_version": metering_version,
                                  "reservation_released": reserved,
                                  "expired_or_revoked_credits": reserved - released,
                                  "input_tokens": input_tokens,
@@ -1364,6 +1618,7 @@ class BillingStore:
                 )
         return {
             "job_id": job_id, "status": status, "charged": charged,
+            "metering_version": metering_version,
             "released": released, "balance": balance, "reused": False,
             "input_tokens": input_tokens, "output_tokens": output_tokens,
             "total_tokens": total_tokens, "llm_requests": llm_requests,

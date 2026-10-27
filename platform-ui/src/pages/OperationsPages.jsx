@@ -48,21 +48,22 @@ import {
 } from "@phosphor-icons/react";
 import { useLocale } from "../locale.jsx";
 import { localizedPlanDescription, localizedPlanName } from "../plan-copy.js";
+import { catalogQuote, formatMinorPrice, formatQuote, orderQuote, preferredPriceCurrency } from "../plan-pricing.js";
 import { downloadUnsavedDraftBackup, ensureSession, getApi, postApi, logoutSession, usePlatform } from "../platform.jsx";
 import "./operations-pages.css";
 
 const OPS_EN = {
   "用户与权益": "Users and credits",
   "最近 100 位账户的身份与额度摘要；不展示论文内容，不提供直接改额度操作。": "Identity and credit summaries for the latest 100 accounts. Manuscript contents and direct balance changes are not available here.",
-  "邮箱": "Email", "名称": "Name", "可用字数": "Available characters", "文稿数": "Manuscripts", "注册时间": "Registered",
+  "邮箱": "Email", "名称": "Name", "可用字数": "Available credits", "文稿数": "Manuscripts", "注册时间": "Registered",
   "改写任务": "Rewrite jobs",
   "最近 100 个真实任务的状态及 Token 用量；正文和改写结果不会在管理台展示。": "Status and token usage for the latest 100 jobs; no manuscript or result text is shown.",
-  "任务号": "Job ID", "阶段": "Phase", "计费字数": "Billable characters", "输入 Token": "Input tokens", "输出 Token": "Output tokens", "开始时间": "Started",
+  "任务号": "Job ID", "阶段": "Phase", "计费字数": "Billable units", "输入 Token": "Input tokens", "输出 Token": "Output tokens", "开始时间": "Started",
   "套餐目录": "Plan catalog",
   "查看当前实际生效的服务端套餐。价格修改仍需代码审查和发布，避免在管理台误改真实收款。": "View live server plans. Price changes still require code review and deployment to avoid accidental live-billing changes.",
   "套餐 ID": "Plan ID", "价格": "Price", "额度": "Credits", "有效天数": "Valid days",
   "收款与模型用量": "Payments and model usage",
-  "展示真实已支付订单净额与已结算任务 Token。模型单价和 Stripe 手续费尚未接入，不能据此计算毛利。": "Shows actual net order amount and tokens for committed jobs. Model pricing and Stripe fees are not included, so this is not gross margin.",
+  "按币种分别展示真实已支付订单净额与已结算任务 Token；不同币种不直接相加。模型单价和 Stripe 手续费尚未接入，不能据此计算毛利。": "Shows net paid orders separately by currency, plus tokens for committed jobs. Different currencies are not added together. Model pricing and Stripe fees are not included, so this is not gross margin.",
   "订单净额（未扣费）": "Net order amount (before fees)", "已结算改写任务": "Committed rewrite jobs", "模型 Token": "Model tokens",
   "服务状态": "Service status",
   "只读查看当前任务和待付款订单；停服、容量和部署操作仍由服务器受控执行。": "Read-only job and pending-order counts. Shutdown, capacity, and deployment changes remain server-controlled.",
@@ -106,17 +107,17 @@ const OPS_EN = {
   "内测赠送": "Beta bonus",
   "赠送额度": "Bonus credits",
   "月卡额度": "One-time pass credits",
-  "独立字数包": "Standalone character packs",
+  "独立字数包": "Standalone credit packs",
   "深度保真改写": "Deep faithful rewrite",
-  "4,812 字 × 1.5": "4,812 characters × 1.5",
+  "4,812 字 × 1.5": "4,812 text units × 1.5",
   "平衡保真改写": "Balanced faithful rewrite",
   "保守保真改写": "Conservative faithful rewrite",
-  "1,202 字 × 1.0": "1,202 characters × 1.0",
+  "1,202 字 × 1.0": "1,202 text units × 1.0",
   "任务处理中": "Job in progress",
   "任务失败回退": "Failed-job rollback",
   "超时，预占全额归还": "Timed out; the full reservation was returned",
   "购买章节包": "Purchased Chapter Pack",
-  "演示订单确认后发放 20,000 字": "20,000 characters granted after demo-order confirmation",
+  "演示订单确认后发放 20,000 字": "20,000 credits granted after demo-order confirmation",
   "内测体验发放": "Beta trial grant",
   "一次性体验额度": "One-time trial credits",
   "支付宝（演示）": "Alipay (demo)",
@@ -157,7 +158,7 @@ const OPS_EN = {
   "重新演示": "Run demo again",
   "推荐": "Recommended",
   "/ 30天": "/ 30 days",
-  "字额度": "character credits",
+  "字额度": "credits",
   "MONEY / 额度中心": "MONEY / CREDITS",
   "查看额度与价格方案": "Credits and pricing plans",
   "月卡与独立字数包可以叠加；系统按最早到期的额度桶优先消耗。": "Monthly passes and standalone packs stack; credits expiring first are used first.",
@@ -174,9 +175,9 @@ const OPS_EN = {
   "到期桶": "Expiry buckets",
   "可用额度构成": "Available-credit breakdown",
   "合计可用": "Total available",
-  "字": "characters",
+  "字": "credits",
   "总发放": "Total granted",
-  "字 · 已消费": "characters · used",
+  "字 · 已消费": "credits · used",
   "· 到期": "· expires",
   "剩余 /": "Remaining /",
   "消费规则": "Usage rules",
@@ -185,7 +186,7 @@ const OPS_EN = {
   "最早到期先用": "Use the earliest expiry first",
   "赠送额度、月卡和字数包共同排序，避免临期额度浪费。": "Bonus credits, monthly passes, and packs share one expiry order so near-expiry credits are not wasted.",
   "分析与安全清理免费": "Analysis and safety cleanup are free",
-  "仅模型保真改写计入字符额度。": "Only faithful model rewrites use character credits.",
+  "仅模型保真改写扣额度。": "Only faithful model rewrites use credits.",
   "账本不可覆盖": "Ledger entries are immutable",
   "发放、预占、结算与释放都保留独立流水。": "Grants, reservations, settlements, and releases remain separate ledger entries.",
   "查看额度明细": "View credit activity",
@@ -222,7 +223,7 @@ const OPS_EN = {
   "事件": "Event",
   "额度变化": "Credit change",
   "状态": "Status",
-  "当前仅展示最近 6 条流水；上方 11,420 字来自本月全部 7 个已结算任务。": "Only the 6 most recent entries are shown; the 11,420 characters above include all 7 jobs settled this month.",
+  "当前仅展示最近 6 条流水；上方 11,420 字来自本月全部 7 个已结算任务。": "Only the 6 most recent entries are shown; the 11,420 credits above include all 7 jobs settled this month.",
   "深度模式按 1.5 倍预估；最终规则以任务创建时展示并确认的计量快照为准。": "Deep mode is estimated at 1.5×; the confirmed metering snapshot shown when the job is created governs the final charge.",
   "MONEY / 订单": "MONEY / ORDERS",
   "订单与付款": "Orders and payments",
@@ -259,7 +260,7 @@ const OPS_EN = {
   "支": "A",
   "微信支付": "WeChat Pay",
   "支付宝": "Alipay",
-  "字可用额度": "characters available",
+  "字可用额度": "credits available",
   "产品金额": "Product amount",
   "付款方式": "Payment method",
   "优惠": "Discount",
@@ -273,7 +274,7 @@ const OPS_EN = {
   "模拟成功": "Simulate success",
   "模拟失败": "Simulate failure",
   "演示确认完成": "Demo confirmation complete",
-  "字只在当前原型中展示，不会写入真实账本。": "characters are shown only in this prototype and are not written to a real ledger.",
+  "字只在当前原型中展示，不会写入真实账本。": "credits are shown only in this prototype and are not written to a real ledger.",
   "查看额度": "View credits",
   "订单未完成": "Order incomplete",
   "未发放额度，也不会生成消费流水。": "No credits were granted and no usage entry was created.",
@@ -287,7 +288,7 @@ Object.assign(OPS_EN, {
   "正在读取平台账本…": "Reading the platform ledger…",
   "当前可用": "Available now",
   "当前方案": "Current plan",
-  "单任务上限": "Per-job limit",
+  "单任务正文上限": "Per-job text limit",
   "最近到期": "Next expiry",
   "等待账本响应": "Waiting for the ledger",
   "来自后端权益摘要": "From the backend entitlement summary",
@@ -317,6 +318,7 @@ Object.assign(OPS_EN, {
   "到期时间": "Expiry",
   "MONEY / 额度账本": "MONEY / CREDIT LEDGER",
   "额度明细": "Credit activity",
+  "历史任务保留原计量口径；新任务英文按单词、中文按汉字计费。计费强度与倍率以各条流水保存的 metadata 为准。": "Historical jobs retain their original meter. New jobs count English words and Chinese characters as text units; each ledger entry records the rewrite mode and multiplier.",
   "发放、预占、结算和释放均来自真实后端流水。": "Every grant, reservation, settlement, and release comes from the backend ledger.",
   "CSV 已导出": "CSV exported",
   "当前余额": "Current balance",
@@ -533,7 +535,7 @@ Object.assign(OPS_EN, {
   "实时任务抽样": "Live job sample",
   "任务号": "Job ID",
   "模式": "Mode",
-  "计费字符": "Billable characters",
+  "计费字符": "Billable units",
   "估算成本": "Estimated cost",
   "追踪号": "Trace ID",
   "管理台只显示任务元数据、计量与结果状态，不展示论文全文或改写正文。": "The admin console shows job metadata, metering, and result status only—never full papers or rewritten text.",
@@ -568,7 +570,7 @@ Object.assign(OPS_EN, {
   "任务记录": "Job records",
   "搜索任务、用户或追踪号": "Search jobs, users, or trace IDs",
   "完成": "Completed",
-  "输入字符": "Input characters",
+  "输入字符": "Input units",
   "额度预占": "Credits reserved",
   "耗时": "Duration",
   "方案与额度": "Plans and credits",
@@ -577,7 +579,7 @@ Object.assign(OPS_EN, {
   "新建草稿": "New draft",
   "以下均为": "All items below are ",
   "。改价需创建新版本，不覆盖历史订单、额度桶或退款依据。": ". Price changes require a new version and never overwrite historical orders, credit buckets, or refund evidence.",
-  "字数包": "Character packs",
+  "字数包": "Credit packs",
   "产品 ID": "Product ID",
   "展示名": "Display name",
   "价格": "Price",
@@ -588,7 +590,7 @@ Object.assign(OPS_EN, {
   "复制为草稿": "Copy as draft",
   "统一消耗规则": "Unified entitlement policy",
   "允许叠加": "Stacking allowed",
-  "月卡与任意独立字数包同时有效。": "Monthly passes and any standalone character pack can remain active together.",
+  "月卡与任意独立字数包同时有效。": "Monthly passes and any standalone credit pack can remain active together.",
   "按到期日排序": "Ordered by expiry",
   "最早到期额度先消耗；同日按发放时间。": "Credits expiring first are used first; same-day expiries use grant time.",
   "任务级幂等": "Job-level idempotency",
@@ -622,7 +624,7 @@ Object.assign(OPS_EN, {
   "30天": "30 days",
   "情景收入": "Scenario revenue",
   "变动成本": "Variable cost",
-  "每万结算字 ¥4.11": "¥4.11 per 10,000 settled characters",
+  "每万结算字 ¥4.11": "¥4.11 per 10,000 settled units",
   "占确认收入 3.6%": "3.6% of confirmed revenue",
   "贡献毛利": "Contribution margin",
   "内测观测，不含固定成本": "Beta observation; excludes fixed costs",
@@ -632,7 +634,7 @@ Object.assign(OPS_EN, {
   "退款摊销": "Refund allocation",
   "成本可核对字段": "Cost trace fields",
   "任务维度": "Job level",
-  "输入/输出 token、候选数、重试、耗时、结算字符": "Input/output tokens, candidates, retries, duration, and settled characters",
+  "输入/输出 token、候选数、重试、耗时、结算字符": "Input/output tokens, candidates, retries, duration, and settled units",
   "订单维度": "Order level",
   "支付金额、通道费、退款、权益发放与冲正": "Payment amount, provider fee, refund, entitlement grant, and reversal",
   "价格版本": "Price version",
@@ -781,7 +783,7 @@ function translateText(value, isEnglish) {
   const completedScope = core.match(/^(.+) 未发生真实变更；账号、文档和数据仍完整保留。$/);
   if (completedScope) return `${leading}${translateText(completedScope[1], true)} was not changed; the account, documents, and data remain intact.${trailing}`;
   const characterAmount = core.match(/^([+\-−]?[\d,.]+) 字$/);
-  if (characterAmount) return `${leading}${characterAmount[1]} characters${trailing}`;
+  if (characterAmount) return `${leading}${characterAmount[1]} credits${trailing}`;
   const bucketCount = core.match(/^共 (\d+) 个有效额度桶$/);
   if (bucketCount) return `${leading}${bucketCount[1]} active credit buckets${trailing}`;
   const activeBucketCount = core.match(/^(\d+) 个有效额度桶$/);
@@ -791,7 +793,7 @@ function translateText(value, isEnglish) {
   const ledgerAccount = core.match(/^(.+) · 账户 (.+)$/);
   if (ledgerAccount) return `${leading}${translateText(ledgerAccount[1], true)} · account ${ledgerAccount[2]}${trailing}`;
   const charsWithMeta = core.match(/^([\d,.]+) 字 · (.+)$/);
-  if (charsWithMeta) return `${leading}${charsWithMeta[1]} characters · ${translateText(charsWithMeta[2], true)}${trailing}`;
+  if (charsWithMeta) return `${leading}${charsWithMeta[1]} credits · ${translateText(charsWithMeta[2], true)}${trailing}`;
   const analysisConfig = core.match(/^(.+) · (已校准|未标记校准)$/);
   if (analysisConfig) return `${leading}${analysisConfig[1]} · ${translateText(analysisConfig[2], true)}${trailing}`;
   const orderLabel = core.match(/^查看订单 (.+)$/);
@@ -1282,7 +1284,7 @@ function PlanCard({ plan, selected, onSelect, compact = false }) {
       <span className="ops-plan-copy">
         <span className="ops-plan-titleline"><b>{plan.name}</b>{plan.featured && <em>推荐</em>}</span>
         <span className="ops-plan-price"><strong>{money(plan.price)}</strong>{plan.id.startsWith("month") && <small>/ 30天</small>}</span>
-        <span>{number(plan.credits)} 字额度</span>
+        <span>{number(plan.credits)} 额度</span>
         <small>{plan.note}</small>
         <small>{plan.meta}</small>
       </span>
@@ -1323,16 +1325,17 @@ function platformPlanKind(kind, isEnglish) {
 }
 
 function LivePlanCard({ plan, onSelect, selected = false }) {
-  const { isEnglish, number, money } = useOpsLocale();
-  const price = Number(plan.price_fen || 0) / 100;
-  const Tag = onSelect ? "button" : "article";
+  const { isEnglish, number } = useOpsLocale();
+  const quote = catalogQuote(plan, preferredPriceCurrency(isEnglish));
+  const canSelect = Boolean(onSelect && quote);
+  const Tag = canSelect ? "button" : "article";
   return (
-    <Tag className={`ops-plan${selected ? " is-selected" : ""}`} type={onSelect ? "button" : undefined} onClick={onSelect} aria-pressed={onSelect ? selected : undefined}>
+    <Tag className={`ops-plan${selected ? " is-selected" : ""}`} type={canSelect ? "button" : undefined} onClick={canSelect ? onSelect : undefined} aria-pressed={canSelect ? selected : undefined}>
       <span className="ops-plan-radio"><Package size={16} weight="fill" /></span>
       <span className="ops-plan-copy">
         <span className="ops-plan-titleline"><b>{localizedPlanName(plan, isEnglish)}</b><em>{platformPlanKind(plan.kind, isEnglish)}</em></span>
-        <span className="ops-plan-price"><strong>{money(price)}</strong>{plan.kind === "subscription" && <small>/ {plan.valid_days || 30}{isEnglish ? " days" : "天"}</small>}</span>
-        <span>{number(plan.credits)} {isEnglish ? "character credits" : "字额度"}</span>
+        <span className="ops-plan-price"><strong>{quote ? formatQuote(quote, isEnglish, true) : (isEnglish ? "USD price unavailable" : "当前币种报价暂不可用")}</strong>{plan.kind === "subscription" && <small>/ {plan.valid_days || 30}{isEnglish ? " days" : "天"}</small>}</span>
+        <span>{number(plan.credits)} {isEnglish ? "rewrite credits" : "改写额度"}</span>
         {plan.description && <small>{localizedPlanDescription(plan, isEnglish)}</small>}
         <small>{plan.valid_days ? (isEnglish ? `Valid for ${plan.valid_days} days` : `${plan.valid_days} 天有效`) : (isEnglish ? "No expiry returned" : "后端未返回有效期")}</small>
       </span>
@@ -1359,7 +1362,10 @@ function ledgerDetail(entry, isEnglish) {
   const metadata = entry?.metadata && typeof entry.metadata === "object" ? entry.metadata : {};
   if (entry.kind === "reserve") {
     const parts = [metadata.strength];
-    if (metadata.billable_chars !== undefined) parts.push(`${metadata.billable_chars} ${isEnglish ? "characters" : "字"}`);
+    if (metadata.billable_chars !== undefined) {
+      const legacy = Number(metadata.metering_version || 1) < 2;
+      parts.push(`${metadata.billable_chars} ${isEnglish ? (legacy ? "characters (legacy)" : "billable text units") : (legacy ? "字符（旧计量）" : "计费单位")}`);
+    }
     const multiplier = Number(metadata.multiplier_milli) / 1000;
     if (Number.isFinite(multiplier)) parts.push(`× ${multiplier}`);
     return parts.filter(Boolean).join(" · ") || (isEnglish ? "Reservation created" : "已创建预占");
@@ -1375,7 +1381,7 @@ function ledgerDetail(entry, isEnglish) {
     const unavailable = Number(metadata.expired_or_revoked_credits || 0);
     if (unavailable > 0) return isEnglish
       ? `${entry.delta} credits returned; ${unavailable} expired or revoked credits stayed unavailable`
-      : `归还 ${entry.delta} 字；${unavailable} 字已过期或退款撤销，不再可用`;
+      : `归还 ${entry.delta} 额度；${unavailable} 额度已过期或退款撤销，不再可用`;
     return isEnglish ? "Reserved credits returned" : "预占额度已归还";
   }
   if (entry.kind === "grant") return metadata.product_id === "admin_credit"
@@ -1431,10 +1437,10 @@ export function BillingPage({ navigate }) {
       {loading && !billing && <div className="ops-inline-notice"><Clock size={18} weight="fill" /><span>正在读取平台账本…</span></div>}
 
       <div className="ops-metrics ops-metrics--4">
-        <Metric label="当前可用" value={billing ? `${number(balance)} 字` : "—"} note={billing ? `${buckets.length} 个有效额度桶` : "等待账本响应"} tone="yellow" icon={Wallet} />
+        <Metric label="当前可用" value={billing ? `${number(balance)} ${isEnglish ? "credits" : "额度"}` : "—"} note={billing ? `${buckets.length} 个有效额度桶` : "等待账本响应"} tone="yellow" icon={Wallet} />
         <Metric label="当前方案" value={currentPlan ? localizedPlanName(currentPlan, isEnglish) : "—"} note={billing?.plan_id || "来自后端权益摘要"} icon={Receipt} />
-        <Metric label="单任务上限" value={billing?.max_chars_per_job ? `${number(billing.max_chars_per_job)} 字` : "—"} note={(billing?.allowed_strengths || []).join(" / ") || "等待后端返回"} tone="blue" icon={Gauge} />
-        <Metric label="最近到期" value={nextExpiry ? `${number(nextExpiry.remaining)} 字` : "—"} note={nextExpiry ? formatPlatformTime(nextExpiry.expires_at, isEnglish) : "没有有期限额"} tone="green" icon={CalendarBlank} />
+        <Metric label="单任务正文上限" value={billing?.max_chars_per_job ? `${number(billing.max_chars_per_job)} ${isEnglish ? "text units" : "计费单位"}` : "—"} note={(billing?.allowed_strengths || []).join(" / ") || "等待后端返回"} tone="blue" icon={Gauge} />
+        <Metric label="最近到期" value={nextExpiry ? `${number(nextExpiry.remaining)} ${isEnglish ? "credits" : "额度"}` : "—"} note={nextExpiry ? formatPlatformTime(nextExpiry.expires_at, isEnglish) : "没有有期限额"} tone="green" icon={CalendarBlank} />
       </div>
 
       <Tabs value={tab} onChange={setTab} items={[
@@ -1447,7 +1453,7 @@ export function BillingPage({ navigate }) {
         <div className="ops-two-col ops-two-col--wide">
           <Section title="可用额度构成" kicker="LIVE ENTITLEMENTS" className="ops-shadow-card">
             <div className="ops-balance-hero">
-              <div><span>账本可用余额</span><strong>{billing ? number(balance) : "—"}</strong><small>字</small></div>
+              <div><span>账本可用余额</span><strong>{billing ? number(balance) : "—"}</strong><small>额度</small></div>
               <p>{billing ? `${currentPlan ? localizedPlanName(currentPlan, isEnglish) : (isEnglish ? "Current credits" : "当前权益")} · ${isEnglish ? "account" : "账户"} ${billing.account_id || "—"}` : "正在等待账本摘要"}</p>
             </div>
             <div className="ops-rule-list">
@@ -1455,7 +1461,7 @@ export function BillingPage({ navigate }) {
                 <div className="ops-rule-row" key={bucket.id}>
                   <span className="ops-priority">{bucket.priority}</span>
                   <div><b>{bucket.source}</b><small>{bucket.kindLabel} · {bucket.expiresLabel}</small></div>
-                  <div className="ops-align-right"><b>{number(bucket.remaining)} 字</b><small>当前剩余</small></div>
+                  <div className="ops-align-right"><b>{number(bucket.remaining)} {isEnglish ? "credits" : "额度"}</b><small>当前剩余</small></div>
                 </div>
               ))}
               {!loading && buckets.length === 0 && <div className="ops-empty-cell">当前没有独立额度桶</div>}
@@ -1488,7 +1494,7 @@ export function BillingPage({ navigate }) {
           <Table rows={buckets} columns={[
             { key: "priority", label: "顺序", render: (row) => <span className="ops-priority">{row.priority}</span> },
             { key: "source", label: "来源", render: (row) => <><b>{row.source}</b><small className="ops-cell-note">{row.kindLabel}</small></> },
-            { key: "remaining", label: "剩余", render: (row) => <b>{number(row.remaining)} 字</b> },
+            { key: "remaining", label: "剩余", render: (row) => <b>{number(row.remaining)} {isEnglish ? "credits" : "额度"}</b> },
             { key: "expiresLabel", label: "到期时间" },
           ]} />
         </Section>
@@ -1551,8 +1557,8 @@ export function UsagePage({ navigate }) {
   const exportCsv = () => {
     const escape = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
     const csvRows = [
-      ["time", "reference", "kind", "detail", "delta", "balance_after"],
-      ...rows.map((row) => [row.time, row.referenceLabel, row.kind, row.detail, row.amount, row.balanceAfter]),
+      ["time", "reference", "kind", "detail", "delta_credits", "balance_after_credits", "metering_version"],
+      ...rows.map((row) => [row.time, row.referenceLabel, row.kind, row.detail, row.amount, row.balanceAfter, row.metadata?.metering_version ?? ""]),
     ];
     const blob = new Blob([`\uFEFF${csvRows.map((row) => row.map(escape).join(",")).join("\n")}`], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -1574,9 +1580,9 @@ export function UsagePage({ navigate }) {
         <Button icon={CreditCard} onClick={() => go(navigate, "/checkout/pro")}>购买额度</Button>
       </PageHeader>
       <div className="ops-metrics ops-metrics--3">
-        <Metric label="当前余额" value={billing ? `${number(billing.balance)} 字` : "—"} note={displayedPlan} tone="yellow" icon={Wallet} />
-        <Metric label="已加载额度增加" value={`${number(loadedIncreases)} 字`} note={`最近 ${rows.length} 条流水`} tone="green" icon={TrendUp} />
-        <Metric label="已加载额度减少" value={`${number(loadedDecreases)} 字`} note={`最近 ${rows.length} 条流水`} tone="blue" icon={Receipt} />
+        <Metric label="当前余额" value={billing ? `${number(billing.balance)} ${isEnglish ? "credits" : "额度"}` : "—"} note={displayedPlan} tone="yellow" icon={Wallet} />
+        <Metric label="已加载额度增加" value={`${number(loadedIncreases)} ${isEnglish ? "credits" : "额度"}`} note={`最近 ${rows.length} 条流水`} tone="green" icon={TrendUp} />
+        <Metric label="已加载额度减少" value={`${number(loadedDecreases)} ${isEnglish ? "credits" : "额度"}`} note={`最近 ${rows.length} 条流水`} tone="blue" icon={Receipt} />
       </div>
       {ledgerError && <div className="ops-inline-notice"><WarningCircle size={18} weight="fill" /><span>{ledgerError}</span></div>}
       <Section title="最近账本流水" kicker={`RECENT LEDGER · ${rows.length} 条`} className="ops-shadow-card">
@@ -1593,19 +1599,19 @@ export function UsagePage({ navigate }) {
           { key: "time", label: "时间" },
           { key: "referenceLabel", label: "流水 / 任务号", render: (row) => <code>{row.referenceLabel}</code> },
           { key: "event", label: "事件", render: (row) => <><b>{row.event}</b><small className="ops-cell-note">{row.detail}</small></> },
-          { key: "amount", label: "额度变化", render: (row) => <b className={row.amount > 0 ? "ops-positive" : row.amount < 0 ? "ops-negative" : ""}>{row.amount > 0 ? "+" : ""}{number(row.amount)} 字</b> },
-          { key: "balanceAfter", label: "变更后余额", render: (row) => `${number(row.balanceAfter)} 字` },
+          { key: "amount", label: "额度变化", render: (row) => <b className={row.amount > 0 ? "ops-positive" : row.amount < 0 ? "ops-negative" : ""}>{row.amount > 0 ? "+" : ""}{number(row.amount)} {isEnglish ? "credits" : "额度"}</b> },
+          { key: "balanceAfter", label: "变更后余额", render: (row) => `${number(row.balanceAfter)} ${isEnglish ? "credits" : "额度"}` },
           { key: "status", label: "状态", render: (row) => <StatusPill status={row.status} /> },
         ]} />
         <div className="ops-footnote"><Info size={16} /> 当前展示后端返回的最近 {rows.length} 条流水；页面不会外推未返回的历史统计。</div>
       </Section>
-      <div className="ops-footnote"><Info size={16} /> 计费强度、字符数与倍率以各条流水保存的 metadata 为准。</div>
+      <div className="ops-footnote"><Info size={16} /> 历史任务保留原计量口径；新任务英文按单词、中文按汉字计费。计费强度与倍率以各条流水保存的 metadata 为准。</div>
     </Page>
   );
 }
 
 export function OrdersPage({ navigate }) {
-  const { isEnglish, number, money } = useOpsLocale();
+  const { isEnglish, number } = useOpsLocale();
   const [orders, setOrders] = useState([]);
   const [error, setError] = useState("");
   const [loadingOrders, setLoadingOrders] = useState(true);
@@ -1635,8 +1641,8 @@ export function OrdersPage({ navigate }) {
         {!loadingOrders && !error && orders.length > 0 && <Table rows={orders} columns={[
           { key: "order_id", label: "订单号", render: (row) => <code>{row.order_id}</code> },
           { key: "product_id", label: "套餐" },
-          { key: "amount_fen", label: "金额", render: (row) => money(row.amount_fen / 100) },
-          { key: "credits", label: "额度", render: (row) => `${number(row.credits)} ${isEnglish ? "characters" : "字"}` },
+          { key: "amount_fen", label: "金额", render: (row) => formatQuote(orderQuote(row), isEnglish, true) },
+          { key: "credits", label: "额度", render: (row) => `${number(row.credits)} ${isEnglish ? "credits" : "额度"}${Number(row.metering_version || 1) < 2 ? (isEnglish ? " · legacy character meter" : " · 旧版字符计量") : ""}` },
           { key: "provider", label: "通道", render: (row) => row.provider === "stripe" ? (row.live ? (isEnglish ? "Stripe live" : "Stripe 正式") : (isEnglish ? "Stripe test" : "Stripe 测试")) : (isEnglish ? "Local simulation" : "本地模拟") },
           { key: "status", label: "状态", render: (row) => {
             const labels = {
@@ -1656,7 +1662,7 @@ export function OrdersPage({ navigate }) {
 }
 
 export function CheckoutPage({ navigate }) {
-  const { isEnglish, number, money } = useOpsLocale();
+  const { isEnglish, number } = useOpsLocale();
   const { plans: catalog = [], billing, config, session, loading, refresh, refreshBilling } = usePlatform();
   const query = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams((window.location.hash.split("?")[1] || ""));
   const requestedPlanId = query.get("plan") || "";
@@ -1678,12 +1684,25 @@ export function CheckoutPage({ navigate }) {
   const [returnedOrder, setReturnedOrder] = useState(null);
   const [refreshingOrder, setRefreshingOrder] = useState(false);
   const selected = paidCatalog.find((plan) => plan.id === selectedId) || paidCatalog[0];
+  const checkoutCurrency = preferredPriceCurrency(isEnglish);
+  const selectedQuote = catalogQuote(selected, checkoutCurrency);
+  const returnedPlan = returnedOrderId && returnedOrder
+    ? catalog.find((plan) => plan.id === returnedOrder.product_id) : null;
+  const summaryPlan = returnedOrderId
+    ? (returnedOrder ? (returnedPlan || { id: returnedOrder.product_id, name: returnedOrder.product_id }) : null)
+    : selected;
+  const summaryQuote = returnedOrderId ? orderQuote(returnedOrder) : selectedQuote;
   const payment = billing?.payment || config?.payment || {};
   const signedIn = session?.authMode === "accounts" && session?.authenticated && session?.kind !== "guest";
-  const canPay = signedIn && payment.provider === "stripe" && payment.checkout_enabled === true;
+  const canPay = signedIn && payment.provider === "stripe" && payment.checkout_enabled === true
+    && Boolean(selectedQuote) && !returnedOrderId;
   const isLive = payment.live === true;
 
   useEffect(() => { if (requestedPlanId) setSelectedId(requestedPlanId); }, [requestedPlanId]);
+  useEffect(() => {
+    setReturnedOrder(null);
+    setCheckoutError("");
+  }, [returnedOrderId]);
   useEffect(() => {
     if (!returnedOrderId) return undefined;
     let active = true;
@@ -1743,7 +1762,7 @@ export function CheckoutPage({ navigate }) {
       }
       const idempotencyKey = `checkout_${crypto.randomUUID().replaceAll("-", "")}`;
       const result = await postApi("/api/billing/checkout", {
-        product_id: selected.id, idempotency_key: idempotencyKey,
+        product_id: selected.id, currency: selectedQuote.currency, idempotency_key: idempotencyKey,
       });
       const target = new URL(result.checkout_url);
       if (target.protocol !== "https:" || target.hostname !== "checkout.stripe.com") {
@@ -1772,38 +1791,39 @@ export function CheckoutPage({ navigate }) {
 
   return (
     <Page className="ops-checkout-page">
-      <PageHeader eyebrow={isLive ? "CHECKOUT / STRIPE" : "CHECKOUT / STRIPE TEST"} title={isEnglish ? "Choose credits" : "选择额度"} description={isEnglish ? `Choose an available payment method on Stripe Checkout, such as card or Alipay. ${isLive ? "This is a live payment; availability depends on Stripe Checkout." : "Only test transactions are available."}` : `前往 Stripe 收银台选择银行卡、支付宝等可用方式；${isLive ? "正式收款，实际可用方式以收银台为准。" : "当前仅支持测试交易。"}`} onBack={() => go(navigate, "/app/billing")} />
+      <PageHeader eyebrow={isLive ? "CHECKOUT / STRIPE" : "CHECKOUT / STRIPE TEST"} title={isEnglish ? "Choose credits" : "选择额度"} description={isEnglish ? `Available payment methods are shown on Stripe Checkout. ${isLive ? "This is a live payment." : "Only test transactions are available."}` : `可用付款方式以 Stripe 收银台展示为准；${isLive ? "当前为正式收款。" : "当前仅支持测试交易。"}`} onBack={() => go(navigate, "/app/billing")} />
       <div className="ops-checkout-grid">
         <div>
           <Section title="30 天月卡" kicker="ONE-TIME PASS">
-            <div className="ops-plan-grid ops-plan-grid--2">{paidCatalog.filter((plan) => plan.kind === "subscription").map((plan) => <LivePlanCard key={plan.id} plan={plan} selected={selected?.id === plan.id} onSelect={() => setSelectedId(plan.id)} />)}</div>
+            <div className="ops-plan-grid ops-plan-grid--2">{paidCatalog.filter((plan) => plan.kind === "subscription").map((plan) => <LivePlanCard key={plan.id} plan={plan} selected={(returnedOrderId ? returnedOrder?.product_id : selected?.id) === plan.id} onSelect={returnedOrderId ? undefined : () => setSelectedId(plan.id)} />)}</div>
           </Section>
           <Section title="独立字数包" kicker="TOP-UP PACKS">
-            <div className="ops-plan-grid ops-plan-grid--3">{paidCatalog.filter((plan) => plan.kind === "pack").map((plan) => <LivePlanCard key={plan.id} plan={plan} selected={selected?.id === plan.id} onSelect={() => setSelectedId(plan.id)} />)}</div>
+            <div className="ops-plan-grid ops-plan-grid--3">{paidCatalog.filter((plan) => plan.kind === "pack").map((plan) => <LivePlanCard key={plan.id} plan={plan} selected={(returnedOrderId ? returnedOrder?.product_id : selected?.id) === plan.id} onSelect={returnedOrderId ? undefined : () => setSelectedId(plan.id)} />)}</div>
           </Section>
           <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{isEnglish ? "Passes are one-time purchases, valid for 30 days, and do not renew automatically. Credit pack validity is shown on each plan. Prices and credits come from the server catalog." : "月卡一次购买、有效 30 天、不自动续费；字数包有效期见各套餐说明。所有金额和额度均来自服务端目录。"}</span></div>
         </div>
         <aside className="ops-checkout-summary ops-shadow-card">
           <p className="ops-eyebrow">ORDER SUMMARY</p>
-          <h2>{selected ? localizedPlanName(selected, isEnglish) : (isEnglish ? "Loading plans" : "正在加载套餐")}</h2>
-          <div className="ops-checkout-credit"><strong>{selected ? number(selected.credits) : "—"}</strong><span>{isEnglish ? "character credits" : "字可用额度"}</span></div>
+          <h2>{summaryPlan ? localizedPlanName(summaryPlan, isEnglish) : (isEnglish ? "Loading plans" : "正在加载套餐")}</h2>
+          <div className="ops-checkout-credit"><strong>{summaryPlan ? number(returnedOrderId && returnedOrder ? returnedOrder.credits : summaryPlan.credits) : "—"}</strong><span>{isEnglish ? "rewrite credits" : "改写额度"}</span></div>
           <dl>
             <div><dt>{isEnglish ? "Purchasing account" : "购买账号"}</dt><dd>{session?.user?.email || session?.user?.display_name || (isEnglish ? "Sign in first" : "请先登录")}</dd></div>
-            <div><dt>产品金额</dt><dd>{selected ? money(Number(selected.price_fen) / 100) : "—"}</dd></div>
-            <div><dt>{isEnglish ? "Payment methods" : "付款方式"}</dt><dd>{isEnglish ? "Card / Alipay and other available methods" : "银行卡 / 支付宝等可用方式"}</dd></div>
-            <div className="ops-total"><dt>应付</dt><dd>{selected ? money(Number(selected.price_fen) / 100) : "—"}</dd></div>
+            <div><dt>{isEnglish ? "Plan price" : "产品金额"}</dt><dd>{formatQuote(summaryQuote, isEnglish, true)}</dd></div>
+            <div><dt>{isEnglish ? "Payment methods" : "付款方式"}</dt><dd>{isEnglish ? "As available in Stripe Checkout" : "以 Stripe 收银台为准"}</dd></div>
+            <div className="ops-total"><dt>{returnedOrderId ? (isEnglish ? "Order amount" : "订单金额") : (isEnglish ? "Total due" : "应付")}</dt><dd>{formatQuote(summaryQuote, isEnglish, true)}</dd></div>
           </dl>
-          <div className="ops-note ops-note--yellow"><Info size={20} weight="fill" /><div><b>{isEnglish ? (isLive ? "Stripe live payment" : "Stripe test mode") : (isLive ? "Stripe 正式支付" : "Stripe 测试模式")}</b><p>{isEnglish ? (canPay ? (isLive ? "Live payment methods depend on availability in Stripe Checkout." : "Test checkout only; no real charge will be made.") : "Stripe Checkout is not available yet.") : (payment.notice || "支付通道尚未启用。")}</p></div></div>
+          <div className="ops-note ops-note--yellow"><Info size={20} weight="fill" /><div><b>{isEnglish ? (isLive ? "Stripe live payment" : "Stripe test mode") : (isLive ? "Stripe 正式支付" : "Stripe 测试模式")}</b><p>{isEnglish ? (payment.checkout_enabled ? (isLive ? "Live payment methods depend on availability in Stripe Checkout." : "Test checkout only; no real charge will be made.") : "Stripe Checkout is not available yet.") : (payment.notice || "支付通道尚未启用。")}</p></div></div>
           {checkoutError && <div className="ops-inline-notice"><WarningCircle size={18} weight="fill" /><span>{checkoutError}</span></div>}
-          {returnedOrder?.status === "paid" && <div className="ops-payment-result ops-payment-result--success"><CheckCircle size={30} weight="fill" /><b>{isEnglish ? (returnedOrder.live ? "Payment confirmed; credits added" : "Test payment confirmed; credits added") : (returnedOrder.live ? "付款已确认，额度已到账" : "测试付款已确认，额度已到账")}</b><p>{isEnglish ? "Order" : "订单"} {returnedOrder.order_id}</p></div>}
-          {returnedOrder?.status === "refunded" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Order refunded; unused credits revoked" : "订单已退款，未使用额度已撤销"}</b><p>{isEnglish ? "Order" : "订单"} {returnedOrder.order_id}</p></div>}
-          {returnedOrder?.status === "partially_refunded" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Partial refund confirmed; unused credits adjusted" : "部分退款已确认，未用额度已调整"}</b><p>{isEnglish ? "Order" : "订单"} {returnedOrder.order_id}</p></div>}
-          {returnedOrder?.status === "expired" && <div className="ops-payment-result ops-payment-result--pending"><Clock size={30} weight="fill" /><b>{isEnglish ? "Checkout expired without payment" : "收银台已过期，订单未付款"}</b><p>{isEnglish ? "No credits were issued. You can start a new checkout." : "未发放额度；可重新发起结账。"}</p></div>}
-          {returnedOrder?.status === "failed" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Checkout could not be created" : "收银台创建失败"}</b><p>{isEnglish ? "No payment was started. You can retry." : "未发起付款；可重试。"}</p></div>}
+          {returnedOrderId && returnedOrder?.status === "paid" && <div className="ops-payment-result ops-payment-result--success"><CheckCircle size={30} weight="fill" /><b>{isEnglish ? (returnedOrder.live ? "Payment confirmed; credits added" : "Test payment confirmed; credits added") : (returnedOrder.live ? "付款已确认，额度已到账" : "测试付款已确认，额度已到账")}</b><p>{isEnglish ? "Order" : "订单"} {returnedOrder.order_id}</p></div>}
+          {returnedOrderId && returnedOrder?.status === "refunded" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Order refunded; unused credits revoked" : "订单已退款，未使用额度已撤销"}</b><p>{isEnglish ? "Order" : "订单"} {returnedOrder.order_id}</p></div>}
+          {returnedOrderId && returnedOrder?.status === "partially_refunded" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Partial refund confirmed; unused credits adjusted" : "部分退款已确认，未用额度已调整"}</b><p>{isEnglish ? "Order" : "订单"} {returnedOrder.order_id}</p></div>}
+          {returnedOrderId && returnedOrder?.status === "expired" && <div className="ops-payment-result ops-payment-result--pending"><Clock size={30} weight="fill" /><b>{isEnglish ? "Checkout expired without payment" : "收银台已过期，订单未付款"}</b><p>{isEnglish ? "No credits were issued. You can start a new checkout." : "未发放额度；可重新发起结账。"}</p></div>}
+          {returnedOrderId && returnedOrder?.status === "failed" && <div className="ops-payment-result ops-payment-result--pending"><Info size={30} weight="fill" /><b>{isEnglish ? "Checkout could not be created" : "收银台创建失败"}</b><p>{isEnglish ? "No payment was started. You can retry." : "未发起付款；可重试。"}</p></div>}
           {returnedOrderId && (!returnedOrder || returnedOrder.status === "pending") && <div className="ops-payment-result ops-payment-result--pending"><Clock size={30} weight="fill" /><b>{isEnglish ? (returnResult === "cancel" ? "Back from checkout; payment not completed" : "Waiting for server payment confirmation") : (returnResult === "cancel" ? "已返回平台；订单未付款" : "等待服务端确认付款")}</b><p>{isEnglish ? "Credits are issued only after the server verifies the payment directly with Stripe. If this takes longer than 30 seconds, refresh the order status." : "服务端向 Stripe 核实付款后才发放额度；若超过 30 秒，请手动刷新订单状态。"}</p><Button icon={ArrowsClockwise} onClick={refreshReturnedOrder} disabled={refreshingOrder}>{isEnglish ? (refreshingOrder ? "Checking…" : "Refresh payment status") : (refreshingOrder ? "正在核对…" : "刷新付款状态")}</Button></div>}
-          <Button tone="blue" icon={CreditCard} className="ops-full-button" disabled={!canPay || !selected || busy || loading} onClick={beginCheckout}>{isEnglish ? (busy ? "Opening Stripe…" : isLive ? "Open secure Stripe Checkout" : "Open Stripe test checkout") : (busy ? "正在前往 Stripe…" : isLive ? "前往 Stripe 安全收银台" : "前往 Stripe 测试收银台")}</Button>
-          <Button tone="plain" icon={Receipt} onClick={() => go(navigate, "/app/billing/orders")}>查看订单</Button>
-          {!canPay && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{isEnglish ? (!signedIn ? "Sign in before purchasing." : "Checkout opens after the server key and webhook are configured.") : (!signedIn ? "请先登录账户再购买。" : "完成服务端密钥和 Webhook 配置后，购买按钮才会开放。")}</span></div>}
+          {returnedOrderId ? <Button tone="blue" icon={CreditCard} className="ops-full-button" onClick={() => go(navigate, "/checkout/pro")}>{isEnglish ? "Start another purchase" : "重新选购"}</Button>
+            : <Button tone="blue" icon={CreditCard} className="ops-full-button" disabled={!canPay || !selected || busy || loading} onClick={beginCheckout}>{isEnglish ? (busy ? "Opening Stripe…" : isLive ? "Open secure Stripe Checkout" : "Open Stripe test checkout") : (busy ? "正在前往 Stripe…" : isLive ? "前往 Stripe 安全收银台" : "前往 Stripe 测试收银台")}</Button>}
+          <Button tone="plain" icon={Receipt} onClick={() => go(navigate, "/app/billing/orders")}>{isEnglish ? "View orders" : "查看订单"}</Button>
+          {!returnedOrderId && !canPay && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{!selectedQuote ? (isEnglish ? "USD checkout is unavailable until the server publishes a USD price for this plan." : "当前套餐暂未提供人民币报价。") : isEnglish ? (!signedIn ? "Sign in before purchasing." : "Checkout opens after the server key and webhook are configured.") : (!signedIn ? "请先登录账户再购买。" : "完成服务端密钥和 Webhook 配置后，购买按钮才会开放。")}</span></div>}
         </aside>
       </div>
     </Page>
@@ -1865,7 +1885,7 @@ function LegacyBillingPage({ navigate }) {
             </div>
             <ol className="ops-numbered">
               <li><span>01</span><div><b>最早到期先用</b><p>赠送额度、月卡和字数包共同排序，避免临期额度浪费。</p></div></li>
-              <li><span>02</span><div><b>分析与安全清理免费</b><p>仅模型保真改写计入字符额度。</p></div></li>
+              <li><span>02</span><div><b>分析与安全清理免费</b><p>仅模型保真改写扣额度。</p></div></li>
               <li><span>03</span><div><b>账本不可覆盖</b><p>发放、预占、结算与释放都保留独立流水。</p></div></li>
             </ol>
             <Button tone="plain" icon={Receipt} onClick={() => go(navigate, "/app/billing/usage")}>查看额度明细</Button>
@@ -2804,7 +2824,7 @@ export function AdminUsersPage({ navigate }) {
       setDetail(response.user);
       setGrantFeedback(response.grant?.reused
         ? copy("这笔发放已处理过，未重复增加额度。", "This request was already processed; no duplicate credits were added.")
-        : copy(`已为 ${detail.primary_email} 发放 ${number(creditAmount)} 字额度。`, `${number(creditAmount)} characters granted to ${detail.primary_email}.`));
+        : copy(`已为 ${detail.primary_email} 发放 ${number(creditAmount)} 改写额度。`, `${number(creditAmount)} rewrite credits granted to ${detail.primary_email}.`));
       setGrantRequestId("");
       setCreditAmount("");
       setGrantReason("");
@@ -2833,7 +2853,7 @@ export function AdminUsersPage({ navigate }) {
       {!error && <Table rows={(result.users || []).map((user) => ({ ...user, id: user.account_id }))} onRow={(user) => { if (!grantBusy) setSelectedId(user.account_id); }} rowLabel={(user) => copy(`查看用户 ${user.primary_email}`, `View user ${user.primary_email}`)} empty={loading ? copy("正在读取…", "Loading…") : copy("没有符合条件的用户", "No matching users")} columns={[
         { key: "primary_email", label: copy("邮箱", "Email") },
         { key: "display_name", label: copy("名称", "Name") },
-        { key: "balance", label: copy("可用字数", "Available characters"), render: (user) => number(user.balance) },
+        { key: "balance", label: copy("可用额度", "Available credits"), render: (user) => number(user.balance) },
         { key: "manuscript_count", label: copy("文稿数", "Manuscripts") },
         { key: "created_at", label: copy("注册时间", "Registered"), render: (user) => date(user.created_at) },
       ]} />}
@@ -2847,7 +2867,7 @@ export function AdminUsersPage({ navigate }) {
       {detailLoading ? <p className="ops-admin-user-hint">{copy("正在读取账户详情…", "Loading account details…")}</p> : detail?.account_id === selectedId && <>
         <div className="ops-admin-user-summary">
           <div><small>{copy("账户", "Account")}</small><strong>{detail.primary_email}</strong><code>{detail.account_id}</code></div>
-          <div><small>{copy("可用字数", "Available characters")}</small><strong>{number(detail.balance)}</strong></div>
+          <div><small>{copy("可用额度", "Available credits")}</small><strong>{number(detail.balance)}</strong></div>
           <div><small>{copy("登录设备", "Active sessions")}</small><strong>{number(detail.active_sessions)}</strong></div>
           <div><small>{copy("登录方式", "Sign-in methods")}</small><strong>{(detail.providers || []).join("、") || "—"}</strong></div>
         </div>
@@ -2861,15 +2881,15 @@ export function AdminUsersPage({ navigate }) {
           <div><h3>{copy("最近订单", "Recent orders")}</h3><Table rows={detail.orders || []} empty={copy("暂无订单", "No orders")} columns={[
             { key: "product_id", label: copy("套餐", "Plan") },
             { key: "status", label: copy("状态", "Status"), render: (row) => <StatusPill status={row.status} /> },
-            { key: "amount_fen", label: copy("金额", "Amount"), render: (row) => `${(row.amount_fen / 100).toFixed(2)} ${row.currency}` },
+            { key: "amount_fen", label: copy("金额", "Amount"), render: (row) => formatQuote(orderQuote(row), isEnglish, true) },
             { key: "created_at", label: copy("创建时间", "Created"), render: (row) => date(row.created_at) },
           ]} /></div>
         </div>
         <form className="ops-admin-credit-form" onSubmit={submitGrant}>
           <h3>{copy("赋予额度", "Grant credits")}</h3>
-          <p>{copy("只增加可用字数，不改变该用户的单次处理上限或可用改写模式。操作会记录管理员、原因和账本流水。", "Adds available characters only. The user's per-task limit and rewrite modes stay unchanged. The administrator, reason and ledger entry are recorded.")}</p>
+          <p>{copy("只增加可用额度，不改变该用户的单次处理上限或可用改写模式。操作会记录管理员、原因和账本流水。", "Adds rewrite credits only. The user's per-task limit and rewrite modes stay unchanged. The administrator, reason and ledger entry are recorded.")}</p>
           <div className="ops-admin-credit-fields">
-            <label>{copy("增加字数", "Characters to add")}<input type="number" min="1" max="1000000" step="1" required value={creditAmount} onChange={(event) => editGrant(setCreditAmount, event.target.value)} placeholder="10000" /></label>
+            <label>{copy("增加额度", "Credits to add")}<input type="number" min="1" max="1000000" step="1" required value={creditAmount} onChange={(event) => editGrant(setCreditAmount, event.target.value)} placeholder="10000" /></label>
             <label>{copy("有效期", "Validity")}<select value={validDays} onChange={(event) => editGrant(setValidDays, event.target.value)}><option value="30">{copy("30 天", "30 days")}</option><option value="90">{copy("90 天", "90 days")}</option><option value="365">{copy("365 天", "365 days")}</option><option value="0">{copy("不过期", "No expiry")}</option></select></label>
             <label>{copy("发放原因（至少 5 字）", "Reason (at least 5 characters)")}<input type="text" minLength={5} maxLength={200} required value={grantReason} onChange={(event) => editGrant(setGrantReason, event.target.value)} placeholder={copy("例如：客服补偿或活动赠送", "For example: service recovery or promotion")} /></label>
             <label>{copy("再次输入目标用户邮箱", "Re-enter the recipient's email")}<input type="email" required value={confirmEmail} onChange={(event) => editGrant(setConfirmEmail, event.target.value)} placeholder={detail.primary_email} autoComplete="off" /></label>
@@ -2882,7 +2902,7 @@ export function AdminUsersPage({ navigate }) {
           <h3>{copy("最近管理员发放记录", "Recent administrator grants")}</h3>
           <Table rows={detail.admin_grants || []} empty={copy("暂无管理员发放记录", "No administrator grants yet")} columns={[
             { key: "created_at", label: copy("时间", "Time"), render: (row) => date(row.created_at) },
-            { key: "credits", label: copy("字数", "Characters"), render: (row) => number(row.credits) },
+            { key: "credits", label: copy("额度", "Credits"), render: (row) => number(row.credits) },
             { key: "actor_email", label: copy("操作人", "Administrator"), render: (row) => row.actor_email || row.actor_account_id },
             { key: "reason", label: copy("原因", "Reason") },
             { key: "expires_at", label: copy("到期", "Expires"), render: (row) => date(row.expires_at) },
@@ -2969,11 +2989,12 @@ export function AdminTrafficPage({ navigate }) {
 }
 
 export function AdminJobsPage({ navigate }) {
+  const { isEnglish, number } = useOpsLocale();
   return <AdminLiveList navigate={navigate} active="jobs" endpoint="/api/admin/jobs" field="jobs" title="改写任务" description="最近 100 个真实任务的状态及 Token 用量；正文和改写结果不会在管理台展示。" columns={[
     { key: "id", label: "任务号" },
     { key: "state", label: "状态" },
     { key: "phase", label: "阶段" },
-    { key: "billable_chars", label: "计费字数" },
+    { key: "billable_chars", label: isEnglish ? "Billable text units" : "正文计费单位", render: (row) => `${number(row.billable_chars)} ${Number(row.metering_version || 1) < 2 ? (isEnglish ? "characters (legacy)" : "字符（旧计量）") : (isEnglish ? "text units" : "计费单位")}` },
     { key: "input_tokens", label: "输入 Token" },
     { key: "output_tokens", label: "输出 Token" },
     { key: "t0", label: "开始时间", render: (row) => new Date(row.t0 * 1000).toLocaleString() },
@@ -2981,10 +3002,11 @@ export function AdminJobsPage({ navigate }) {
 }
 
 export function AdminPlansPage({ navigate }) {
+  const { isEnglish } = useOpsLocale();
   return <AdminLiveList navigate={navigate} active="plans" endpoint="/api/admin/plans" field="plans" title="套餐目录" description="查看当前实际生效的服务端套餐。价格修改仍需代码审查和发布，避免在管理台误改真实收款。" columns={[
     { key: "id", label: "套餐 ID" },
     { key: "name", label: "名称" },
-    { key: "price_fen", label: "价格", render: (row) => `${(row.price_fen / 100).toFixed(2)} ${row.currency}` },
+    { key: "price_fen", label: "价格", render: (row) => ["CNY", "USD"].map((currency) => catalogQuote(row, currency)).filter(Boolean).map((quote) => formatQuote(quote, isEnglish, true)).join(" / ") || "—" },
     { key: "credits", label: "额度" },
     { key: "valid_days", label: "有效天数" },
   ]} />;
@@ -3047,7 +3069,7 @@ export function AdminOrdersPage({ navigate }) {
     const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(partialAmount.trim());
     return match ? Number(match[1]) * 100 + Number((match[2] || "").padEnd(2, "0")) : 0;
   })();
-  const money = (fen, currency = "CNY") => `${(fen / 100).toFixed(2)} ${currency}`;
+  const money = (minor, currency) => formatMinorPrice(minor, currency, isEnglish, true);
   const openRefund = (order) => {
     setSelected(order);
     setRefundMode("full");
@@ -3098,9 +3120,9 @@ export function AdminOrdersPage({ navigate }) {
         { key: "order_id", label: isEnglish ? "Order" : "订单号" },
         { key: "account_email", label: isEnglish ? "Account" : "账户", render: (row) => row.account_email || row.account_id },
         { key: "product_id", label: isEnglish ? "Plan" : "套餐" },
-        { key: "amount_fen", label: isEnglish ? "Amount" : "金额", render: (row) => `${(row.amount_fen / 100).toFixed(2)} ${row.currency}` },
+        { key: "amount_fen", label: isEnglish ? "Amount" : "金额", render: (row) => formatQuote(orderQuote(row), isEnglish, true) },
         { key: "status", label: isEnglish ? "Status" : "状态", render: (row) => <StatusPill status={row.status} /> },
-        { key: "refunded_fen", label: isEnglish ? "Refunded" : "累计退款", render: (row) => `${(row.refunded_fen / 100).toFixed(2)} ${row.currency}` },
+        { key: "refunded_fen", label: isEnglish ? "Refunded" : "累计退款", render: (row) => money(row.refunded_fen, row.currency) },
         { key: "reconciliation_required", label: isEnglish ? "Local check" : "本地核对", render: (row) => row.reconciliation_required ? (isEnglish ? "Review" : "需复核") : (isEnglish ? "Locally consistent" : "本地一致") },
         { key: "refund_action", label: copy("操作", "Action"), render: (row) => row.provider === "stripe" && row.live && ["paid", "partially_refunded"].includes(row.status) ? <Button onClick={() => openRefund(row)} disabled={!refundEnabled || row.reconciliation_required || ["created", "submitted", "unknown"].includes(row.refund_attempt_status)}>{copy("退款", "Refund")}</Button> : "—" },
       ]} />
@@ -3113,7 +3135,7 @@ export function AdminOrdersPage({ navigate }) {
       </div>
       <div className="ops-admin-refund-form">
         <label><span>{copy("退款范围", "Refund amount")}</span><select value={refundMode} onChange={(event) => { setRefundMode(event.target.value); setReviewing(false); }}><option value="full">{copy("退还剩余全部金额", "Refund full remaining amount")}</option><option value="partial">{copy("部分退款", "Partial refund")}</option></select></label>
-        {refundMode === "partial" && <label><span>{copy("退款金额（元，最多两位小数）", "Amount (yuan, up to two decimals)")}</span><input inputMode="decimal" value={partialAmount} onChange={(event) => { setPartialAmount(event.target.value); setReviewing(false); }} placeholder="0.00" /></label>}
+        {refundMode === "partial" && <label><span>{copy(`退款金额（${selected.currency}，最多两位小数）`, `Amount (${selected.currency}, up to two decimals)`)}</span><input inputMode="decimal" value={partialAmount} onChange={(event) => { setPartialAmount(event.target.value); setReviewing(false); }} placeholder="0.00" /></label>}
         <label><span>{copy("退款原因", "Reason")}</span><select value={refundReason} onChange={(event) => { setRefundReason(event.target.value); setReviewing(false); }}><option value="requested_by_customer">{copy("用户申请", "Requested by customer")}</option><option value="duplicate">{copy("重复付款", "Duplicate payment")}</option></select></label>
         <label><span>{copy("处理备注（至少 5 字）", "Internal note (at least 5 characters)")}</span><textarea value={refundNote} maxLength={500} onChange={(event) => { setRefundNote(event.target.value); setReviewing(false); }} placeholder={copy("记录申请依据，不填写论文正文", "Record the reason; do not include manuscript content")} /></label>
         <label><span>{copy("输入完整订单号确认", "Type the full order ID to confirm")}</span><input value={confirmOrderId} onChange={(event) => { setConfirmOrderId(event.target.value); setReviewing(false); }} autoComplete="off" /></label>
@@ -3126,12 +3148,21 @@ export function AdminOrdersPage({ navigate }) {
 }
 
 export function AdminEconomicsPage({ navigate }) {
+  const { isEnglish } = useOpsLocale();
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   useEffect(() => { getApi("/api/admin/economics").then(setData).catch((failure) => setError(failure.message)); }, []);
-  return <Page><AdminHeader title="收款与模型用量" description="展示真实已支付订单净额与已结算任务 Token。模型单价和 Stripe 手续费尚未接入，不能据此计算毛利。" /><AdminTabs navigate={navigate} active="economics" />
+  const sales = Array.isArray(data?.sales_by_currency)
+    ? data.sales_by_currency
+    : data?.currency ? [{ currency: data.currency, net_sales_minor: data.net_sales_fen }] : [];
+  return <Page><AdminHeader title={isEnglish ? "Payments and model usage" : "收款与模型用量"} description={isEnglish ? "Paid-order net amounts are shown separately by currency, without adding different currencies together. Model prices and Stripe fees are not included, so these figures are not a gross-margin calculation." : "按币种分别展示真实已支付订单净额与已结算任务 Token；不同币种不直接相加。模型单价和 Stripe 手续费尚未接入，不能据此计算毛利。"} /><AdminTabs navigate={navigate} active="economics" />
     {error && <div className="ops-note ops-note--yellow" role="alert">{error}</div>}
-    {data && <div className="ops-metrics ops-metrics--3"><Metric label="订单净额（未扣费）" value={`${(data.net_sales_fen / 100).toFixed(2)} ${data.currency}`} /><Metric label="已结算改写任务" value={String(data.settled_jobs)} /><Metric label="模型 Token" value={`${Number(data.input_tokens).toLocaleString()} 入 / ${Number(data.output_tokens).toLocaleString()} 出`} /></div>}
+    {data && <div className="ops-metrics ops-metrics--3">
+      {sales.map((item) => <Metric key={item.currency} label={isEnglish ? `Net orders (${item.currency}; before fees)` : `订单净额（${item.currency}，未扣费）`} value={formatMinorPrice(item.net_sales_minor, item.currency, isEnglish, true)} />)}
+      {!sales.length && <Metric label={isEnglish ? "Net orders (before fees)" : "订单净额（未扣费）"} value="—" />}
+      <Metric label={isEnglish ? "Settled rewrite jobs" : "已结算改写任务"} value={String(data.settled_jobs)} />
+      <Metric label={isEnglish ? "Model tokens" : "模型 Token"} value={isEnglish ? `${Number(data.input_tokens).toLocaleString()} input / ${Number(data.output_tokens).toLocaleString()} output` : `${Number(data.input_tokens).toLocaleString()} 入 / ${Number(data.output_tokens).toLocaleString()} 出`} />
+    </div>}
   </Page>;
 }
 
@@ -3219,7 +3250,7 @@ function LegacyAdminOverviewPage({ navigate }) {
           { key: "id", label: "任务号", render: (row) => <code>{row.id}</code> },
           { key: "user", label: "用户" },
           { key: "mode", label: "模式" },
-          { key: "chars", label: "计费字符", render: (row) => `${number(row.chars)} 字` },
+          { key: "chars", label: "计费单位", render: (row) => `${number(row.chars)} 单位` },
           { key: "cost", label: "估算成本", render: (row) => money(row.cost) },
           { key: "trace", label: "追踪号", render: (row) => <code>{row.trace}</code> },
           { key: "status", label: "状态", render: (row) => <StatusPill status={row.status} /> },

@@ -145,6 +145,26 @@ try:
     if code3 != 409 or "error" not in conflict:
         FAILS.append(f"同一幂等键换套餐 → {code3}（应为 409）")
 
+    usd_code, usd_checkout = post("/api/billing/checkout", {
+        "product_id": "student_month", "idempotency_key": "server_usd_checkout_001",
+        "currency": "USD", "amount_fen": 1,
+    })
+    if (usd_code != 200 or usd_checkout.get("currency") != "USD"
+            or usd_checkout.get("amount_minor") != 790):
+        FAILS.append(f"USD mock checkout 未使用服务端美元定价: {usd_code} {usd_checkout}")
+    changed_currency_code, _ = post("/api/billing/checkout", {
+        "product_id": "student_month", "idempotency_key": "server_usd_checkout_001",
+        "currency": "CNY",
+    })
+    if changed_currency_code != 409:
+        FAILS.append(f"同一幂等键换币种 → {changed_currency_code}（应为 409）")
+    invalid_currency_code, _ = post("/api/billing/checkout", {
+        "product_id": "student_month", "idempotency_key": "server_invalid_currency",
+        "currency": "EUR",
+    })
+    if invalid_currency_code != 400:
+        FAILS.append(f"不支持的币种 → {invalid_currency_code}（应为 400）")
+
     CASES = {
         "正常": "本文深入探讨了该问题，综上所述，具有重要意义。",
         "空": "",

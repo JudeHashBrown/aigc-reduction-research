@@ -1530,7 +1530,8 @@ class Handler(BaseHTTPRequestHandler):
                                   user.get("email_verified") else "")
                 result = PAYMENTS.checkout(account_id, product_id,
                                            idempotency_key, origin=origin,
-                                           customer_email=customer_email)
+                                           customer_email=customer_email,
+                                           currency=payload.get("currency", "CNY"))
             except BillingError as exc:
                 return self._send_billing_error(exc)
             return self._send(200, json.dumps(result, ensure_ascii=False))

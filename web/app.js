@@ -327,7 +327,35 @@ function invalidateReport({ preserveMessage = false } = {}) {
 }
 
 function localBillableChars(text) {
-  return Array.from(String(text || '').normalize('NFC')).filter((char) => !/^\s$/u.test(char)).length;
+  const whitespace = /^[\u0009-\u000D\u001C-\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]$/u;
+  const latin = /\p{Script=Latin}/u;
+  const letter = /\p{Letter}/u;
+  const digit = /\p{Decimal_Number}/u;
+  const mark = /\p{Mark}/u;
+  const punctuation = /\p{Punctuation}/u;
+  const chars = Array.from(String(text || '')).filter((char) =>
+    whitespace.test(char) || !(/\p{Cf}/u.test(char)
+      || /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/u.test(char)
+      || /\p{Cc}/u.test(char)));
+  let units = 0;
+  let inWord = false;
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index];
+    const isWord = (latin.test(char) && letter.test(char)) || digit.test(char);
+    if (isWord) {
+      if (!inWord) units += 1;
+      inWord = true;
+    } else if (mark.test(char) && inWord) {
+      continue;
+    } else if ((char === "'" || char === '’') && inWord
+      && ((latin.test(chars[index + 1] || '') && letter.test(chars[index + 1] || '')) || digit.test(chars[index + 1] || ''))) {
+      continue;
+    } else {
+      inWord = false;
+      if (!whitespace.test(char) && !punctuation.test(char)) units += 1;
+    }
+  }
+  return units;
 }
 
 function updateComposer() {
@@ -434,13 +462,13 @@ function estimateCost() {
   const balance = state.billing && Number.isFinite(Number(state.billing.balance))
     ? Number(state.billing.balance)
     : null;
-  $('#costEstimate').textContent = `${required.toLocaleString('zh-CN')} 字额度`;
-  $('#costBalance').textContent = balance === null ? '—' : `${balance.toLocaleString('zh-CN')} 字`;
+  $('#costEstimate').textContent = `${required.toLocaleString('zh-CN')} 额度`;
+  $('#costBalance').textContent = balance === null ? '—' : `${balance.toLocaleString('zh-CN')} 额度`;
   $('#costMode').textContent = `${label}模式 · ${multiplier}×`;
-  $('#confirmChars').textContent = `${chars.toLocaleString('zh-CN')} 字`;
+  $('#confirmChars').textContent = `${chars.toLocaleString('zh-CN')} 计费单位`;
   $('#confirmMode').textContent = `${label} · ${candidates}`;
-  $('#confirmRequired').textContent = `${required.toLocaleString('zh-CN')} 字额度`;
-  $('#confirmBalance').textContent = balance === null ? '—' : `${balance.toLocaleString('zh-CN')} 字`;
+  $('#confirmRequired').textContent = `${required.toLocaleString('zh-CN')} 额度`;
+  $('#confirmBalance').textContent = balance === null ? '—' : `${balance.toLocaleString('zh-CN')} 额度`;
   return { chars, required, balance, label, multiplier };
 }
 
@@ -450,10 +478,10 @@ function updateCounts() {
   const sourceChars = localBillableChars(state.source);
   const currentChars = localBillableChars(state.current);
   const paragraphs = text.split(/\n\s*\n|\n/).filter((part) => part.trim()).length;
-  $('#count').textContent = `${chars.toLocaleString('zh-CN')} 字`;
-  $('#editorMeta').textContent = `${chars.toLocaleString('zh-CN')} 字 · ${paragraphs} 段`;
-  $('#sourceCount').textContent = `${sourceChars.toLocaleString('zh-CN')} 字`;
-  $('#currentCount').textContent = `${currentChars.toLocaleString('zh-CN')} 字`;
+  $('#count').textContent = `${chars.toLocaleString('zh-CN')} 计费单位`;
+  $('#editorMeta').textContent = `${chars.toLocaleString('zh-CN')} 计费单位 · ${paragraphs} 段`;
+  $('#sourceCount').textContent = `${sourceChars.toLocaleString('zh-CN')} 计费单位`;
+  $('#currentCount').textContent = `${currentChars.toLocaleString('zh-CN')} 计费单位`;
   const delta = currentChars - sourceChars;
   $('#currentDelta').textContent = delta > 0 ? `+${delta.toLocaleString('zh-CN')}` : delta < 0 ? delta.toLocaleString('zh-CN') : '±0';
   $('#currentDelta').classList.toggle('negative', delta < 0);
@@ -465,7 +493,7 @@ function updateCounts() {
   $('#analyzeBtnText').textContent = state.analyzeRunning
     ? '分析中…'
     : hasText
-      ? `免费分析 · ${localBillableChars(state.current).toLocaleString('zh-CN')} 字`
+      ? `免费分析 · ${localBillableChars(state.current).toLocaleString('zh-CN')} 计费单位`
       : '请先导入文本';
   updateComposer();
   renderSourcePreview();
@@ -946,7 +974,7 @@ function setPlans(data) {
   state.paymentInfo = Array.isArray(data) ? {} : (data.payment || data);
   const provider = state.paymentInfo.provider || state.paymentInfo.payment_provider || 'mock';
   const notice = state.paymentInfo.notice || '本地演示使用模拟支付，点击购买不会扣款。Stripe 或易支付待正式上线前配置。';
-  $('#billingNotice').innerHTML = `${esc(notice)}<br>按归一化后的非空白原文字数计费；保守/平衡 1×，深度 1.5×。任务失败或零候选采纳时，预占额度会自动退回。${provider !== 'mock' ? ` 当前支付通道：${esc(provider)}。` : ''}`;
+  $('#billingNotice').innerHTML = `${esc(notice)}<br>英文按单词、中文按汉字计费，每个单词或汉字各计 1 个额度；保守/平衡 1×，深度 1.5×。任务失败或零候选采纳时，预占额度会自动退回。${provider !== 'mock' ? ` 当前支付通道：${esc(provider)}。` : ''}`;
   renderPlans();
 }
 
@@ -1003,7 +1031,7 @@ function syncRewriteButton() {
   } else {
     button.disabled = false;
     button.textContent = '保真改写';
-    hint.textContent = '点击后会先显示本次字数、模式与预计预占额度';
+    hint.textContent = '点击后会先显示本次计费单位、模式与预计预占额度';
   }
 }
 
@@ -1013,8 +1041,8 @@ function updateBilling(data) {
   state.billing = { ...(state.billing || {}), ...next };
   const balance = Number(state.billing.balance || 0);
   const limit = Number(state.billing.max_chars_per_job || 0);
-  $('#billingBtn').textContent = `剩余 ${balance.toLocaleString('zh-CN')} 字`;
-  $('#billingSummary').innerHTML = `<div><strong>${balance.toLocaleString('zh-CN')} 字</strong><span>可用改写额度</span></div><div class="summary-plan">${esc(state.billing.plan_name || '免费体验')}<br>单次上限 ${limit.toLocaleString('zh-CN')} 字</div>`;
+  $('#billingBtn').textContent = `剩余 ${balance.toLocaleString('zh-CN')} 额度`;
+  $('#billingSummary').innerHTML = `<div><strong>${balance.toLocaleString('zh-CN')} 额度</strong><span>可用改写额度</span></div><div class="summary-plan">${esc(state.billing.plan_name || '免费体验')}<br>单次上限 ${limit.toLocaleString('zh-CN')} 计费单位</div>`;
   syncEntitlements();
   renderPlans();
 }
@@ -1046,7 +1074,7 @@ function renderPlans() {
     const action = free
       ? `<button class="btn current-plan" disabled>${current ? '当前基础权益' : '已包含'}</button>`
       : `<button class="btn ${current ? '' : 'primary'}" data-buy="${esc(plan.id)}" ${state.billingBusy || (state.paymentInfo?.provider === 'stripe' && !state.paymentInfo?.checkout_enabled) ? 'disabled' : ''}>${state.billingBusy ? '处理中…' : state.paymentInfo?.provider === 'stripe' ? (state.paymentInfo?.live ? '前往 Stripe 支付' : '前往 Stripe 测试支付') : current ? (plan.kind === 'subscription' ? '模拟续一期' : '再购一份') : '模拟购买'}</button>`;
-    return `<section class="plan-card ${current ? 'current' : ''}"><h4>${esc(plan.name)}</h4><span class="plan-kind">${kind}</span><div class="plan-price">${price}<small>${free ? '' : suffix}</small></div><div class="plan-credit">${Number(plan.credits || 0).toLocaleString('zh-CN')} 字额度 · 单次 ${Number(plan.max_chars_per_job || 0).toLocaleString('zh-CN')} 字</div><div class="plan-desc">${esc(plan.description || '')}</div>${action}</section>`;
+    return `<section class="plan-card ${current ? 'current' : ''}"><h4>${esc(plan.name)}</h4><span class="plan-kind">${kind}</span><div class="plan-price">${price}<small>${free ? '' : suffix}</small></div><div class="plan-credit">${Number(plan.credits || 0).toLocaleString('zh-CN')} 额度 · 单次 ${Number(plan.max_chars_per_job || 0).toLocaleString('zh-CN')} 计费单位</div><div class="plan-desc">${esc(plan.description || '')}</div>${action}</section>`;
   }).join('');
   $$('[data-buy]').forEach((button) => {
     button.onclick = () => buyPlan(button.dataset.buy);
@@ -1265,11 +1293,11 @@ async function pollJob(id) {
     const success = $('#rewriteSuccess');
     success.hidden = false;
     if (charged) {
-      success.textContent = `已采纳 ${result.n_accepted} / ${result.n_chunks} 个候选，扣除 ${charged.toLocaleString('zh-CN')} 字额度，余额 ${balance.toLocaleString('zh-CN')} 字。`;
+      success.textContent = `已采纳 ${result.n_accepted} / ${result.n_chunks} 个候选，扣除 ${charged.toLocaleString('zh-CN')} 额度，余额 ${balance.toLocaleString('zh-CN')} 额度。`;
     } else if (result.changed) {
-      success.textContent = `已产生修改并退回 ${released.toLocaleString('zh-CN')} 字预占额度。请在修改对照中人工复核。`;
+      success.textContent = `已产生修改并退回 ${released.toLocaleString('zh-CN')} 预占额度。请在修改对照中人工复核。`;
     } else {
-      success.textContent = `${result.no_change_reason || '未采纳候选，原稿保持不变。'}${released.toLocaleString('zh-CN')} 字预占额度已退回。`;
+      success.textContent = `${result.no_change_reason || '未采纳候选，原稿保持不变。'}${released.toLocaleString('zh-CN')} 预占额度已退回。`;
     }
     setPersistent(result.changed
       ? '修改完成。请逐条查看“修改对照”，人工确认后再复制或导出。'

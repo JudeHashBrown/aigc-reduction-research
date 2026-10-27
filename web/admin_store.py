@@ -1,6 +1,7 @@
 """Bounded, read-only operational views; never return manuscript or job text."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -72,9 +73,17 @@ class AdminStore:
                    FROM credit_grants WHERE account_id=? AND revoked_at IS NULL
                    ORDER BY created_at DESC LIMIT 30""", (account_id,)).fetchall()]
             orders = [dict(item) for item in db.execute("""SELECT id,product_id,status,
-                       amount_fen,currency,refunded_fen,created_at,paid_at
+                       amount_fen,currency,refunded_fen,created_at,paid_at,
+                       product_snapshot_json
                    FROM orders WHERE account_id=? ORDER BY created_at DESC LIMIT 20""",
                    (account_id,)).fetchall()]
+            for order in orders:
+                try:
+                    snapshot = json.loads(order.pop("product_snapshot_json") or "null")
+                except (TypeError, ValueError):
+                    snapshot = None
+                order["metering_version"] = (snapshot.get("metering_version", 1)
+                                              if isinstance(snapshot, dict) else 1)
             admin_grants = [dict(item) for item in db.execute("""SELECT a.request_id,
                        a.actor_account_id,a.credits,a.valid_days,a.reason,a.created_at,
                        p.primary_email AS actor_email,g.expires_at
@@ -94,7 +103,8 @@ class AdminStore:
             return [dict(row) for row in db.execute("""
                 SELECT j.id, j.account_id, j.manuscript_id, j.state, j.phase,
                        j.done, j.total, j.t0, j.updated_at,
-                       u.billable_chars, u.input_tokens, u.output_tokens,
+                       u.billable_chars, u.metering_version,
+                       u.input_tokens, u.output_tokens,
                        u.status AS billing_status
                 FROM rewrite_jobs j LEFT JOIN usage_reservations u ON u.job_id=j.id
                 ORDER BY j.t0 DESC LIMIT ?
@@ -102,15 +112,25 @@ class AdminStore:
 
     def economics(self):
         with self._connect() as db:
-            order = db.execute("""SELECT COUNT(*) AS paid_orders,
-                    COALESCE(SUM(amount_fen-refunded_fen),0) AS net_sales_fen
-                FROM orders WHERE status IN ('paid','partially_refunded','refunded')
-                  AND currency='CNY'""").fetchone()
+            sales_rows = [dict(row) for row in db.execute("""
+                SELECT currency, COUNT(*) AS paid_orders,
+                       COALESCE(SUM(amount_fen-refunded_fen),0) AS net_sales_minor
+                FROM orders
+                WHERE status IN ('paid','partially_refunded','refunded')
+                  AND provider='stripe' AND stripe_livemode=1
+                GROUP BY currency ORDER BY currency
+            """).fetchall()]
+            # Keep the old CNY-only fields for older clients. Adding a USD
+            # price must never silently sum USD cents with CNY fen.
+            cny = next((row for row in sales_rows if row["currency"] == "CNY"), None)
             usage = db.execute("""SELECT COUNT(*) AS settled_jobs,
                     COALESCE(SUM(input_tokens),0) AS input_tokens,
                     COALESCE(SUM(output_tokens),0) AS output_tokens
                 FROM usage_reservations WHERE status='committed'""").fetchone()
-            return {**dict(order), **dict(usage), "currency": "CNY",
+            return {"paid_orders": cny["paid_orders"] if cny else 0,
+                    "net_sales_fen": cny["net_sales_minor"] if cny else 0,
+                    "sales_by_currency": sales_rows,
+                    **dict(usage), "currency": "CNY",
                     "model_cost_available": False}
 
     def service(self):

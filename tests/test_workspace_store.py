@@ -47,7 +47,7 @@ class WorkspaceStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_version("a", doc["id"], 2)["text"], "edited")
         self.assertIsNone(self.store.get_version("b", doc["id"], 2))
 
-    def test_list_counts_non_whitespace_characters_after_edits(self):
+    def test_list_and_versions_keep_character_and_billing_unit_counts_distinct(self):
         source = "A B\n中\t文😀\u200b"
         doc = self.store.create_manuscript("a", {
             "name": "mixed", "kind": "text", "source": source,
@@ -55,6 +55,8 @@ class WorkspaceStoreTests(unittest.TestCase):
         })
         listing = self.store.list_manuscripts("a")
         self.assertEqual((listing[0]["source_chars"], listing[0]["current_chars"]),
+                         (5, 5))
+        self.assertEqual((listing[0]["source_units"], listing[0]["current_units"]),
                          (5, 5))
 
         status, _ = self.store.update_manuscript("a", doc["id"], 1, {
@@ -64,7 +66,13 @@ class WorkspaceStoreTests(unittest.TestCase):
         listing = self.store.list_manuscripts("a")
         self.assertEqual((listing[0]["source_chars"], listing[0]["current_chars"]),
                          (5, 15))
+        self.assertEqual((listing[0]["source_units"], listing[0]["current_units"]),
+                         (5, 5))
+        versions = self.store.list_versions("a", doc["id"])
+        self.assertEqual([(version["revision"], version["chars"], version["units"])
+                          for version in versions], [(2, 15, 5), (1, 5, 5)])
         self.assertEqual(self.store.list_manuscripts("b"), [])
+        self.assertEqual(self.store.list_versions("b", doc["id"]), [])
 
     def test_job_result_persists_and_retries_dedupe(self):
         jid = "job_" + "a" * 24

@@ -27,6 +27,7 @@ import {
 import './public-pages.css';
 import { LanguageToggle, useLocale } from '../locale.jsx';
 import { localizedPlanDescription as planDescription, localizedPlanName as planName } from '../plan-copy.js';
+import { catalogQuote, preferredPriceCurrency, quotePriceParts } from '../plan-pricing.js';
 import { useOptionalPlatform, usePlatform } from '../platform.jsx';
 import { AuthPage as AccountAuthPage } from './AuthPage.jsx';
 
@@ -203,7 +204,7 @@ function WorkbenchPreview({ navigate }) {
       </div>
       <div className="rtp-preview-grid">
         <article className="rtp-paper-panel">
-          <div className="rtp-panel-head"><b>{isEnglish ? 'Original draft' : '原始稿件'}</b><span>{isEnglish ? '1,284 characters' : '共 1,284 字'}</span></div>
+          <div className="rtp-panel-head"><b>{isEnglish ? 'Original draft' : '原始稿件'}</b><span>{isEnglish ? 'Sample excerpt' : '示例片段'}</span></div>
           <div className="rtp-paper-copy">
             <p><i>101</i>教育公平是社会公平的重要基础，也是实现共同富裕的内在要求。近年来，随着我国高等教育规模的快速扩张，城乡之间、地区之间的教育资源差距依然显著。</p>
             <p className="is-source"><i>105</i>已有研究表明，家庭社会经济地位对个体的高等教育机会具有显著影响（李明，2021；Zhang, 2020）。</p>
@@ -267,8 +268,7 @@ function WorkbenchPreview({ navigate }) {
 
 export function LandingPage({ navigate }) {
   const { isEnglish } = useLocale();
-  const { plans, config } = usePlatform();
-  const paymentLive = config?.payment?.checkout_enabled === true && config.payment.live === true;
+  const { plans } = usePlatform();
   const featuredMonth = plans.find((plan) => plan.kind === 'subscription');
   const featuredPack = plans.find((plan) => plan.kind === 'pack');
   useEffect(() => {
@@ -359,11 +359,11 @@ export function LandingPage({ navigate }) {
           <div className="rtp-price-copy">
             <span className="rtp-index-tag">{isEnglish ? '03 / USAGE' : '03 / 用量'}</span>
             <h2>{isEnglish ? 'Choose credits at the pace you write.' : '按你的写作节奏选额度。'}</h2>
-            <p>{isEnglish ? `The service catalog includes 30-day passes, standalone packs, and free access. ${paymentLive ? 'Secure checkout is available.' : 'Checkout is not enabled yet.'} The catalog below is the source of truth for configured limits.` : `服务端目录包含 30 天月卡、独立字数包与免费额度。${paymentLive ? '目前可通过安全收银台付款。' : '目前尚未开放收款。'}下方目录是当前配置上限的唯一来源。`}</p>
+            <p>{isEnglish ? 'The service catalog includes 30-day passes, standalone packs, and free access. See the checkout page for current payment availability and methods. The catalog below is the source of truth for configured limits.' : '服务端目录包含 30 天月卡、独立字数包与免费额度。当前付款方式和可用状态以结账页为准；下方目录是配置上限的唯一来源。'}</p>
             <button className="rtp-text-link" onClick={go(navigate, '/pricing')}>{isEnglish ? 'See all plans' : '查看完整套餐'} <ArrowRight weight="bold" /></button>
           </div>
           <div className="rtp-mini-plans">
-            <article><span>{isEnglish ? 'Current 30-day plan' : '当前 30 天月卡'}</span><b>{featuredMonth ? formatCredits(featuredMonth.credits, isEnglish) : '—'}</b><small>{featuredMonth ? (isEnglish ? 'characters · from the service catalog' : '字 · 来自服务端目录') : (isEnglish ? 'Loading service catalog' : '正在读取服务端目录')}</small></article>
+            <article><span>{isEnglish ? 'Current 30-day plan' : '当前 30 天月卡'}</span><b>{featuredMonth ? formatCredits(featuredMonth.credits, isEnglish) : '—'}</b><small>{featuredMonth ? (isEnglish ? 'rewrite credits · from the service catalog' : '改写额度 · 来自服务端目录') : (isEnglish ? 'Loading service catalog' : '正在读取服务端目录')}</small></article>
             <span className="rtp-plus">+</span>
             <article><span>{isEnglish ? 'Current standalone pack' : '当前独立字数包'}</span><b>{featuredPack ? formatCredits(featuredPack.credits, isEnglish) : '—'}</b><small>{featuredPack ? (isEnglish ? `${featuredPack.valid_days} days · from the service catalog` : `${featuredPack.valid_days} 天 · 来自服务端目录`) : (isEnglish ? 'Loading service catalog' : '正在读取服务端目录')}</small></article>
           </div>
@@ -394,14 +394,8 @@ function formatCredits(value, isEnglish) {
 }
 
 function formatPlanPrice(plan, isEnglish) {
-  const price = Math.max(0, Number(plan.price_fen) || 0) / 100;
-  return {
-    currency: plan.currency === 'CNY' || !plan.currency ? '¥' : plan.currency,
-    amount: new Intl.NumberFormat(isEnglish ? 'en-US' : 'zh-CN', {
-      minimumFractionDigits: Number.isInteger(price) ? 0 : 1,
-      maximumFractionDigits: 2,
-    }).format(price),
-  };
+  const quote = catalogQuote(plan, preferredPriceCurrency(isEnglish));
+  return quotePriceParts(quote, isEnglish);
 }
 
 function planTone(plan) {
@@ -457,17 +451,17 @@ export function PricingPage({ navigate }) {
               <article className={`rtp-plan-card rtp-plan-${tone}`} key={plan.id}>
                 <span className="rtp-plan-type">{plan.kind === 'subscription' ? '30-DAY PLAN' : isFree ? 'FREE ACCESS' : 'CREDIT PACK'}</span>
                 <h2>{planName(plan, isEnglish)}</h2>
-                <div className="rtp-plan-price"><small>{price.currency}</small>{price.amount}<span>{isFree ? (isEnglish ? ' / included' : ' / 当前免费额度') : plan.kind === 'subscription' ? (isEnglish ? ` / ${plan.valid_days} days` : ` / ${plan.valid_days} 天`) : (isEnglish ? ' / configured pack' : ' / 服务端字数包')}</span></div>
-                <div className="rtp-plan-amount"><b>{formatCredits(plan.credits, isEnglish)}</b><span>{isEnglish ? 'rewrite characters' : '计费字符改写额度'}</span></div>
+                <div className="rtp-plan-price">{price ? <><small>{price.symbol}</small>{price.amount}<span>{price.code}{isFree ? (isEnglish ? ' / included' : ' / 当前免费额度') : plan.kind === 'subscription' ? (isEnglish ? ` / ${plan.valid_days} days` : ` / ${plan.valid_days} 天`) : (isEnglish ? ' / configured pack' : ' / 服务端字数包')}</span></> : <span>{isEnglish ? 'USD price unavailable' : '当前币种报价暂不可用'}</span>}</div>
+                <div className="rtp-plan-amount"><b>{formatCredits(plan.credits, isEnglish)}</b><span>{isEnglish ? 'rewrite credits' : '改写额度'}</span></div>
                 <ul>
-                  <li><Check weight="bold" />{isEnglish ? `Up to ${formatCredits(plan.max_chars_per_job, true)} non-whitespace characters per task` : `单次上限 ${formatCredits(plan.max_chars_per_job, false)} 个非空白字符`}</li>
+                  <li><Check weight="bold" />{isEnglish ? `Per-task text limit: ${formatCredits(plan.max_chars_per_job, true)} billable units; a separate text-size limit also applies` : `单次正文上限 ${formatCredits(plan.max_chars_per_job, false)} 个计费单位；原文长度上限另计`}</li>
                   <li><Check weight="bold" />{plan.valid_days ? (isEnglish ? `Configured validity: ${plan.valid_days} days` : `配置有效期：${plan.valid_days} 天`) : (isEnglish ? 'No configured expiry' : '当前未设置到期时间')}</li>
                   <li><Check weight="bold" />{isEnglish ? 'Works with Chinese and English' : '中英文均可使用'}</li>
-                  {isFree && <li><Check weight="bold" />{isEnglish ? 'English quota counts characters, not words; spaces do not count' : '英文额度按非空白字符计，不按单词计'}</li>}
+                  <li><Check weight="bold" />{isEnglish ? 'Conservative/balanced: 1 credit per English word or Chinese character; deep: 1.5×' : '保守/平衡：每个英文单词或中文汉字计 1 额度；深度：1.5 倍'}</li>
                   <li><Check weight="bold" />{isFree ? (isEnglish ? 'Conservative rewrite mode' : '开放保守改写模式') : (isEnglish ? 'Conservative, balanced, and deep modes' : '保守、平衡与深度模式')}</li>
                 </ul>
                 <p>{planDescription(plan, isEnglish)}</p>
-                <button className={`rtp-btn ${tone === 'blue' ? 'rtp-btn-yellow' : 'rtp-btn-blue'}`} onClick={() => openPlan(plan)} disabled={loading || !session?.ready}>
+                <button className={`rtp-btn ${tone === 'blue' ? 'rtp-btn-yellow' : 'rtp-btn-blue'}`} onClick={() => openPlan(plan)} disabled={loading || !session?.ready || !price}>
                   {isFree ? (isEnglish ? 'Open workspace' : '进入工作台') : session?.authMode === 'accounts' && !session?.authenticated ? (isEnglish ? 'Sign in to buy' : '登录后购买') : (isEnglish ? 'Pay' : '支付')} <ArrowRight weight="bold" />
                 </button>
               </article>
@@ -481,7 +475,7 @@ export function PricingPage({ navigate }) {
           <div className="rtp-section-heading"><span className="rtp-index-tag">{isEnglish ? 'HOW CREDITS WORK' : '额度怎么用'}</span><h2>{isEnglish ? 'Clear accounting makes confident revision.' : '账算得明白，修改才安心。'}</h2></div>
           <div className="rtp-rule-grid">
             <article><b>01</b><h3>{isEnglish ? 'One server-side catalog' : '以服务端目录为准'}</h3><p>{isEnglish ? 'Plan names, prices, credits, validity, and per-task limits are rendered directly from the backend response.' : '套餐名称、价格、额度、有效期和单次上限均直接渲染后端返回值。'}</p></article>
-            <article><b>02</b><h3>{isEnglish ? 'Count non-whitespace characters' : '按非空白字符计量'}</h3><p>{isEnglish ? 'Chinese and English are measured by non-whitespace characters. English letters, digits, and punctuation each count; words, spaces, and line breaks are not the unit.' : '中英文均按非空白字符计量：英文字母、数字、标点逐个计入，不按单词数；空格和换行不计。'}</p></article>
+            <article><b>02</b><h3>{isEnglish ? 'Count English words' : '英文按词计量'}</h3><p>{isEnglish ? 'Conservative and balanced rewrites use one credit per English word or Chinese character; deep rewrites use 1.5×. Numbers count as words, while punctuation and spaces do not. Mixed-language units are added together.' : '保守、平衡改写每个英文单词或中文汉字计 1 额度；深度改写按 1.5 倍计。数字按词计，标点与空格不计；中英混排时合并计算。'}</p></article>
             <article><b>03</b><h3>{isEnglish ? 'Reserve credits before model work' : '模型处理前预占额度'}</h3><p>{isEnglish ? 'Estimated usage appears after you choose a strategy. Deep mode reserves 1.5× credits. Credits are usage units, not a live-payment event.' : '选择策略后展示预计消耗；深度模式预占 1.5 倍额度。额度是使用量单位，不代表真实支付。'}</p></article>
             <article><b>04</b><h3>{isEnglish ? 'Failed tasks release credits' : '失败任务释放额度'}</h3><p>{isEnglish ? 'If a task fails or no candidate is accepted, reserved credits are released back to the current service session.' : '任务失败或没有任何候选被采纳时，预占额度会释放回当前服务会话。'}</p></article>
           </div>
@@ -620,7 +614,7 @@ const helpItems = [
   { category: '开始使用', categoryEn: 'Getting started', q: '分析和改写有什么区别？', qEn: 'What is the difference between analysis and rewriting?', a: '分析用于定位表达、术语和论证边界问题；改写会生成修改候选并消耗相应额度。你可以只分析，不进行改写。', aEn: 'Analysis locates issues in expression, terminology, and argumentative boundaries. Rewriting creates revision candidates and uses the corresponding credits. You can run an analysis without rewriting.' },
   { category: '修改与审阅', categoryEn: 'Revision & review', q: '系统会改变我的事实或引用吗？', qEn: 'Will the system change my facts or citations?', a: '保真守卫会优先保护数字、专有名词、引用位置和关键事实。任何自动系统都不能替代作者复核，因此高风险项目会明确标记为“需审阅”。', aEn: 'Faithfulness guards prioritize numbers, proper nouns, citation positions, and key facts. No automated system can replace author review, so high-risk items are clearly marked “Needs review.”' },
   { category: '修改与审阅', categoryEn: 'Revision & review', q: '能保证通过 AI 生成检测吗？', qEn: 'Can you guarantee that my paper will pass AI-generation checks?', a: '不能。RightThesis 提供站内语言与结构诊断，不运行第三方 AI 检测，也不预测或保证其分数与审核结果。', aEn: 'No. RightThesis provides in-app language and structure review. It does not run third-party AI detectors or predict or guarantee their scores or review outcomes.' },
-  { category: '额度与套餐', categoryEn: 'Credits & plans', q: '月卡和字数包能同时用吗？', qEn: 'Can I use a pass and a character pack together?', a: '可以。两类额度可以同时持有，系统会优先使用更早到期的额度，并在每次任务开始前展示预计消耗。', aEn: 'Yes. You can hold both credit types at once. Credits that expire sooner are used first, and estimated usage appears before every task begins.' },
+  { category: '额度与套餐', categoryEn: 'Credits & plans', q: '月卡和字数包能同时用吗？', qEn: 'Can I use a pass and a credit pack together?', a: '可以。两类额度可以同时持有，系统会优先使用更早到期的额度，并在每次任务开始前展示预计消耗。', aEn: 'Yes. You can hold both credit types at once. Credits that expire sooner are used first, and estimated usage appears before every task begins.' },
   { category: '额度与套餐', categoryEn: 'Credits & plans', q: '任务失败还会扣额度吗？', qEn: 'Do failed tasks use credits?', a: '不会。任务创建时会预占额度；失败或没有候选被采纳时会释放。每次确认前的额度预览与额度账本是当前规则的核对依据。', aEn: 'No. Credits are reserved when a task is created, then released if it fails or no candidate is accepted. The pre-confirmation usage preview and credit ledger are the current sources of truth.' },
   { category: '账户与安全', categoryEn: 'Account & security', q: '需要我配置模型服务吗？', qEn: 'Do I need to configure a model service?', a: '不需要。模型服务由 RightThesis 统一配置和维护，你只需要选择适合稿件的改写策略。', aEn: 'No. RightThesis configures and maintains the model service. You only need to choose the rewriting strategy that suits your draft.' },
   { category: '账户与安全', categoryEn: 'Account & security', q: '如何处理账户或文档问题？', qEn: 'How do I resolve an account or document issue?', a: '可以先查看任务状态与版本历史。如需协助，请发送邮件至 support@righttoken.ai，并注明任务时间、文件类型和错误提示；请勿发送密码、密钥或其他敏感凭证。', aEn: 'First check the task status and version history. For help, email support@righttoken.ai with the task time, file type, and error message. Do not send passwords, keys, or other sensitive credentials.' },

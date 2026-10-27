@@ -74,6 +74,86 @@ def test_stripe_order_and_webhook_idempotency():
         assert grants[0]["expires_at"] == now[0] + 30 * 86400
 
 
+def test_usd_checkout_session_webhook_and_refund_are_currency_bound():
+    with tempfile.TemporaryDirectory() as folder:
+        store = BillingStore(Path(folder) / "billing.sqlite3")
+        captured = {}
+
+        def create(*, params, options):
+            captured["params"] = params
+            captured["options"] = options
+            return {"id": "cs_test_usd123",
+                    "url": "https://checkout.stripe.com/c/pay/usd123",
+                    "expires_at": int(time.time()) + 3600}
+
+        fake = SimpleNamespace(StripeClient=lambda _key: SimpleNamespace(
+            v1=SimpleNamespace(checkout=SimpleNamespace(
+                sessions=SimpleNamespace(create=create)))))
+        with patch.dict(os.environ, {"STRIPE_SECRET_KEY": "sk_test_not_real",
+                                  "STRIPE_WEBHOOK_SECRET": "whsec_not_real",
+                                  "STRIPE_LIVE_ENABLED": "0"}):
+            provider = StripePaymentProvider(store)
+            provider.stripe = fake
+            provider.configured = True
+            result = provider.checkout("buyer", "student_month", "usd_checkout_001",
+                                       origin="http://127.0.0.1:8877",
+                                       customer_email="buyer@example.com",
+                                       currency="USD")
+            assert result["currency"] == "USD" and result["amount_minor"] == 790
+            params = captured["params"]
+            assert params["line_items"][0]["price_data"]["currency"] == "usd"
+            assert params["line_items"][0]["price_data"]["unit_amount"] == 790
+            assert params["line_items"][0]["price_data"]["product_data"]["name"] == "Student 30-day pass"
+            assert params["adaptive_pricing"] == {"enabled": False}
+            assert params["excluded_payment_method_types"] == ["wechat_pay", "alipay"]
+            assert provider.checkout("buyer", "student_month", "usd_checkout_001",
+                                     origin="http://127.0.0.1:8877",
+                                     customer_email="buyer@example.com",
+                                     currency="USD")["reused"]
+            expect_error(lambda: provider.checkout(
+                "buyer", "student_month", "usd_checkout_001",
+                origin="http://127.0.0.1:8877", customer_email="buyer@example.com"), 409)
+
+        order = store.order("buyer", result["order_id"])
+        assert order["currency"] == "USD" and order["amount_minor"] == 790
+        session = {
+            "id": "cs_test_usd123", "client_reference_id": order["order_id"],
+            "metadata": {"order_id": order["order_id"], "account_id": "buyer",
+                         "product_id": "student_month"},
+            "mode": "payment", "currency": "usd", "amount_total": 790,
+            "payment_status": "paid", "payment_intent": "pi_usd123",
+        }
+        expect_error(lambda: store.apply_stripe_checkout_event(
+            "evt_usdbadcurrency", "bad-currency", {**session, "currency": "cny"}), 409)
+        expect_error(lambda: store.apply_stripe_checkout_event(
+            "evt_usdbadamount", "bad-amount", {**session, "amount_total": 3990}), 409)
+        assert store.summary("buyer")["balance"] == 800
+        assert store.apply_stripe_checkout_event("evt_usdpaid", "paid", session)["status"] == "paid"
+        assert store.summary("buyer")["balance"] == 20_800
+        expect_error(lambda: store.apply_stripe_succeeded_refund(
+            "evt_usdbadrefund", "bad-refund", {
+                "id": "re_usdbad", "payment_intent": "pi_usd123", "amount": 390,
+                "currency": "cny", "status": "succeeded"}), 409)
+        assert store.order("buyer", order["order_id"])["refunded_minor"] == 0
+        partial = store.apply_stripe_succeeded_refund(
+            "evt_usdpartial", "partial", {
+                "id": "re_usdpartial", "payment_intent": "pi_usd123", "amount": 390,
+                "currency": "usd", "status": "succeeded"})
+        assert partial["status"] == "partially_refunded"
+        assert store.order("buyer", order["order_id"])["refunded_minor"] == 390
+        full = store.apply_stripe_succeeded_refund(
+            "evt_usdremaining", "remaining", {
+                "id": "re_usdremaining", "payment_intent": "pi_usd123", "amount": 400,
+                "currency": "usd", "status": "succeeded"})
+        assert full["status"] == "refunded"
+        assert store.order("buyer", order["order_id"])["refunded_minor"] == 790
+        assert store.summary("buyer")["balance"] == 800
+        historical_cny = store.prepare_stripe_checkout("buyer", "student_month",
+                                                       "historical_cny_order")
+        assert historical_cny["currency"] == "CNY" and historical_cny["amount_fen"] == 3990
+        assert store.order("buyer", order["order_id"])["currency"] == "USD"
+
+
 def test_global_expiry_sweep_preserves_late_verified_payment():
     with tempfile.TemporaryDirectory() as folder:
         now = [1_700_000_000]
@@ -182,6 +262,7 @@ def test_provider_modes_and_checkout_options():
             assert "allowed_payment_method_types" not in captured["params"]
             assert "payment_method_types" not in captured["params"]
             assert captured["params"]["excluded_payment_method_types"] == ["wechat_pay"]
+            assert captured["params"]["adaptive_pricing"] == {"enabled": False}
             assert provider.public_status()["payment_methods"] == ["card", "alipay"]
             assert captured["params"]["line_items"][0]["price_data"]["unit_amount"] == 990
             assert "#/checkout/pro?order=" in captured["params"]["success_url"]
@@ -370,7 +451,7 @@ def test_full_refund_revokes_unused_credits_and_handles_event_order():
                          "client_reference_id": third["id"], "payment_intent": "pi_refund003",
                          "metadata": {**session["metadata"], "order_id": third["id"]}}
         store.apply_stripe_checkout_event("evt_paidrefund003", "hash-paid3", third_session)
-        store.reserve("buyer", "job-refund-003", "x" * 1000, "conservative")
+        store.reserve("buyer", "job-refund-003", "x " * 1000, "conservative")
         assert store.summary("buyer")["balance"] == 2800
         third_refund = {"id": "re_refund003", "payment_intent": "pi_refund003",
                         "amount": 990, "status": "succeeded", "currency": "cny"}
@@ -403,7 +484,7 @@ def test_partial_refund_during_reservation_cannot_reissue_refunded_credits():
                    "mode": "payment", "currency": "cny", "amount_total": 990,
                    "payment_status": "paid", "payment_intent": "pi_partial_reserved"}
         store.apply_stripe_checkout_event("evt_partialpaid", "hash-paid", session)
-        store.reserve("buyer", "job-partial", "x" * 2000, "conservative")
+        store.reserve("buyer", "job-partial", "x " * 2000, "conservative")
         assert store.summary("buyer")["balance"] == 1800
         refund = {"id": "re_partial_reserved", "payment_intent": "pi_partial_reserved",
                   "amount": 495, "status": "succeeded", "currency": "cny"}
@@ -638,6 +719,61 @@ def test_admin_refund_partial_retry_late_failure_and_reissue():
             assert len([row for row in store.ledger("buyer") if row["kind"] == "refund"]) == 2
 
 
+def test_admin_refund_uses_usd_order_minor_units():
+    """The admin refund sends USD cents for a USD order, never CNY fen."""
+    with tempfile.TemporaryDirectory() as folder:
+        store = BillingStore(Path(folder) / "billing.sqlite3")
+        order = store.prepare_stripe_checkout("buyer", "student_month", "admin_usd_refund",
+                                              livemode=True, currency="USD")
+        store.attach_stripe_checkout(order["id"], "cs_live_admin_usd_refund",
+                                     "https://checkout.stripe.com/c/pay/usd-refund",
+                                     int(time.time()) + 3600)
+        store.summary("admin")
+        store.apply_stripe_checkout_event("evt_adminusdpaid", "usd-paid", {
+            "id": "cs_live_admin_usd_refund", "client_reference_id": order["id"],
+            "metadata": {"order_id": order["id"], "account_id": "buyer",
+                         "product_id": "student_month"},
+            "mode": "payment", "currency": "usd", "amount_total": 790,
+            "payment_status": "paid", "payment_intent": "pi_adminusd"})
+        refunds = []
+        captured = {}
+
+        def create(*, params, options):
+            captured["params"] = params
+            captured["options"] = options
+            refund = {"id": "re_adminusd", "object": "refund",
+                      "payment_intent": params["payment_intent"],
+                      "amount": params["amount"], "currency": "usd",
+                      "status": "succeeded", "metadata": params["metadata"]}
+            refunds.append(refund)
+            return refund
+
+        def client(_key):
+            return SimpleNamespace(v1=SimpleNamespace(
+                refunds=SimpleNamespace(create=create,
+                                        list=lambda **_kw: {"data": refunds, "has_more": False},
+                                        retrieve=lambda rid: next(r for r in refunds if r["id"] == rid)),
+                disputes=SimpleNamespace(list=lambda **_kw: {"data": [], "has_more": False})))
+
+        with patch.dict(os.environ, {"STRIPE_SECRET_KEY": "rk_live_read_only",
+                                  "STRIPE_REFUND_SECRET_KEY": "rk_live_refund_write",
+                                  "STRIPE_WEBHOOK_SECRET": "whsec_offline",
+                                  "STRIPE_LIVE_ENABLED": "1",
+                                  "PUBLIC_ORIGIN": "https://rightthesis.com"}):
+            provider = StripePaymentProvider(store)
+            provider.stripe = SimpleNamespace(StripeClient=client)
+            provider.configured = True
+            provider.refund_enabled = True
+            attempt = provider.issue_admin_refund(
+                order["id"], "admin", 390, "requested_by_customer",
+                "Customer asked", str(uuid.uuid4()))
+            assert attempt["status"] == "succeeded"
+            assert captured["params"]["amount"] == 390
+            assert captured["params"]["payment_intent"] == "pi_adminusd"
+            assert store.order("buyer", order["id"])["refunded_minor"] == 390
+            assert store.order("buyer", order["id"])["currency"] == "USD"
+
+
 def test_admin_refund_pending_blocks_new_attempt():
     with tempfile.TemporaryDirectory() as folder:
         store = BillingStore(Path(folder) / "billing.sqlite3")
@@ -675,6 +811,7 @@ def test_admin_refund_pending_blocks_new_attempt():
 
 if __name__ == "__main__":
     test_stripe_order_and_webhook_idempotency()
+    test_usd_checkout_session_webhook_and_refund_are_currency_bound()
     test_global_expiry_sweep_preserves_late_verified_payment()
     test_live_reconciliation_repairs_missed_webhooks_without_double_grants()
     test_provider_modes_and_checkout_options()
@@ -685,5 +822,6 @@ if __name__ == "__main__":
     test_real_sdk_rejects_bad_signature_when_installed()
     test_http_webhook_without_browser_cookie_when_sdk_installed()
     test_admin_refund_partial_retry_late_failure_and_reissue()
+    test_admin_refund_uses_usd_order_minor_units()
     test_admin_refund_pending_blocks_new_attempt()
     print("✓ Stripe 离线合同：测试密钥、动态支付方式、金额验核和幂等发放")

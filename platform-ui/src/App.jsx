@@ -252,7 +252,7 @@ function Topbar({ path, navigate }) {
         <LanguageToggle />
         {!isAdmin && (
           <button className="rt-balance" onClick={() => navigate("/app/billing")}>
-            <span>{isEnglish ? "Balance" : "剩余额度"}</span><strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "chars" : "字"}</strong>
+            <span>{isEnglish ? "Balance" : "剩余额度"}</span><strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "credits" : "额度"}</strong>
           </button>
         )}
         <div ref={userAnchorRef} className="rt-popover-anchor">

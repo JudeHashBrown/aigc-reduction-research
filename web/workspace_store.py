@@ -8,7 +8,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from billing import billable_chars
+from billing import _legacy_billable_chars, billable_chars
 
 
 def _json(value):
@@ -133,10 +133,17 @@ class WorkspaceStore:
 
     def list_manuscripts(self, account_id):
         with self._connect() as db:
-            db.create_function("billable_chars", 1, billable_chars, deterministic=True)
+            # Preserve the historical visible-character fields for older API
+            # clients; billing units use the current metering contract.
+            db.create_function("visible_chars", 1, _legacy_billable_chars,
+                               deterministic=True)
+            db.create_function("billable_units", 1, billable_chars,
+                               deterministic=True)
             rows = db.execute("""SELECT id, revision, name, kind,
-                billable_chars(source) AS source_chars,
-                billable_chars(current) AS current_chars,
+                visible_chars(source) AS source_chars,
+                visible_chars(current) AS current_chars,
+                billable_units(source) AS source_units,
+                billable_units(current) AS current_units,
                 last_job_id, created_at, updated_at
                 FROM manuscripts WHERE account_id=? ORDER BY updated_at DESC""",
                 (account_id,)).fetchall()
@@ -168,7 +175,12 @@ class WorkspaceStore:
 
     def list_versions(self, account_id, manuscript_id):
         with self._connect() as db:
-            rows = db.execute("""SELECT revision, length(text) AS chars, created_at
+            db.create_function("visible_chars", 1, _legacy_billable_chars,
+                               deterministic=True)
+            db.create_function("billable_units", 1, billable_chars,
+                               deterministic=True)
+            rows = db.execute("""SELECT revision, visible_chars(text) AS chars,
+                billable_units(text) AS units, created_at
                 FROM manuscript_versions WHERE account_id=? AND manuscript_id=?
                 ORDER BY revision DESC""", (account_id, manuscript_id)).fetchall()
         return [dict(row) for row in rows]

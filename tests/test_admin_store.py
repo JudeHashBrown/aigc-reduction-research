@@ -34,15 +34,46 @@ def run():
         assert "PRIVATE MANUSCRIPT BODY" not in str(users)
         assert "password" not in str(users).lower()
         assert admin.jobs() == []
+        workspaces.claim_job(account, "admin-request", "admin-hash", "admin-job", 2,
+                             request={"text": "one two", "strength": "conservative"})
+        billing.reserve(account, "admin-job", "one two", "conservative")
+        assert admin.jobs()[0]["billable_chars"] == 2
+        assert admin.jobs()[0]["metering_version"] == 2
+        billing.finalize("admin-job", success=False)
         assert admin.economics()["model_cost_available"] is False
         assert admin.service()["controls_available"] is False
         paid = billing.mock_checkout(account, "pack_3k", "admin_partial_001")
         with sqlite3.connect(path) as db:
             db.execute("UPDATE orders SET status='partially_refunded',refunded_fen=200 WHERE id=?",
                        (paid["order_id"],))
+        assert admin.economics()["sales_by_currency"] == [], "模拟支付不是实际收入"
+        test_order = billing.prepare_stripe_checkout(account, "pack_3k",
+                                                     "admin_test_paid", livemode=False)
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE orders SET status='paid' WHERE id=?", (test_order["id"],))
+        assert admin.economics()["sales_by_currency"] == [], "Stripe 测试订单不是实际收入"
+        live_cny = billing.prepare_stripe_checkout(account, "pack_3k",
+                                                   "admin_live_cny", livemode=True)
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE orders SET status='partially_refunded',refunded_fen=200 WHERE id=?",
+                       (live_cny["id"],))
         economics = admin.economics()
         assert economics["paid_orders"] == 1
         assert economics["net_sales_fen"] == 790
+        assert economics["sales_by_currency"] == [
+            {"currency": "CNY", "paid_orders": 1, "net_sales_minor": 790}]
+        usd = billing.prepare_stripe_checkout(account, "student_month", "admin_usd_paid",
+                                              livemode=True, currency="USD")
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE orders SET status='partially_refunded',refunded_fen=90 WHERE id=?",
+                       (usd["id"],))
+        mixed_economics = admin.economics()
+        assert mixed_economics["paid_orders"] == 1
+        assert mixed_economics["net_sales_fen"] == 790, "旧 CNY 指标不得合并 USD cents"
+        assert mixed_economics["sales_by_currency"] == [
+            {"currency": "CNY", "paid_orders": 1, "net_sales_minor": 790},
+            {"currency": "USD", "paid_orders": 1, "net_sales_minor": 700},
+        ]
 
         now = int(time.time())
         stale = billing.prepare_stripe_checkout("stale-account", "pack_3k", "admin_stale_001", livemode=True)
@@ -67,6 +98,7 @@ def run():
         assert detail["active_sessions"] == 1
         assert detail["manuscript_count"] == 1
         assert detail["balance"] == billing.summary(account)["balance"]
+        assert all(order["metering_version"] == 2 for order in detail["orders"])
         assert "PRIVATE MANUSCRIPT BODY" not in str(detail)
         assert admin.user_detail("acct_doesnotexist") is None
 

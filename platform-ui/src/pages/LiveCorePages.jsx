@@ -26,6 +26,7 @@ import { ChangeHighlights } from "../ChangeHighlights.jsx";
 import { changedPassages, diffChange } from "../change-highlights.js";
 import { reviewTargetFromFinding } from "../review-target.js";
 import { canStartModification, deterministicCleanupCount, snapshotMatchesDraft, workbenchAction } from "../workbench-action.js";
+import { billableUnitLabel } from "../billing-text.js";
 import {
   billableChars,
   createWorkspace,
@@ -268,17 +269,17 @@ export function DashboardPage({ navigate = () => {} }) {
       <section className="rt-metric-strip" aria-label={isEnglish ? "Live account overview" : "实时账户概览"}>
         <div className="rt-metric-cell is-yellow">
           <span>{isEnglish ? "Available quota" : "可用额度"}</span>
-          <strong>{loading ? "—" : Number(billing?.balance || 0).toLocaleString()} <small>{isEnglish ? "chars" : "字符"}</small></strong>
+          <strong>{loading ? "—" : Number(billing?.balance || 0).toLocaleString()} <small>{isEnglish ? "credits" : "点额度"}</small></strong>
           <em>{localizedPlanName(billing?.plan_name, isEnglish) || (isEnglish ? "Loading entitlement" : "正在读取权益")}</em>
         </div>
         <div className="rt-metric-cell">
           <span>{isEnglish ? "Per-job limit" : "单次上限"}</span>
-          <strong>{loading ? "—" : Number(billing?.max_chars_per_job || 0).toLocaleString()} <small>{isEnglish ? "chars" : "字符"}</small></strong>
-          <em>{isEnglish ? "Non-whitespace characters, not words" : "英文按非空白字符计，不按单词计"}</em>
+          <strong>{loading ? "—" : Number(billing?.max_chars_per_job || 0).toLocaleString()} <small>{isEnglish ? "text units" : "正文单位"}</small></strong>
+          <em>{isEnglish ? "1 English word or Han character = 1 text unit; deep reserves credits at 1.5× that count. A separate 120,000-character text-size cap also applies." : "1 个英文词或汉字 = 1 正文单位；深度按正文单位数的 1.5 倍预占额度。正文另受 12 万字符上限约束。"}</em>
         </div>
         <div className="rt-metric-cell">
           <span>{isEnglish ? "Current manuscript" : "当前稿件"}</span>
-          <strong>{hasDocument ? billableChars(current.current || current.source).toLocaleString() : "0"} <small>{isEnglish ? "chars" : "字符"}</small></strong>
+          <strong>{hasDocument ? billableChars(current.current || current.source).toLocaleString() : "0"} <small>{hasDocument ? billableUnitLabel(current.current || current.source, isEnglish) : (isEnglish ? "text units" : "正文单位")}</small></strong>
           <em>{hasDocument ? current.name : (isEnglish ? "No document in this session" : "本次会话尚无文稿")}</em>
         </div>
         <div className="rt-metric-cell is-service">
@@ -298,7 +299,7 @@ export function DashboardPage({ navigate = () => {} }) {
           {documents.length ? (
             documents.map((item) => <button key={item.id} className="rt-project-row" onClick={() => openDocument(item.id)}>
               <span className="rt-file-tile is-green">{item.kind === "pdf" ? <FilePdf weight="bold" /> : <FileDoc weight="bold" />}</span>
-              <span className="rt-project-copy"><strong>{localizedWorkspaceName(item.name, isEnglish)}</strong><small>{Number(item.current_chars || 0).toLocaleString()} {isEnglish ? "characters" : "字"} · {new Date(item.updated_at * 1000).toLocaleString()}</small></span>
+              <span className="rt-project-copy"><strong>{localizedWorkspaceName(item.name, isEnglish)}</strong><small>{Number(item.current_units ?? item.current_chars ?? 0).toLocaleString()} {item.current_units != null ? (isEnglish ? "text units" : "正文单位") : (isEnglish ? "non-whitespace characters" : "非空白字符")} · {new Date(item.updated_at * 1000).toLocaleString()}</small></span>
               <span className="rt-status-label is-green">{item.last_job_id ? (isEnglish ? "Has task" : "有改写任务") : (isEnglish ? "Saved" : "已保存")}</span>
               <ArrowRight weight="bold" />
             </button>)
@@ -413,7 +414,7 @@ export function NewDocumentPage({ navigate = () => {} }) {
         </div>
         <div className="rt-import-credit">
           <span>{isEnglish ? "Available quota" : "可用额度"}</span>
-          <strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "chars" : "字"}</strong>
+          <strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "credits" : "点额度"}</strong>
           <small>{config?.llm_configured ? (isEnglish ? "Rewrite service ready" : "改写服务已就绪") : (isEnglish ? "Free diagnosis is still available" : "仍可使用免费诊断")}</small>
         </div>
       </section>
@@ -429,7 +430,7 @@ export function NewDocumentPage({ navigate = () => {} }) {
           </header>
           {method === "paste" ? (
             <div className="rt-paste-pane">
-              <div className="rt-editor-ruler"><span>DOCUMENT / 01</span><span>{billableChars(text).toLocaleString()} {isEnglish ? "chars" : "字符"}</span></div>
+              <div className="rt-editor-ruler"><span>DOCUMENT / 01</span><span>{billableChars(text).toLocaleString()} {billableUnitLabel(text, isEnglish)}</span></div>
               <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={isEnglish ? "Paste a paper, chapter, or abstract…" : "粘贴论文、章节或研究摘要……"} />
               {!text && <div className="rt-live-samples">
                 <button onClick={() => setText(SAMPLE_ZH)}>中文示例</button>
@@ -819,7 +820,9 @@ export function WorkbenchPage({ navigate = () => {} }) {
         break;
       }
     } catch (nextError) {
-      setError(nextError.message);
+      setError(isEnglish && nextError.data?.code === "text_density_limit"
+        ? (nextError.data.error_en || nextError.message)
+        : nextError.message);
       await refreshBilling().catch(() => null);
     } finally { setBusy(""); setJobProgress(null); }
   };
@@ -899,7 +902,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
             {isEnglish ? "Back to documents" : "返回文档"}
           </button>
           <span className="rt-doc-name">{localizedWorkspaceName(getWorkspace().name, isEnglish)}</span>
-          <span className="rt-doc-meta">{chars.toLocaleString()} {isEnglish ? "billable chars" : "计费字符"}</span>
+          <span className="rt-doc-meta">{chars.toLocaleString()} {billableUnitLabel(current, isEnglish)}</span>
         </div>
         <div className="rt-document-actions">
           <span className={`rt-save-status is-${saveStatus.state}`} role="status">{saveStatus.state === "saved" ? (isEnglish ? "Saved" : "已保存") : saveStatus.state === "saving" ? (isEnglish ? "Saving…" : "正在保存…") : (isEnglish ? "Save failed" : "保存失败")}</span>
@@ -931,14 +934,14 @@ export function WorkbenchPage({ navigate = () => {} }) {
 
       <div className="rt-live-editor-grid">
         <section className="rt-paper-panel rt-live-editor-panel">
-          <header><div><strong>{isEnglish ? "Original manuscript" : "原始稿件"}</strong><span>{isEnglish ? "Read-only source" : "只读原稿"}</span></div><small>{billableChars(source).toLocaleString()} {isEnglish ? "chars" : "字符"}</small></header>
+          <header><div><strong>{isEnglish ? "Original manuscript" : "原始稿件"}</strong><span>{isEnglish ? "Read-only source" : "只读原稿"}</span></div><small>{billableChars(source).toLocaleString()} {billableUnitLabel(source, isEnglish)}</small></header>
           <textarea value={source} readOnly aria-label={isEnglish ? "Original manuscript" : "原始稿件"} />
         </section>
         <section className="rt-paper-panel is-current rt-live-editor-panel">
-          <header><div><strong>{isEnglish ? "Current manuscript" : "当前稿件"}</strong><span>{busy === "rewrite" ? (isEnglish ? "Rewrite in progress; editing resumes when it finishes" : "改写进行中，完成后可继续编辑") : (isEnglish ? "Editable—changes require a new analysis" : "可编辑；修改后需重新分析")}</span></div><small className={overJobLimit ? "is-over-limit" : ""}>{chars.toLocaleString()}{jobLimit ? ` / ${jobLimit.toLocaleString()}` : ""} {isEnglish ? "chars" : "字符"}</small></header>
+          <header><div><strong>{isEnglish ? "Current manuscript" : "当前稿件"}</strong><span>{busy === "rewrite" ? (isEnglish ? "Rewrite in progress; editing resumes when it finishes" : "改写进行中，完成后可继续编辑") : (isEnglish ? "Editable—changes require a new analysis" : "可编辑；修改后需重新分析")}</span></div><small className={overJobLimit ? "is-over-limit" : ""}>{chars.toLocaleString()}{jobLimit ? ` / ${jobLimit.toLocaleString()}` : ""} {billableUnitLabel(current, isEnglish)}</small></header>
           <div id="rt-current-edit-hint" className={`rt-live-edit-hint ${overJobLimit ? "is-over-limit" : ""}`} role={overJobLimit ? "status" : undefined}>
-            <span>{isEnglish ? "English is counted by non-whitespace characters: each letter, digit, and punctuation mark counts, not each word." : "英文按非空白字符计：字母、数字、标点逐个计数，不按单词计。"}</span>
-            {overJobLimit > 0 && <strong>{isEnglish ? `${overJobLimit.toLocaleString()} characters over the per-task rewrite limit. Edit or trim the current draft below; the original stays available.` : `超出单次改写上限 ${overJobLimit.toLocaleString()} 字。可在下方直接删减当前稿，原稿仍保留。`}</strong>}
+            <span>{isEnglish ? "Each English word, number group, or Chinese character counts as one text unit. Spaces and punctuation do not count; other visible characters count individually. Deep rewrite reserves credits at 1.5× the text-unit count. A separate 120,000-character text-size cap applies." : "每个英文词、数字组或汉字各计 1 个正文单位；空白和标点不计，其他可见字符逐个计数。深度改写按正文单位数的 1.5 倍预占额度；正文另受 12 万字符上限约束。"}</span>
+            {overJobLimit > 0 && <strong>{isEnglish ? `${overJobLimit.toLocaleString()} text units over the per-task rewrite limit. Edit or trim the current draft below; the original stays available.` : `超出单次改写上限 ${overJobLimit.toLocaleString()} 正文单位。可在下方直接删减当前稿，原稿仍保留。`}</strong>}
           </div>
           <textarea ref={currentEditorRef} value={current} readOnly={busy === "rewrite"} onChange={(event) => editCurrent(event.target.value)} aria-label={isEnglish ? "Current manuscript editor" : "当前稿件编辑器"} aria-describedby="rt-current-edit-hint" />
         </section>
@@ -991,8 +994,8 @@ export function WorkbenchPage({ navigate = () => {} }) {
       </section>}
 
       <section className="rt-action-dock rt-live-action-dock">
-        {!withinJobLimit && <div className="rt-live-limit-note"><WarningCircle weight="fill" /><span>{isEnglish ? `The current draft is ${overJobLimit.toLocaleString()} characters over your ${jobLimit.toLocaleString()}-character rewrite limit. Trim it in the editor to continue.` : `当前稿超出 ${jobLimit.toLocaleString()} 字单次改写上限 ${overJobLimit.toLocaleString()} 字，请在当前稿中删减后再改写。`}</span><button type="button" onClick={() => currentEditorRef.current?.focus()}>{isEnglish ? "Edit current draft" : "编辑当前稿"}</button></div>}
-        {nextAction === "rewrite" && !hasEnoughBalance && <div className="rt-live-limit-note"><WarningCircle weight="fill" />{isEnglish ? `This strategy needs about ${estimated.toLocaleString()} characters, but the current balance is ${Number(billing?.balance || 0).toLocaleString()}.` : `当前策略预计需要 ${estimated.toLocaleString()} 字符额度，可用余额为 ${Number(billing?.balance || 0).toLocaleString()} 字符。`}</div>}
+        {!withinJobLimit && <div className="rt-live-limit-note"><WarningCircle weight="fill" /><span>{isEnglish ? `The current draft is ${overJobLimit.toLocaleString()} text units over your ${jobLimit.toLocaleString()}-unit rewrite limit. Trim it in the editor to continue.` : `当前稿超出 ${jobLimit.toLocaleString()} 正文单位的单次改写上限 ${overJobLimit.toLocaleString()} 单位，请在当前稿中删减后再改写。`}</span><button type="button" onClick={() => currentEditorRef.current?.focus()}>{isEnglish ? "Edit current draft" : "编辑当前稿"}</button></div>}
+        {nextAction === "rewrite" && !hasEnoughBalance && <div className="rt-live-limit-note"><WarningCircle weight="fill" />{isEnglish ? `This strategy needs about ${estimated.toLocaleString()} credits, but the current balance is ${Number(billing?.balance || 0).toLocaleString()} credits.` : `当前策略预计预占 ${estimated.toLocaleString()} 点额度，当前可用 ${Number(billing?.balance || 0).toLocaleString()} 点额度。`}</div>}
         <button className="rt-button" onClick={analyze} disabled={Boolean(busy)}>{busy === "analyze" ? <CircleNotch className="rt-spin" /> : <Sparkle weight="bold" />}{isEnglish ? "Analyze current text" : "分析当前正文"}</button>
         <button className="rt-safe-clean" onClick={safeFix} disabled={!report || !safeCleanupCount || Boolean(busy)}><ShieldCheck weight="bold" /><span><strong>{isEnglish ? "Safe cleanup" : "安全清理"}</strong><small>{isEnglish ? "Deterministic fixes only" : "仅确定性修改"}</small></span></button>
         <div className="rt-mode-switch" role="group" aria-label={isEnglish ? "Rewrite mode" : "改写模式"}>
@@ -1000,7 +1003,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
         </div>
         <button className="rt-rewrite-action" disabled={!canRewrite || Boolean(busy)} onClick={() => { setPendingFinding(null); setConfirmOpen(true); }}>
           {busy === "rewrite" ? <CircleNotch className="rt-spin" weight="bold" /> : <FileText weight="bold" />}
-          <span><strong>{busy === "rewrite" ? (isEnglish ? "Modifying…" : "正在修改…") : (isEnglish ? "Modify current draft" : "修改当前稿")}</strong><small>{jobProgress?.total ? `${jobProgress.done} / ${jobProgress.total}` : nextAction === "analyze" ? (isEnglish ? "Analyze the current draft first" : "请先分析当前稿") : (isEnglish ? `${estimated.toLocaleString()} chars estimated` : `预计 ${estimated.toLocaleString()} 字符额度`)}</small></span><ArrowRight weight="bold" />
+          <span><strong>{busy === "rewrite" ? (isEnglish ? "Modifying…" : "正在修改…") : (isEnglish ? "Modify current draft" : "修改当前稿")}</strong><small>{jobProgress?.total ? `${jobProgress.done} / ${jobProgress.total}` : nextAction === "analyze" ? (isEnglish ? "Analyze the current draft first" : "请先分析当前稿") : (isEnglish ? `${estimated.toLocaleString()} credits estimated` : `预计预占 ${estimated.toLocaleString()} 点额度`)}</small></span><ArrowRight weight="bold" />
         </button>
       </section>
 
@@ -1010,8 +1013,8 @@ export function WorkbenchPage({ navigate = () => {} }) {
         <p id="rt-live-confirm-description">{pendingFinding
           ? (isEnglish ? "The service will revise the selected finding with fact and citation safeguards. Deterministic edits may be free; model edits reserve quota." : "服务会针对所选线索尝试修改，并核对事实与引文。确定性修改可能免费，模型修改会预占额度。")
           : (isEnglish ? "The service will revise the current draft regardless of the diagnosis outcome. Changes that fail fact and citation safeguards will not be accepted; unused reserved quota is returned." : "服务会根据当前稿进行修改，不受诊断结果类型限制。未通过事实与引文守卫的候选不会采纳；未使用的预占额度会退回。")}</p>
-        <div className="rt-confirm-metrics"><div><span>{isEnglish ? "Billable text" : "计费文本"}</span><strong>{chars.toLocaleString()}</strong></div><div><span>{isEnglish ? "Rewrite mode" : "改写模式"}</span><strong>{isEnglish ? selected.en : `${selected.zh}改写`}</strong></div><div className="is-highlight"><span>{isEnglish ? "Maximum reservation" : "最多预占额度"}</span><strong>{estimated.toLocaleString()}</strong></div></div>
-        <div className="rt-confirm-balance"><span>{isEnglish ? "Available now" : "当前可用"}</span><strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "chars" : "字"}</strong></div>
+        <div className="rt-confirm-metrics"><div><span>{isEnglish ? "Billable text" : "计费文本"}</span><strong>{chars.toLocaleString()} {billableUnitLabel(current, isEnglish)}</strong></div><div><span>{isEnglish ? "Rewrite mode" : "改写模式"}</span><strong>{isEnglish ? selected.en : `${selected.zh}改写`}</strong></div><div className="is-highlight"><span>{isEnglish ? "Maximum reservation" : "最多预占额度"}</span><strong>{estimated.toLocaleString()} {isEnglish ? "credits" : "点额度"}</strong></div></div>
+        <div className="rt-confirm-balance"><span>{isEnglish ? "Available now" : "当前可用"}</span><strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "credits" : "点额度"}</strong></div>
         <div className="rt-confirm-actions"><button ref={cancelConfirmRef} className="rt-button" onClick={() => setConfirmOpen(false)}>{isEnglish ? "Cancel" : "取消"}</button><button className="rt-button rt-button-primary" onClick={() => runRewrite(pendingFinding)} disabled={!canRewrite || Boolean(busy)}>{isEnglish ? "Confirm and start" : "确认并开始"}<ArrowRight weight="bold" /></button></div>
       </section></div>, document.body)}
     </div>
@@ -1077,8 +1080,8 @@ export function VersionsPage({ navigate = () => {} }) {
     <section className="rt-board rt-live-version-board">
       {error && <div className="rt-live-banner is-error" role="alert">{error}</div>}
       {current.source ? <>
-        <div className="rt-live-version-row"><span>V1</span><div><strong>{isEnglish ? "Original import" : "原始导入"}</strong><small>{billableChars(current.source).toLocaleString()} {isEnglish ? "chars" : "字符"}</small></div><button className="rt-button" onClick={restoreOriginal}>{isEnglish ? "Restore original" : "恢复原稿"}</button></div>
-        {versions.map((version) => <div className="rt-live-version-row" key={version.revision}><span>V{version.revision}</span><div><strong>{isEnglish ? "Saved draft" : "已保存稿"}</strong><small>{new Date(version.created_at * 1000).toLocaleString()} · {Number(version.chars || 0).toLocaleString()} {isEnglish ? "characters" : "字符"}</small></div><button className="rt-button" onClick={() => openVersion(version.revision)}>{isEnglish ? "Review" : "查看"}</button></div>)}
+        <div className="rt-live-version-row"><span>V1</span><div><strong>{isEnglish ? "Original import" : "原始导入"}</strong><small>{billableChars(current.source).toLocaleString()} {billableUnitLabel(current.source, isEnglish)}</small></div><button className="rt-button" onClick={restoreOriginal}>{isEnglish ? "Restore original" : "恢复原稿"}</button></div>
+        {versions.map((version) => <div className="rt-live-version-row" key={version.revision}><span>V{version.revision}</span><div><strong>{isEnglish ? "Saved draft" : "已保存稿"}</strong><small>{new Date(version.created_at * 1000).toLocaleString()} · {Number(version.units ?? version.chars ?? 0).toLocaleString()} {version.units != null ? (isEnglish ? "text units" : "正文单位") : (isEnglish ? "non-whitespace characters" : "非空白字符")}</small></div><button className="rt-button" onClick={() => openVersion(version.revision)}>{isEnglish ? "Review" : "查看"}</button></div>)}
         {selectedVersion && <div className="rt-job-result-detail"><strong>V{selectedVersion.revision} · {isEnglish ? "Saved text" : "已保存正文"}</strong><p className="rt-version-preview">{selectedVersion.text.slice(0, 1200)}{selectedVersion.text.length > 1200 ? "…" : ""}</p><button className="rt-button rt-button-primary" onClick={restoreVersion}>{isEnglish ? "Restore this version" : "恢复此版本"}</button></div>}
       </> : <div className="rt-live-empty"><FolderOpen size={34} /><strong>{isEnglish ? "No saved versions" : "暂无已保存版本"}</strong></div>}
     </section>
