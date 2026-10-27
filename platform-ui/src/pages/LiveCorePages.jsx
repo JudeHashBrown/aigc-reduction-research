@@ -152,7 +152,7 @@ const FINDING_REASONS_EN = {
   C12: "The phrase is not evidence of authorship, but it may be vague, repetitive, or more elaborate than the underlying claim.",
   C17: "The sentence invokes experts or research without a source the reader can verify.",
   F30: "A generic background opener may add no independent time or causal information.",
-  "EN-S01": "A three-part list can be legitimate academic prose. Any revision should preserve its research meaning and be checked afterward.",
+  "EN-S01": "A three-part list can be legitimate academic prose. A revision should preserve each listed item and its research meaning.",
   "EN-S11": "An agentless passive opener can obscure who made the finding.",
   "EN-V-T1": "This phrase is frequently overused in formulaic academic prose; prefer a more direct term when the meaning stays the same.",
   "EN-V-T2": "This phrase can sound generic or inflated. Replace it only when a more precise expression preserves the claim.",
@@ -1001,8 +1001,8 @@ export function WorkbenchPage({ navigate = () => {} }) {
         <span className="rt-confirm-kicker">RUN CHECK / {isEnglish ? "USAGE PREVIEW" : "扣减预览"}</span>
         <h2 id="rt-live-confirm-title">{pendingFinding ? (isEnglish ? "Modify this finding?" : "确认修改这条线索？") : (isEnglish ? `Run a ${selected.en.toLowerCase()} modification?` : `确认按${selected.zh}策略修改当前稿？`)}</h2>
         <p id="rt-live-confirm-description">{pendingFinding
-          ? (isEnglish ? "The service will revise the selected finding with fact and citation safeguards. Deterministic edits may be free; model edits reserve quota. Afterward, check the before/after comparison yourself." : "服务会针对所选线索尝试修改，并核对事实与引文。确定性修改可能免费，模型修改会预占额度；完成后请核对前后对照。")
-          : (isEnglish ? "The service will revise the current draft regardless of the diagnosis outcome. Changes that fail fact and citation safeguards will not be accepted. Review the before/after comparison after completion; unused reserved quota is returned." : "服务会根据当前稿进行修改，不受诊断结果类型限制。未通过事实与引文守卫的候选不会采纳；完成后请审核前后对照，未使用的预占额度会退回。")}</p>
+          ? (isEnglish ? "The service will revise the selected finding with fact and citation safeguards. Deterministic edits may be free; model edits reserve quota." : "服务会针对所选线索尝试修改，并核对事实与引文。确定性修改可能免费，模型修改会预占额度。")
+          : (isEnglish ? "The service will revise the current draft regardless of the diagnosis outcome. Changes that fail fact and citation safeguards will not be accepted; unused reserved quota is returned." : "服务会根据当前稿进行修改，不受诊断结果类型限制。未通过事实与引文守卫的候选不会采纳；未使用的预占额度会退回。")}</p>
         <div className="rt-confirm-metrics"><div><span>{isEnglish ? "Billable text" : "计费文本"}</span><strong>{chars.toLocaleString()}</strong></div><div><span>{isEnglish ? "Rewrite mode" : "改写模式"}</span><strong>{isEnglish ? selected.en : `${selected.zh}改写`}</strong></div><div className="is-highlight"><span>{isEnglish ? "Maximum reservation" : "最多预占额度"}</span><strong>{estimated.toLocaleString()}</strong></div></div>
         <div className="rt-confirm-balance"><span>{isEnglish ? "Available now" : "当前可用"}</span><strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "chars" : "字"}</strong></div>
         <div className="rt-confirm-actions"><button ref={cancelConfirmRef} className="rt-button" onClick={() => setConfirmOpen(false)}>{isEnglish ? "Cancel" : "取消"}</button><button className="rt-button rt-button-primary" onClick={() => runRewrite(pendingFinding)} disabled={!canRewrite || Boolean(busy)}>{isEnglish ? "Confirm and start" : "确认并开始"}<ArrowRight weight="bold" /></button></div>
