@@ -301,6 +301,7 @@
 }
 
 .rtp-section { padding: 110px 0; }
+.rtp-section[id] { scroll-margin-top: 104px; }
 .rtp-section-heading { margin-bottom: 38px; }
 .rtp-section-heading h2 {
   margin: 14px 0 0;
@@ -412,15 +413,15 @@
 .rtp-step p { margin: 0; color: #5c5e64; font-family: "Noto Serif SC", serif; font-size: 14px; line-height: 1.75; }
 
 .rtp-values { padding-top: 30px; display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 16px; }
-.rtp-value-card { position: relative; min-height: 390px; overflow: hidden; padding: 30px; border: 2px solid var(--rtp-ink); box-shadow: 7px 7px 0 var(--rtp-ink); }
+.rtp-value-card { position: relative; min-height: 390px; padding: 30px; border: 2px solid var(--rtp-ink); box-shadow: 7px 7px 0 var(--rtp-ink); display: flex; flex-direction: column; }
 .rtp-value-card > span { font-size: 12px; font-weight: 950; letter-spacing: .1em; }
 .rtp-value-card h3 { margin: 22px 0 17px; font-size: clamp(28px, 3vw, 42px); line-height: 1.04; letter-spacing: -.05em; }
 .rtp-value-card > p { max-width: 400px; margin: 0; font-family: "Noto Serif SC", serif; font-size: 14px; line-height: 1.75; }
 .rtp-value-blue { color: white; background: var(--rtp-blue); }
 .rtp-value-yellow { background: var(--rtp-brand); }
 .rtp-value-paper { background: var(--rtp-white); }
-.rtp-value-card > svg { position: absolute; right: 24px; bottom: 24px; }
-.rtp-list-art { position: absolute; right: 28px; bottom: 28px; width: min(72%, 330px); border: 2px solid var(--rtp-ink); background: var(--rtp-white); box-shadow: 6px 6px 0 var(--rtp-ink); color: var(--rtp-ink); transform: rotate(-2deg); }
+.rtp-value-card > svg { flex: none; align-self: flex-end; margin-top: auto; padding-top: 24px; }
+.rtp-list-art { width: min(100%, 330px); margin: 26px 6px 6px auto; border: 2px solid var(--rtp-ink); background: var(--rtp-white); box-shadow: 6px 6px 0 var(--rtp-ink); color: var(--rtp-ink); transform: rotate(-2deg); }
 .rtp-list-art span { min-height: 45px; padding: 8px 12px; border-bottom: 1px solid #a9aaad; display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 750; }
 .rtp-list-art span:last-child { border-bottom: 0; }
 .rtp-list-art svg { color: var(--rtp-green); }
@@ -466,13 +467,18 @@
 
 .rtp-plan-grid { max-width: 1160px; margin: 0 auto 100px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; align-items: stretch; }
 .rtp-plan-grid.is-two { max-width: 830px; grid-template-columns: repeat(2, 1fr); }
+.rtp-plan-status { grid-column: 1 / -1; min-height: 280px; padding: 42px 24px; border: 2px solid var(--rtp-ink); background: var(--rtp-white); display: grid; align-content: center; justify-items: center; text-align: center; overflow-wrap: anywhere; }
+.rtp-plan-status h2 { margin: 16px 0 8px; font-size: clamp(23px, 3vw, 32px); }
+.rtp-plan-status p { max-width: 620px; margin: 0; color: #575960; line-height: 1.7; }
+.rtp-plan-status .rtp-btn { margin-top: 22px; }
+.rtp-plan-status-error { background: #fff2ea; }
 .rtp-plan-card { position: relative; min-height: 560px; padding: 31px; border: 2px solid var(--rtp-ink); background: var(--rtp-white); box-shadow: 8px 8px 0 var(--rtp-ink); display: flex; flex-direction: column; }
 .rtp-plan-card.rtp-plan-blue { color: white; background: var(--rtp-blue); }
 .rtp-plan-card.rtp-plan-yellow { background: var(--rtp-brand); }
 .rtp-popular { position: absolute; top: 16px; right: -8px; padding: 7px 15px; border: 2px solid var(--rtp-ink); background: var(--rtp-brand); color: var(--rtp-ink); box-shadow: 4px 4px 0 var(--rtp-ink); font-size: 12px; font-weight: 950; transform: rotate(2deg); }
 .rtp-plan-type { opacity: .72; font-size: 11px; font-weight: 900; letter-spacing: .11em; }
 .rtp-plan-card h2 { margin: 20px 0 25px; font-size: 31px; letter-spacing: -.04em; }
-.rtp-plan-price { display: flex; align-items: baseline; font-size: 58px; font-weight: 950; letter-spacing: -.06em; }
+.rtp-plan-price { display: flex; flex-wrap: wrap; align-items: baseline; font-size: clamp(42px, 4.2vw, 58px); font-weight: 950; letter-spacing: -.06em; }
 .rtp-plan-price small { margin-right: 5px; font-size: 23px; }
 .rtp-plan-price span { margin-left: 8px; font-size: 13px; font-weight: 750; letter-spacing: 0; opacity: .7; }
 .rtp-plan-amount { margin: 14px 0 20px; padding: 15px; border: 1px solid currentColor; display: grid; }
@@ -546,6 +552,10 @@
 .rtp-verify-success svg { color: #218a47; }
 .rtp-verify-success strong { font-size: 22px; }
 .rtp-verify-success span { margin-bottom: 8px; color: var(--rtp-muted); line-height: 1.6; }
+.rtp-verify-success span,
+.rtp-verify-error > span,
+.rtp-auth-error span,
+.rtp-access-status > span { min-width: 0; overflow-wrap: anywhere; }
 .rtp-verify-error { display: grid; justify-items: start; gap: 10px; padding: 22px; border: 2px solid var(--rtp-ink); background: #fff0e8; box-shadow: 6px 6px 0 var(--rtp-ink); }
 .rtp-verify-error > svg { color: #c7431b; }
 .rtp-verify-error strong { font-size: 22px; }
@@ -596,12 +606,12 @@
 .rtp-legal-note svg { width: 24px; height: 24px; }
 .rtp-legal-document { border: 2px solid var(--rtp-ink); background: var(--rtp-white); box-shadow: 9px 9px 0 var(--rtp-ink); }
 .rtp-legal-document > header { min-height: 58px; padding: 15px 23px; border-bottom: 2px solid var(--rtp-ink); background: #edece7; display: flex; justify-content: space-between; gap: 20px; font-size: 12px; font-weight: 900; }
-.rtp-legal-intro { margin: 0; padding: 32px 32px 36px; border-bottom: 1px solid #bebebb; font-family: "Noto Serif SC", serif; line-height: 1.85; }
+.rtp-legal-intro { margin: 0; padding: 32px 32px 36px; border-bottom: 1px solid #bebebb; font-family: "Noto Serif SC", serif; line-height: 1.85; overflow-wrap: anywhere; }
 .rtp-legal-document > section { padding: 35px 32px; border-bottom: 1px solid #cececa; display: grid; grid-template-columns: 46px 1fr; gap: 20px; }
 .rtp-legal-document > section:last-child { border-bottom: 0; }
 .rtp-legal-document > section > span { color: var(--rtp-blue); font-size: 13px; font-weight: 950; }
 .rtp-legal-document h2 { margin: -5px 0 13px; font-size: 22px; }
-.rtp-legal-document section p { margin: 0; color: #4f5157; font-family: "Noto Serif SC", serif; font-size: 14px; line-height: 1.9; }
+.rtp-legal-document section p { margin: 0; color: #4f5157; font-family: "Noto Serif SC", serif; font-size: 14px; line-height: 1.9; overflow-wrap: anywhere; }
 
 /* Help */
 .rtp-help-hero { padding: 85px 0 60px; text-align: center; }
@@ -624,6 +634,10 @@
 .rtp-faq-head { min-height: 96px; padding: 0 4px 23px; border-bottom: 2px solid var(--rtp-ink); display: flex; align-items: end; justify-content: space-between; }
 .rtp-faq-head span { color: var(--rtp-blue); font-size: 11px; font-weight: 900; letter-spacing: .09em; }
 .rtp-faq-head h2 { margin: 7px 0 0; font-size: 33px; letter-spacing: -.04em; }
+.rtp-faq-head > div { min-width: 0; }
+.rtp-faq-head h2,
+.rtp-faq-list > article b,
+.rtp-faq-list > article > p { overflow-wrap: anywhere; }
 .rtp-faq-head > b { padding: 6px 9px; border: 1px solid var(--rtp-ink); background: var(--rtp-brand); font-size: 11px; }
 .rtp-faq-list > article { border-bottom: 1px solid #bfc0be; }
 .rtp-faq-list > article.is-open { margin-inline: -12px; padding-inline: 12px; border: 2px solid var(--rtp-ink); background: var(--rtp-white); box-shadow: 5px 5px 0 var(--rtp-ink); }
@@ -662,7 +676,7 @@
   .rtp-auth-aside { padding-inline: 45px; }
 }
 
-@media (max-width: 850px) {
+@media (max-width: 1020px) {
   .rtp-header-inner { width: min(100% - 30px, 1420px); height: 74px; gap: 12px; }
   .rtp-menu-button { display: flex; }
   .rtp-nav { position: absolute; top: 72px; right: 15px; left: 15px; display: none; padding: 12px; border: 2px solid var(--rtp-ink); background: var(--rtp-white); box-shadow: 7px 7px 0 var(--rtp-ink); flex-direction: column; align-items: stretch; }
@@ -671,6 +685,9 @@
   .rtp-nav-actions { margin: 8px 0 0; padding: 12px 0 0; border-top: 1px solid #c5c5c3; border-left: 0; }
   .rtp-nav-actions .rtp-btn { flex: 1; }
   .rtp-brand { font-size: 22px; }
+}
+
+@media (max-width: 850px) {
   .rtp-hero { width: min(100% - 30px, 1420px); min-height: 0; padding: 70px 0; grid-template-columns: 1fr; }
   .rtp-hero-stamp { display: none; }
   .rtp-hero h1 { font-size: clamp(50px, 12vw, 72px); }
@@ -780,6 +797,7 @@
   .rtp-help-search { min-height: 56px; }
   .rtp-help-search input { height: 52px; font-size: 13px; }
   .rtp-faq-head h2 { font-size: 27px; }
+  .rtp-faq-list > article.is-open { margin-inline: 0; }
   .rtp-help-contact { padding: 28px; align-items: stretch; flex-direction: column; }
   .rtp-help-contact h2 { font-size: 29px; }
 }

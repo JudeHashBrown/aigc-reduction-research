@@ -70,6 +70,7 @@ const OPS_EN = {
   "正在读取…": "Loading…", "刷新": "Refresh",
   "已支付": "Paid",
   "确认中": "Confirming",
+  "已过期": "Expired",
   "已退款": "Refunded",
   "部分退款": "Partially refunded",
   "失败": "Failed",
@@ -494,6 +495,7 @@ Object.assign(OPS_EN, {
   "保守": "Conservative",
   "总览": "Overview",
   "用户": "Users",
+  "访问量": "Traffic",
   "任务": "Jobs",
   "方案": "Plans",
   "订单": "Orders",
@@ -1514,6 +1516,7 @@ export function UsagePage({ navigate }) {
     try {
       const payload = await getApi("/api/billing/ledger?limit=100");
       setEntries(Array.isArray(payload?.entries) ? payload.entries : []);
+      setExported(false);
       try {
         await refreshBilling();
       } catch {
@@ -1556,8 +1559,10 @@ export function UsagePage({ navigate }) {
     const link = document.createElement("a");
     link.href = url;
     link.download = `rightthesis-ledger-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
     link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     setExported(true);
   };
 
@@ -1603,20 +1608,31 @@ export function OrdersPage({ navigate }) {
   const { isEnglish, number, money } = useOpsLocale();
   const [orders, setOrders] = useState([]);
   const [error, setError] = useState("");
-  useEffect(() => {
-    getApi("/api/billing/orders")
-      .then((result) => setOrders(result.orders || []))
-      .catch((nextError) => setError(nextError.message || "订单读取失败"));
-  }, []);
+  const [loadingOrders, setLoadingOrders] = useState(true);
+  const loadOrders = useCallback(async () => {
+    setLoadingOrders(true);
+    setError("");
+    try {
+      const result = await getApi("/api/billing/orders");
+      setOrders(Array.isArray(result.orders) ? result.orders : []);
+    } catch (nextError) {
+      setError(nextError.message || (isEnglish ? "Could not load orders." : "订单读取失败"));
+    } finally {
+      setLoadingOrders(false);
+    }
+  }, [isEnglish]);
+  useEffect(() => { void loadOrders(); }, [loadOrders]);
   return (
     <Page>
       <PageHeader eyebrow="MONEY / 订单" title="订单与付款" description="仅展示当前账户的真实账本订单；测试交易会明确标记。">
+        <Button icon={ArrowsClockwise} onClick={loadOrders} disabled={loadingOrders}>{loadingOrders ? (isEnglish ? "Loading…" : "正在读取…") : (isEnglish ? "Refresh" : "刷新")}</Button>
         <Button onClick={() => go(navigate, "/app/billing")}>返回额度中心</Button>
       </PageHeader>
       <Section title="最近订单" kicker="ACCOUNT ORDERS" className="ops-shadow-card">
-        {error && <div className="ops-inline-notice"><WarningCircle size={18} weight="fill" /><span>{error}</span></div>}
-        {!error && orders.length === 0 && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{isEnglish ? "This account has no orders yet." : "当前账户还没有订单。"}</span></div>}
-        {orders.length > 0 && <Table rows={orders} columns={[
+        {error && <div className="ops-inline-notice" role="alert"><WarningCircle size={18} weight="fill" /><span>{error}</span><Button onClick={loadOrders}>{isEnglish ? "Try again" : "重试"}</Button></div>}
+        {loadingOrders && <div className="ops-inline-notice" role="status"><Clock size={18} weight="fill" /><span>{isEnglish ? "Loading orders…" : "正在读取订单…"}</span></div>}
+        {!loadingOrders && !error && orders.length === 0 && <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{isEnglish ? "This account has no orders yet." : "当前账户还没有订单。"}</span></div>}
+        {!loadingOrders && !error && orders.length > 0 && <Table rows={orders} columns={[
           { key: "order_id", label: "订单号", render: (row) => <code>{row.order_id}</code> },
           { key: "product_id", label: "套餐" },
           { key: "amount_fen", label: "金额", render: (row) => money(row.amount_fen / 100) },
@@ -1678,7 +1694,7 @@ export function CheckoutPage({ navigate }) {
         const result = await getApi(`/api/billing/orders/${encodeURIComponent(returnedOrderId)}`);
         if (!active) return;
         setReturnedOrder(result.order);
-        if (["paid", "refunded", "expired", "failed"].includes(result.order?.status)) {
+        if (["paid", "partially_refunded", "refunded", "expired", "failed"].includes(result.order?.status)) {
           if (result.order.status === "paid") await refreshBilling();
           return;
         }
@@ -1765,7 +1781,7 @@ export function CheckoutPage({ navigate }) {
           <Section title="独立字数包" kicker="TOP-UP PACKS">
             <div className="ops-plan-grid ops-plan-grid--3">{paidCatalog.filter((plan) => plan.kind === "pack").map((plan) => <LivePlanCard key={plan.id} plan={plan} selected={selected?.id === plan.id} onSelect={() => setSelectedId(plan.id)} />)}</div>
           </Section>
-          <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{isEnglish ? "Passes are one-time purchases, valid for 30 days, and do not renew automatically. Credit packs are valid for 90 days. Prices and credits come from the server catalog." : "月卡一次购买、有效 30 天、不自动续费；字数包有效 90 天。所有金额和额度均来自服务端目录。"}</span></div>
+          <div className="ops-inline-notice"><Info size={18} weight="fill" /><span>{isEnglish ? "Passes are one-time purchases, valid for 30 days, and do not renew automatically. Credit pack validity is shown on each plan. Prices and credits come from the server catalog." : "月卡一次购买、有效 30 天、不自动续费；字数包有效期见各套餐说明。所有金额和额度均来自服务端目录。"}</span></div>
         </div>
         <aside className="ops-checkout-summary ops-shadow-card">
           <p className="ops-eyebrow">ORDER SUMMARY</p>
@@ -2286,16 +2302,21 @@ function AccountDataControls({ email, navigate }) {
   const [confirmedEmail, setConfirmedEmail] = useState("");
   const [busy, setBusy] = useState("");
   const [feedback, setFeedback] = useState("");
+  const [feedbackIsError, setFeedbackIsError] = useState(false);
 
   useEffect(() => {
     getApi("/api/account/privacy-request")
       .then((result) => setRequest(result.request || null))
-      .catch((error) => setFeedback(error.message || (isEnglish ? "Could not load privacy request." : "无法读取隐私申请。")));
+      .catch((error) => {
+        setFeedbackIsError(true);
+        setFeedback(error.message || (isEnglish ? "Could not load privacy request." : "无法读取隐私申请。"));
+      });
   }, [isEnglish]);
 
   const exportData = async () => {
     setBusy("export");
     setFeedback("");
+    setFeedbackIsError(false);
     try {
       const result = await getApi("/api/account/data-export");
       const objectUrl = URL.createObjectURL(new Blob(
@@ -2310,6 +2331,7 @@ function AccountDataControls({ email, navigate }) {
       setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
       setFeedback(isEnglish ? "Your account data export is downloading." : "账户数据导出文件已开始下载。")
     } catch (error) {
+      setFeedbackIsError(true);
       setFeedback(error.message || (isEnglish ? "Export failed." : "导出失败。"));
     } finally {
       setBusy("");
@@ -2319,14 +2341,18 @@ function AccountDataControls({ email, navigate }) {
   const requestDeletion = async () => {
     setBusy("delete");
     setFeedback("");
+    setFeedbackIsError(false);
     try {
       const result = await postApi("/api/account/delete-request", {
-        confirm_email: confirmedEmail.trim(),
+        // The server stores a canonical email and compares it exactly.
+        // Accept case-insensitive user input here, then submit that canonical value.
+        confirm_email: email.trim(),
       });
       setRequest(result.request);
       setConfirmedEmail("");
       setFeedback(isEnglish ? "Deletion request received. It is reviewed before any data is removed." : "删除申请已受理；在核对权益与备份后才会执行删除。")
     } catch (error) {
+      setFeedbackIsError(true);
       setFeedback(error.message || (isEnglish ? "Request failed." : "申请失败。"));
     } finally {
       setBusy("");
@@ -2336,11 +2362,13 @@ function AccountDataControls({ email, navigate }) {
   const cancelDeletion = async () => {
     setBusy("cancel");
     setFeedback("");
+    setFeedbackIsError(false);
     try {
       const result = await postApi("/api/account/delete-request/cancel", {});
       setRequest(result.request);
       setFeedback(isEnglish ? "Deletion request cancelled." : "已取消删除申请。")
     } catch (error) {
+      setFeedbackIsError(true);
       setFeedback(error.message || (isEnglish ? "Cancellation failed." : "取消失败。"));
     } finally {
       setBusy("");
@@ -2354,9 +2382,9 @@ function AccountDataControls({ email, navigate }) {
       </div>
       {request?.status === "pending" ? <div className="ops-note ops-note--yellow"><Info size={24} weight="fill" /><div><b>{isEnglish ? "Deletion request pending" : "删除申请待处理"}</b><p>{isEnglish ? `Request ${request.id}. You may cancel it while it is pending.` : `申请编号 ${request.id}。处理前可以取消。`}</p><Button onClick={cancelDeletion} disabled={Boolean(busy)}>{isEnglish ? "Cancel request" : "取消申请"}</Button></div></div> : <div className="ops-form-grid">
         <label><span>{isEnglish ? "Type your account email to request deletion" : "输入当前账户邮箱以申请删除"}</span><input type="email" autoComplete="email" value={confirmedEmail} onChange={(event) => setConfirmedEmail(event.target.value)} placeholder={email} /></label>
-        <Button icon={Trash} onClick={requestDeletion} disabled={Boolean(busy) || confirmedEmail.trim() !== email}>{busy === "delete" ? (isEnglish ? "Submitting…" : "正在提交…") : (isEnglish ? "Request account deletion" : "申请删除账户")}</Button>
+        <Button icon={Trash} onClick={requestDeletion} disabled={Boolean(busy) || !email || confirmedEmail.trim().toLowerCase() !== email.trim().toLowerCase()}>{busy === "delete" ? (isEnglish ? "Submitting…" : "正在提交…") : (isEnglish ? "Request account deletion" : "申请删除账户")}</Button>
       </div>}
-      {feedback && <div className="ops-note ops-note--green" role="status"><Info size={24} weight="fill" /><div><p>{feedback}</p></div></div>}
+      {feedback && <div className={`ops-note ops-note--${feedbackIsError ? "yellow" : "green"}`} role={feedbackIsError ? "alert" : "status"}><Info size={24} weight="fill" /><div><p>{feedback}</p></div></div>}
       <div className="ops-header-actions">
         <Button icon={Info} onClick={() => go(navigate, "/legal/privacy")}>{isEnglish ? "Read privacy notice" : "查看隐私说明"}</Button>
       </div>
@@ -2657,18 +2685,26 @@ export function AdminOverviewPage({ navigate }) {
   const [orders, setOrders] = useState([]);
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState("");
-  useEffect(() => {
-    Promise.all([getApi("/api/admin/orders"), getApi("/api/admin/privacy-requests")])
-      .then(([orderData, requestData]) => {
-        setOrders(orderData.orders || []);
-        setRequests(requestData.requests || []);
-      })
-      .catch((failure) => setError(failure.message || (isEnglish ? "Admin data unavailable." : "无法读取运营数据。")));
+  const [loadingOverview, setLoadingOverview] = useState(true);
+  const refresh = useCallback(async () => {
+    setLoadingOverview(true);
+    setError("");
+    try {
+      const [orderData, requestData] = await Promise.all([getApi("/api/admin/orders"), getApi("/api/admin/privacy-requests")]);
+      setOrders(orderData.orders || []);
+      setRequests(requestData.requests || []);
+    } catch (failure) {
+      setError(failure.message || (isEnglish ? "Admin data unavailable." : "无法读取运营数据。"));
+    } finally {
+      setLoadingOverview(false);
+    }
   }, [isEnglish]);
+  useEffect(() => { void refresh(); }, [refresh]);
   return <Page>
-    <PageHeader eyebrow="ADMIN / LIVE" title={isEnglish ? "Operations overview" : "运营总览"} description={isEnglish ? "Read-only order and privacy-request evidence from the server." : "展示服务端真实订单与隐私申请，只读核对。"} />
+    <PageHeader eyebrow="ADMIN / LIVE" title={isEnglish ? "Operations overview" : "运营总览"} description={isEnglish ? "Read-only order and privacy-request evidence from the server." : "展示服务端真实订单与隐私申请，只读核对。"}><Button icon={ArrowsClockwise} onClick={refresh} disabled={loadingOverview}>{loadingOverview ? (isEnglish ? "Loading…" : "正在读取…") : (isEnglish ? "Refresh" : "刷新")}</Button></PageHeader>
     {error && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><p>{error}</p></div></div>}
-    {!error && <div className="ops-two-col">
+    {loadingOverview && <div className="ops-inline-notice" role="status"><Clock size={18} weight="fill" /><span>{isEnglish ? "Loading overview…" : "正在读取总览…"}</span></div>}
+    {!loadingOverview && !error && <div className="ops-two-col">
       <Section title={isEnglish ? "Recent orders" : "最近订单"} kicker="BILLING"><h2>{orders.length}</h2><Button onClick={() => navigate("/admin/orders")}>{isEnglish ? "Review orders" : "核对订单"}</Button></Section>
       <Section title={isEnglish ? "Deletion requests pending" : "待处理删除申请"} kicker="PRIVACY"><h2>{requests.length}</h2><Button onClick={() => navigate("/admin/privacy")}>{isEnglish ? "Review requests" : "查看申请"}</Button></Section>
     </div>}
@@ -2684,6 +2720,8 @@ export function AdminUsersPage({ navigate }) {
   const [selectedId, setSelectedId] = useState("");
   const selectedIdRef = useRef("");
   const [detail, setDetail] = useState(null);
+  const [detailError, setDetailError] = useState("");
+  const [detailRetry, setDetailRetry] = useState(0);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
@@ -2696,23 +2734,28 @@ export function AdminUsersPage({ navigate }) {
   const [grantError, setGrantError] = useState("");
   const [grantFeedback, setGrantFeedback] = useState("");
   const pageSize = 20;
+  const listRequestSerial = useRef(0);
   const refresh = useCallback(async () => {
+    const serial = ++listRequestSerial.current;
     setLoading(true);
     setError("");
     try {
       const params = new URLSearchParams({ q: search, limit: String(pageSize), offset: String(page * pageSize) });
-      setResult(await getApi(`/api/admin/users?${params}`));
+      const nextResult = await getApi(`/api/admin/users?${params}`);
+      if (serial === listRequestSerial.current) setResult(nextResult);
     } catch (failure) {
-      setError(failure.message || (isEnglish ? "Could not load users." : "无法读取用户。"));
+      if (serial === listRequestSerial.current) setError(failure.message || (isEnglish ? "Could not load users." : "无法读取用户。"));
     } finally {
-      setLoading(false);
+      if (serial === listRequestSerial.current) setLoading(false);
     }
   }, [search, page, isEnglish]);
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => {
-    if (!selectedId) { setDetail(null); return; }
+    if (!selectedId) { setDetail(null); setDetailError(""); return; }
     let cancelled = false;
+    setDetail(null);
+    setDetailError("");
     setCreditAmount("");
     setValidDays("90");
     setGrantReason("");
@@ -2723,10 +2766,10 @@ export function AdminUsersPage({ navigate }) {
     setDetailLoading(true);
     getApi(`/api/admin/users/${encodeURIComponent(selectedId)}`)
       .then((response) => { if (!cancelled) setDetail(response.user); })
-      .catch((failure) => { if (!cancelled) setError(failure.message || "无法读取用户详情。"); })
+      .catch((failure) => { if (!cancelled) setDetailError(failure.message || (isEnglish ? "Could not load account details." : "无法读取用户详情。")); })
       .finally(() => { if (!cancelled) setDetailLoading(false); });
     return () => { cancelled = true; };
-  }, [selectedId]);
+  }, [selectedId, detailRetry]);
   const date = (value) => value ? new Date(value * 1000).toLocaleString() : "—";
   const number = (value) => Number(value || 0).toLocaleString(isEnglish ? "en-US" : "zh-CN");
   const copy = (zh, en) => isEnglish ? en : zh;
@@ -2846,6 +2889,7 @@ export function AdminUsersPage({ navigate }) {
           ]} />
         </div>
       </>}
+      {!detailLoading && detailError && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><p>{detailError}</p><Button onClick={() => setDetailRetry((value) => value + 1)}>{copy("重试读取详情", "Retry account details")}</Button></div></div>}
     </Section>}
   </Page>;
 }
@@ -2961,7 +3005,7 @@ function AdminLiveList({ navigate, active, endpoint, field, title, description, 
   return <Page>
     <AdminHeader title={title} description={description}><Button icon={ArrowsClockwise} onClick={refresh} disabled={loading}>{loading ? "正在读取…" : "刷新"}</Button></AdminHeader>
     <AdminTabs navigate={navigate} active={active} />
-    {error ? <div className="ops-note ops-note--yellow" role="alert">{error}</div> : <Section title={title} kicker="LIVE / READ ONLY" className="ops-shadow-card"><Table rows={rows} columns={columns} empty="暂无记录" /></Section>}
+    {error ? <div className="ops-note ops-note--yellow" role="alert">{error}</div> : <Section title={title} kicker="LIVE / READ ONLY" className="ops-shadow-card"><Table rows={rows} columns={columns} empty={loading ? "正在读取…" : "暂无记录"} /></Section>}
   </Page>;
 }
 
@@ -3050,7 +3094,7 @@ export function AdminOrdersPage({ navigate }) {
     {!error && <Section title={submittedSearch ? copy("订单查询结果", "Order search result") : copy("最近 100 笔订单", "Latest 100 orders")} kicker="LIVE LEDGER" className="ops-shadow-card">
       {!refundEnabled && <div className="ops-admin-refund-unavailable">{copy("后台退款尚未启用：需在服务器配置独立的 Stripe 退款权限密钥。现有订单与对账不受影响。", "Admin refunds are not enabled: a separate Stripe refund key is required on the server. Orders and reconciliation remain available.")}</div>}
       <form className="ops-admin-refund-search" onSubmit={(event) => { event.preventDefault(); setSubmittedSearch(orderSearch.trim()); }}><input aria-label={copy("按完整订单号查询", "Search by full order ID")} placeholder={copy("输入完整订单号，可查询更早订单", "Enter a full order ID to find older orders")} value={orderSearch} onChange={(event) => setOrderSearch(event.target.value)} /><Button type="submit">{copy("查询订单", "Find order")}</Button>{submittedSearch && <Button onClick={() => { setOrderSearch(""); setSubmittedSearch(""); }}>{copy("显示最近订单", "Show recent orders")}</Button>}</form>
-      <Table rows={orders.map((order) => ({ ...order, id: order.order_id }))} empty={isEnglish ? "No orders" : "暂无订单"} columns={[
+      <Table rows={orders.map((order) => ({ ...order, id: order.order_id }))} empty={loading ? copy("正在读取…", "Loading…") : copy("暂无订单", "No orders")} columns={[
         { key: "order_id", label: isEnglish ? "Order" : "订单号" },
         { key: "account_email", label: isEnglish ? "Account" : "账户", render: (row) => row.account_email || row.account_id },
         { key: "product_id", label: isEnglish ? "Plan" : "套餐" },
@@ -3124,7 +3168,7 @@ export function AdminPrivacyPage({ navigate }) {
       <Button icon={ArrowsClockwise} onClick={refresh} disabled={loading}>{loading ? (isEnglish ? "Loading…" : "正在读取…") : (isEnglish ? "Refresh" : "刷新")}</Button>
     </PageHeader>
     {error && <div className="ops-note ops-note--yellow" role="alert"><WarningCircle size={24} weight="fill" /><div><p>{error}</p></div></div>}
-    {!error && <Section title={isEnglish ? "Pending requests" : "待处理申请"} kicker="LIVE REQUESTS" className="ops-shadow-card"><Table rows={requests} empty={isEnglish ? "No pending requests" : "暂无待处理申请"} columns={[
+    {!error && <Section title={isEnglish ? "Pending requests" : "待处理申请"} kicker="LIVE REQUESTS" className="ops-shadow-card"><Table rows={requests} empty={loading ? (isEnglish ? "Loading…" : "正在读取…") : (isEnglish ? "No pending requests" : "暂无待处理申请")} columns={[
       { key: "id", label: isEnglish ? "Request" : "申请号" },
       { key: "email", label: isEnglish ? "Email" : "邮箱" },
       { key: "kind", label: isEnglish ? "Type" : "类型" },

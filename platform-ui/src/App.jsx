@@ -282,6 +282,7 @@ function Topbar({ path, navigate }) {
                   <div><strong>{displayName}</strong><span>{session?.user?.email || accessLabel}</span><small>{session?.user?.email ? accessLabel : ""}</small></div>
                   <button role="menuitem" onClick={() => navigate("/app/settings/account")}><UserCircle size={17} />{isEnglish ? "Account settings" : "账号设置"}</button>
                   {isAdminUser && <button role="menuitem" onClick={() => navigate("/admin/users")}><UsersThree size={17} />{isEnglish ? "Manage users" : "管理全部用户"}</button>}
+                  {isAdmin && <button role="menuitem" onClick={() => navigate("/app")}><ArrowSquareOut size={17} />{isEnglish ? "Return to workspace" : "返回用户端"}</button>}
                   {isAccountUser
                     ? <button role="menuitem" disabled={signingOut} onClick={handleSignOut}><SignOut size={17} />{signingOut ? (isEnglish ? "Signing out…" : "正在退出…") : (isEnglish ? "Sign out" : "退出登录")}</button>
                     : <button role="menuitem" onClick={() => navigate("/")}><SignOut size={17} />{isEnglish ? "Return home" : "返回首页"}</button>}
@@ -299,7 +300,7 @@ function Sidebar({ path, navigate }) {
   const isAdmin = path.startsWith("/admin");
   const items = isAdmin ? adminNavigation : appNavigation;
   return (
-    <aside className="rt-sidebar">
+    <aside className={`rt-sidebar${isAdmin ? " rt-sidebar--admin" : ""}`}>
       <nav aria-label={isAdmin ? (isEnglish ? "Admin navigation" : "管理后台导航") : (isEnglish ? "Application navigation" : "应用导航")}>
         {items.map(([label, englishLabel, href, Icon]) => {
           const active = href === path || (href === "/app" && path === "/app/new") || (href === "/app/billing" && path.startsWith("/app/billing"));
@@ -440,7 +441,7 @@ export function App() {
   }
 
   return (
-    <div className="rt-shell">
+    <div className={`rt-shell${path.startsWith("/admin") ? " rt-shell--admin" : ""}`}>
       <Topbar path={path} navigate={navigate} />
       <Sidebar path={path} navigate={navigate} />
       <main className="rt-main"><Page navigate={navigate} statePath={path} /></main>

@@ -154,8 +154,13 @@ select:focus-visible {
 }
 
 .rt-topbar__document strong {
+  min-width: 0;
+  max-width: min(35vw, 320px);
+  overflow: hidden;
   font-size: 18px;
   line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rt-topbar__document > span:last-child {
@@ -363,6 +368,12 @@ select:focus-visible {
 .rt-user-popover span {
   color: var(--muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.rt-user-popover strong,
+.rt-user-popover p {
+  overflow-wrap: anywhere;
 }
 
 .rt-sidebar {
@@ -449,7 +460,7 @@ select:focus-visible {
 @media (max-width: 780px) {
   .rt-shell {
     grid-template-columns: 1fr;
-    grid-template-rows: 72px 1fr 68px;
+    grid-template-rows: 72px minmax(0, 1fr);
   }
 
   .rt-topbar {
@@ -487,8 +498,7 @@ select:focus-visible {
     white-space: nowrap;
   }
 
-  .rt-balance,
-  .rt-user-button {
+  .rt-balance {
     display: none;
   }
 
@@ -542,14 +552,53 @@ select:focus-visible {
     display: none;
   }
 
+  .rt-sidebar--admin {
+    height: 124px;
+  }
+
+  .rt-sidebar--admin nav {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-rows: repeat(2, 54px);
+    overflow: visible;
+  }
+
+  .rt-sidebar--admin button {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+  }
+
+  .rt-sidebar--admin button svg {
+    flex: 0 0 auto;
+  }
+
   .rt-main {
     padding: 10px;
     padding-bottom: 82px;
   }
 
+  .rt-shell--admin .rt-main {
+    padding-bottom: 136px;
+  }
+
 }
 
 @media (max-width: 480px) {
+  .rt-topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .rt-topbar__document {
+    display: none;
+  }
+
+  .rt-topbar__actions {
+    justify-self: end;
+  }
+
   .rt-language-toggle {
     min-width: 58px;
     padding: 0 6px;

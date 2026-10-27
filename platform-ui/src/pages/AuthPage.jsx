@@ -252,7 +252,7 @@ export function AuthPage({ navigate, statePath }) {
     setPasswordVisible(false);
     setConfirmVisible(false);
     if (statePath === '/auth' && authQuery().get('mode') === 'register') setTab('register');
-  }, [isEnglish, statePath]);
+  }, [statePath]);
 
   useEffect(() => {
     if (!loading && tab === 'register' && !emailVerificationAvailable) setTab('login');
@@ -448,6 +448,7 @@ export function AuthPage({ navigate, statePath }) {
     if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault();
     const next = tab === 'login' ? 'register' : 'login';
+    if (next === 'register' && !emailVerificationAvailable) return;
     openTab(next);
     window.requestAnimationFrame(() => document.getElementById(`rtp-auth-tab-${next}`)?.focus());
   };

@@ -429,9 +429,9 @@ export function NewDocumentPage({ navigate = () => {} }) {
       <div className="rt-import-layout">
         <section className="rt-board rt-import-board">
           <header className="rt-import-header">
-            <div className="rt-import-tabs" role="tablist">
-              <button className={method === "paste" ? "is-active" : ""} onClick={() => setMethod("paste")}><NotePencil weight="bold" /> {isEnglish ? "Paste text" : "粘贴文本"}</button>
-              <button className={method === "upload" ? "is-active" : ""} onClick={() => setMethod("upload")}><UploadSimple weight="bold" /> {isEnglish ? "Upload file" : "上传文档"}</button>
+            <div className="rt-import-tabs" role="group" aria-label={isEnglish ? "Import method" : "导入方式"}>
+              <button type="button" aria-pressed={method === "paste"} className={method === "paste" ? "is-active" : ""} onClick={() => setMethod("paste")}><NotePencil weight="bold" /> {isEnglish ? "Paste text" : "粘贴文本"}</button>
+              <button type="button" aria-pressed={method === "upload"} className={method === "upload" ? "is-active" : ""} onClick={() => setMethod("upload")}><UploadSimple weight="bold" /> {isEnglish ? "Upload file" : "上传文档"}</button>
             </div>
             <span className="rt-service-pill"><StatusDot online /> {isEnglish ? "Bilingual analysis ready" : "双语分析已就绪"}</span>
           </header>
@@ -446,8 +446,8 @@ export function NewDocumentPage({ navigate = () => {} }) {
             </div>
           ) : (
             <label className={`rt-drop-zone ${dragActive ? "is-dragging" : ""} ${error ? "has-error" : ""}`} onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setDragActive(false)} onDrop={(event) => { event.preventDefault(); setDragActive(false); selectFile(event.dataTransfer.files?.[0]); }}>
-              <input type="file" accept=".txt,.docx,.pdf" onChange={(event) => selectFile(event.target.files?.[0])} />
-              <span className="rt-upload-icon">{file?.name.endsWith(".pdf") ? <FilePdf weight="bold" /> : <CloudArrowUp weight="bold" />}</span>
+              <input type="file" accept=".txt,.docx,.pdf" onChange={(event) => { selectFile(event.target.files?.[0]); event.target.value = ""; }} />
+              <span className="rt-upload-icon">{file?.name.toLowerCase().endsWith(".pdf") ? <FilePdf weight="bold" /> : <CloudArrowUp weight="bold" />}</span>
               <h2>{file ? file.name : (isEnglish ? "Drag a manuscript here" : "拖拽文稿到这里")}</h2>
               <p>{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : (isEnglish ? "TXT / DOCX / PDF · Up to 20 MB" : "TXT / DOCX / PDF · 最大 20 MB")}</p>
               <span className="rt-button"><UploadSimple weight="bold" /> {isEnglish ? "Choose file" : "选择文件"}</span>
@@ -498,8 +498,59 @@ export function WorkbenchPage({ navigate = () => {} }) {
   const currentRef = useRef(current);
   const revisionRef = useRef(0);
   const currentEditorRef = useRef(null);
+  const confirmDialogRef = useRef(null);
+  const cancelConfirmRef = useRef(null);
+  const previousFocusRef = useRef(null);
 
   useEffect(() => { currentRef.current = current; }, [current]);
+  useEffect(() => {
+    if (!confirmOpen) return undefined;
+    previousFocusRef.current = document.activeElement;
+    const appRoot = document.getElementById("root");
+    const previousAriaHidden = appRoot?.getAttribute("aria-hidden");
+    const previouslyInert = appRoot?.hasAttribute("inert") ?? false;
+    const previousBodyOverflow = document.body.style.overflow;
+    cancelConfirmRef.current?.focus();
+    appRoot?.setAttribute("inert", "");
+    appRoot?.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "hidden";
+
+    const handleKeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setConfirmOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = confirmDialogRef.current?.querySelectorAll(
+        "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])",
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!confirmDialogRef.current?.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeydown);
+    return () => {
+      window.removeEventListener("keydown", handleKeydown);
+      if (appRoot) {
+        if (!previouslyInert) appRoot.removeAttribute("inert");
+        if (previousAriaHidden === null) appRoot.removeAttribute("aria-hidden");
+        else appRoot.setAttribute("aria-hidden", previousAriaHidden);
+      }
+      document.body.style.overflow = previousBodyOverflow;
+      previousFocusRef.current?.focus?.();
+    };
+  }, [confirmOpen]);
   useEffect(() => {
     const jobId = initial.last_job_id;
     if (!jobId) return undefined;
@@ -950,13 +1001,13 @@ export function WorkbenchPage({ navigate = () => {} }) {
         </button>}
       </section>
 
-      {confirmOpen && createPortal(<div className="rt-confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmOpen(false); }}><section className="rt-rewrite-confirm" role="dialog" aria-modal="true">
+      {confirmOpen && createPortal(<div className="rt-confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmOpen(false); }}><section ref={confirmDialogRef} className="rt-rewrite-confirm" role="dialog" aria-modal="true" aria-labelledby="rt-live-confirm-title" aria-describedby="rt-live-confirm-description">
         <span className="rt-confirm-kicker">RUN CHECK / {isEnglish ? "USAGE PREVIEW" : "扣减预览"}</span>
-        <h2>{isEnglish ? `Run a ${selected.en.toLowerCase()} rewrite?` : `确认执行${selected.zh}改写？`}</h2>
-        <p>{isEnglish ? "The model will attempt every eligible diagnosed passage. Candidates that fail fact and citation checks remain unchanged. Quota is reserved only after confirmation and returned if nothing is accepted." : "模型会逐段尝试处理符合条件的诊断项；事实与引文校验不通过的段落保留原文。确认后才预占额度，零采纳会退回。"}</p>
+        <h2 id="rt-live-confirm-title">{isEnglish ? `Run a ${selected.en.toLowerCase()} rewrite?` : `确认执行${selected.zh}改写？`}</h2>
+        <p id="rt-live-confirm-description">{isEnglish ? "The model will attempt every eligible diagnosed passage. Candidates that fail fact and citation checks remain unchanged. Quota is reserved only after confirmation and returned if nothing is accepted." : "模型会逐段尝试处理符合条件的诊断项；事实与引文校验不通过的段落保留原文。确认后才预占额度，零采纳会退回。"}</p>
         <div className="rt-confirm-metrics"><div><span>{isEnglish ? "Billable text" : "计费文本"}</span><strong>{chars.toLocaleString()}</strong></div><div><span>{isEnglish ? "Rewrite mode" : "改写模式"}</span><strong>{isEnglish ? selected.en : `${selected.zh}改写`}</strong></div><div className="is-highlight"><span>{isEnglish ? "Estimated deduction" : "预计扣减"}</span><strong>{estimated.toLocaleString()}</strong></div></div>
         <div className="rt-confirm-balance"><span>{isEnglish ? "Available now" : "当前可用"}</span><strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "chars" : "字"}</strong></div>
-        <div className="rt-confirm-actions"><button className="rt-button" onClick={() => setConfirmOpen(false)}>{isEnglish ? "Cancel" : "取消"}</button><button className="rt-button rt-button-primary" onClick={() => runRewrite()} disabled={!canRewrite || Boolean(busy)}>{isEnglish ? "Confirm and start" : "确认并开始"}<ArrowRight weight="bold" /></button></div>
+        <div className="rt-confirm-actions"><button ref={cancelConfirmRef} className="rt-button" onClick={() => setConfirmOpen(false)}>{isEnglish ? "Cancel" : "取消"}</button><button className="rt-button rt-button-primary" onClick={() => runRewrite()} disabled={!canRewrite || Boolean(busy)}>{isEnglish ? "Confirm and start" : "确认并开始"}<ArrowRight weight="bold" /></button></div>
       </section></div>, document.body)}
     </div>
   );

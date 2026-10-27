@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   ArrowSquareOut,
@@ -49,7 +49,10 @@ function moveTabFocus(event, tabs, current, onChange, idPrefix) {
 function Brand({ navigate }) {
   const { isEnglish } = useLocale();
   return (
-    <button className="rtp-brand-wrap" onClick={go(navigate, '/')} aria-label={isEnglish ? 'Return to RightThesis home' : '返回 RightThesis 首页'}>
+    <button className="rtp-brand-wrap" onClick={() => {
+      if (!window.location.hash || window.location.hash === '#/') window.scrollTo({ top: 0, behavior: 'smooth' });
+      else navigate('/');
+    }} aria-label={isEnglish ? 'Return to RightThesis home' : '返回 RightThesis 首页'}>
       <span className="rtp-brand">RightThesis</span>
       <span className="rtp-brand-line">{isEnglish ? 'Let good research speak more clearly' : '让好的研究被更好地表达'}</span>
     </button>
@@ -74,7 +77,11 @@ function PublicHeader({ navigate, active }) {
       const sectionId = path.split(':')[1];
       const target = document.getElementById(sectionId);
       if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      else navigate('/');
+      else navigate(`/?section=${encodeURIComponent(sectionId)}`);
+      return;
+    }
+    if (path === '/' && (!window.location.hash || window.location.hash === '#/')) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
     navigate(path);
@@ -264,6 +271,15 @@ export function LandingPage({ navigate }) {
   const paymentLive = config?.payment?.checkout_enabled === true && config.payment.live === true;
   const featuredMonth = plans.find((plan) => plan.kind === 'subscription');
   const featuredPack = plans.find((plan) => plan.kind === 'pack');
+  useEffect(() => {
+    const section = new URLSearchParams(window.location.hash.split('?', 2)[1] || '').get('section');
+    if (section !== 'product') return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/`);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
   return (
     <Shell navigate={navigate} active="首页">
       <main>

@@ -57,6 +57,13 @@
   min-width: 0;
 }
 
+.ops-page-heading > div,
+.ops-page-heading h1,
+.ops-description {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .ops-page-heading h1,
 .ops-section h2,
 .ops-service-banner h2,
@@ -195,6 +202,7 @@
   line-height: 1;
   letter-spacing: -0.045em;
   margin-block: 10px;
+  overflow-wrap: anywhere;
 }
 
 .ops-metric small {
@@ -251,7 +259,10 @@
   justify-content: space-between;
   align-items: center;
   gap: 16px;
+  flex-wrap: wrap;
 }
+
+.ops-section-head > div { min-width: 0; overflow-wrap: anywhere; }
 
 .ops-section-head p {
   margin: 0 0 3px;
@@ -281,6 +292,7 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .ops-balance-hero span { font-weight: 800; }
@@ -410,7 +422,7 @@
 }
 
 .ops-plan-copy { display: flex; flex-direction: column; align-items: flex-start; }
-.ops-plan-titleline { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ops-plan-titleline { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .ops-plan-titleline b { font-size: 18px; }
 .ops-plan-titleline em { padding: 3px 7px; background: var(--ops-brand); border: 1px solid var(--ops-ink); font-size: 10px; font-style: normal; font-weight: 900; }
 .ops-plan-price { display: flex; align-items: baseline; gap: 4px; margin: 14px 0 5px; }
@@ -441,7 +453,7 @@
 .ops-table-wrap { width: 100%; overflow-x: auto; }
 .ops-table { width: 100%; min-width: 720px; border-collapse: collapse; }
 .ops-table th { padding: 10px 13px; background: var(--ops-gray-100); border-bottom: 1px solid var(--ops-gray-200); color: var(--ops-gray-700); font-size: 11px; letter-spacing: 0.04em; text-align: left; white-space: nowrap; }
-.ops-table td { padding: 13px; border-bottom: 1px solid var(--ops-gray-200); font-size: 13px; vertical-align: middle; }
+.ops-table td { padding: 13px; border-bottom: 1px solid var(--ops-gray-200); font-size: 13px; vertical-align: middle; overflow-wrap: anywhere; }
 .ops-table tbody tr:last-child td { border-bottom: 0; }
 .ops-table tbody tr:hover { background: #fffdf2; }
 .ops-table tr.is-clickable { cursor: pointer; }
