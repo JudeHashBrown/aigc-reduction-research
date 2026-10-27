@@ -38,3 +38,11 @@ test('live checkout copy does not advertise the temporarily excluded wallet', ()
   assert.doesNotMatch(liveCheckout, /微信支付|WeChat Pay|银行卡 \/ 微信/);
   assert.match(liveCheckout, /银行卡 \/ 支付宝等可用方式/);
 });
+
+test('credit center uses clear pricing and balance labels', () => {
+  const pages = readFileSync(new URL('../src/pages/OperationsPages.jsx', import.meta.url), 'utf8');
+  assert.match(pages, /title="查看额度与价格方案"/);
+  assert.match(pages, /label: "价格方案"/);
+  assert.match(pages, /"价格方案": "Pricing plans"/);
+  assert.doesNotMatch(pages, /每一字，都有来路|平台方案/);
+});

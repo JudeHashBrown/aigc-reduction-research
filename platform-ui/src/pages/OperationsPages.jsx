@@ -159,7 +159,7 @@ const OPS_EN = {
   "/ 30天": "/ 30 days",
   "字额度": "character credits",
   "MONEY / 额度中心": "MONEY / CREDITS",
-  "每一字，都有来路": "Every character is accounted for",
+  "查看额度与价格方案": "Credits and pricing plans",
   "月卡与独立字数包可以叠加；系统按最早到期的额度桶优先消耗。": "Monthly passes and standalone packs stack; credits expiring first are used first.",
   "购买额度": "Buy credits",
   "当前可用": "Available now",
@@ -282,7 +282,7 @@ const OPS_EN = {
 
 Object.assign(OPS_EN, {
   "MONEY / 额度中心": "MONEY / CREDITS",
-  "每一字，都有来路": "Every character is accounted for",
+  "查看额度与价格方案": "Credits and pricing plans",
   "余额、套餐与额度桶均直接读取当前平台账本。": "Balances, plans, and credit buckets are read directly from the platform ledger.",
   "正在读取平台账本…": "Reading the platform ledger…",
   "当前可用": "Available now",
@@ -293,7 +293,7 @@ Object.assign(OPS_EN, {
   "来自后端权益摘要": "From the backend entitlement summary",
   "等待后端返回": "Waiting for the backend",
   "没有有期限额": "No expiring credits",
-  "平台方案": "Platform plans",
+  "价格方案": "Pricing plans",
   "额度桶": "Credit buckets",
   "账本可用余额": "Ledger balance",
   "当前权益": "Current entitlement",
@@ -1423,7 +1423,7 @@ export function BillingPage({ navigate }) {
 
   return (
     <Page>
-      <PageHeader eyebrow="MONEY / 额度中心" title="每一字，都有来路" description="余额、套餐与额度桶均直接读取当前平台账本。">
+      <PageHeader eyebrow="MONEY / 额度中心" title="查看额度与价格方案" description="余额、套餐与额度桶均直接读取当前平台账本。">
         <Button icon={ArrowsClockwise} onClick={reload} disabled={refreshing}>{refreshing ? "刷新中" : "刷新"}</Button>
         <Button icon={CreditCard} onClick={() => go(navigate, "/checkout/pro")}>购买额度</Button>
       </PageHeader>
@@ -1439,7 +1439,7 @@ export function BillingPage({ navigate }) {
 
       <Tabs value={tab} onChange={setTab} items={[
         { value: "overview", label: "余额概览" },
-        { value: "plans", label: "平台方案", count: catalog.length },
+        { value: "plans", label: "价格方案", count: catalog.length },
         { value: "buckets", label: "额度桶", count: buckets.length },
       ]} />
 
@@ -1818,7 +1818,7 @@ function LegacyBillingPage({ navigate }) {
 
   return (
     <Page>
-      <PageHeader eyebrow="MONEY / 额度中心" title="每一字，都有来路" description="月卡与独立字数包可以叠加；系统按最早到期的额度桶优先消耗。">
+      <PageHeader eyebrow="MONEY / 额度中心" title="查看额度与价格方案" description="月卡与独立字数包可以叠加；系统按最早到期的额度桶优先消耗。">
         <Button tone="blue" icon={Plus} onClick={() => go(navigate, "/checkout/pro")}>购买额度</Button>
       </PageHeader>
 
