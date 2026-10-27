@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  ArrowLeft,
   ArrowRight,
   Check,
   CheckCircle,
@@ -892,10 +893,16 @@ export function WorkbenchPage({ navigate = () => {} }) {
   return (
     <div className={`rt-page rt-workbench-page rt-live-workbench ${focusMode ? "is-focus-mode" : ""}`}>
       <div className="rt-document-bar">
-        <div><button className="rt-doc-back" onClick={() => navigate("/app")}>{isEnglish ? "← Documents" : "← 文档"}</button><span className="rt-doc-name">{localizedWorkspaceName(getWorkspace().name, isEnglish)}</span><span className="rt-doc-meta">{chars.toLocaleString()} {isEnglish ? "billable chars" : "计费字符"}</span></div>
+        <div>
+          <button type="button" className="rt-doc-back" onClick={() => navigate("/app")}>
+            <ArrowLeft size={18} weight="bold" aria-hidden="true" />
+            {isEnglish ? "Back to documents" : "返回文档"}
+          </button>
+          <span className="rt-doc-name">{localizedWorkspaceName(getWorkspace().name, isEnglish)}</span>
+          <span className="rt-doc-meta">{chars.toLocaleString()} {isEnglish ? "billable chars" : "计费字符"}</span>
+        </div>
         <div className="rt-document-actions">
           <span className={`rt-save-status is-${saveStatus.state}`} role="status">{saveStatus.state === "saved" ? (isEnglish ? "Saved" : "已保存") : saveStatus.state === "saving" ? (isEnglish ? "Saving…" : "正在保存…") : (isEnglish ? "Save failed" : "保存失败")}</span>
-          <span className="rt-service-pill"><StatusDot online={Boolean(config?.llm_configured)} />{config?.llm_configured ? (isEnglish ? "AI ready" : "AI 服务已就绪") : (isEnglish ? "Diagnosis only" : "仅诊断可用")}</span>
           <button className="rt-button" onClick={() => setFocusMode((value) => !value)}>{focusMode ? (isEnglish ? "Compare view" : "对照视图") : (isEnglish ? "Focus view" : "专注阅读")}</button>
           <button className="rt-button" onClick={copyText}>{isEnglish ? "Copy text" : "复制全文"}</button>
           <button className="rt-button" onClick={() => downloadText()}><DownloadSimple weight="bold" />{isEnglish ? "Download TXT" : "下载 TXT"}</button>

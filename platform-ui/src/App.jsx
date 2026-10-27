@@ -180,12 +180,10 @@ function Brand({ navigate, compact = false }) {
 
 function Topbar({ path, navigate }) {
   const { isEnglish } = useLocale();
-  const { billing, config, session, refresh } = usePlatform();
-  const [serviceOpen, setServiceOpen] = useState(false);
+  const { billing, session, refresh } = usePlatform();
   const [userOpen, setUserOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState("");
-  const serviceAnchorRef = useRef(null);
   const userAnchorRef = useRef(null);
   const isAdmin = path.startsWith("/admin");
   const isDocument = path === "/app/workbench";
@@ -217,21 +215,19 @@ function Topbar({ path, navigate }) {
   };
 
   useEffect(() => {
-    setServiceOpen(false);
     setUserOpen(false);
   }, [path]);
 
   useEffect(() => {
-    if (!serviceOpen && !userOpen) return undefined;
+    if (!userOpen) return undefined;
     const closePopovers = () => {
-      setServiceOpen(false);
       setUserOpen(false);
     };
     const onKeyDown = (event) => {
       if (event.key === "Escape") closePopovers();
     };
     const onPointerDown = (event) => {
-      if (!serviceAnchorRef.current?.contains(event.target) && !userAnchorRef.current?.contains(event.target)) closePopovers();
+      if (!userAnchorRef.current?.contains(event.target)) closePopovers();
     };
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("pointerdown", onPointerDown);
@@ -239,7 +235,7 @@ function Topbar({ path, navigate }) {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [serviceOpen, userOpen]);
+  }, [userOpen]);
 
   return (
     <header className="rt-topbar">
@@ -254,27 +250,13 @@ function Topbar({ path, navigate }) {
       </div>
       <div className="rt-topbar__actions">
         <LanguageToggle />
-        <div ref={serviceAnchorRef} className="rt-popover-anchor">
-          <button className="rt-status-button" onClick={() => { setServiceOpen((value) => !value); setUserOpen(false); }} aria-expanded={serviceOpen} aria-haspopup="dialog">
-            <span className={`rt-live-dot ${config?.llm_configured ? "" : "is-offline"}`} /> {config?.llm_configured ? (isEnglish ? "AI service ready" : "AI 服务已就绪") : (isEnglish ? "Diagnosis only" : "仅诊断可用")}
-          </button>
-          {serviceOpen && (
-            <div className="rt-popover rt-service-popover" role="dialog" aria-label="服务状态摘要">
-              <strong>{isEnglish ? "Service status" : "服务状态"}</strong>
-              <p>{config?.llm_configured
-                ? (isEnglish ? "Bilingual rules, document parsing, and faithful rewriting are available." : "双语规则、文档解析和保真改写均可用。")
-                : (isEnglish ? "Bilingual diagnosis is available; model rewriting is currently unavailable." : "双语诊断可用；模型改写服务当前不可用。")}</p>
-              <button onClick={() => navigate("/app/settings/service")}>{isEnglish ? "View details" : "查看状态详情"}</button>
-            </div>
-          )}
-        </div>
         {!isAdmin && (
           <button className="rt-balance" onClick={() => navigate("/app/billing")}>
             <span>{isEnglish ? "Balance" : "剩余额度"}</span><strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "chars" : "字"}</strong>
           </button>
         )}
         <div ref={userAnchorRef} className="rt-popover-anchor">
-              <button className="rt-user-button" onClick={() => { setUserOpen((value) => !value); setServiceOpen(false); }} aria-expanded={userOpen} aria-haspopup="menu" aria-label={isEnglish ? "Open user menu" : "打开用户菜单"}>
+              <button className="rt-user-button" onClick={() => setUserOpen((value) => !value)} aria-expanded={userOpen} aria-haspopup="menu" aria-label={isEnglish ? "Open user menu" : "打开用户菜单"}>
                 <span>{avatarLabel}</span><CaretDown size={14} weight="bold" />
               </button>
               {userOpen && (

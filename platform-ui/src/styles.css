@@ -96,7 +96,6 @@ select:focus-visible {
 .rt-topbar__actions,
 .rt-topbar__document,
 .rt-user-button,
-.rt-status-button,
 .rt-balance {
   display: flex;
   align-items: center;
@@ -180,7 +179,6 @@ select:focus-visible {
   gap: 14px;
 }
 
-.rt-status-button,
 .rt-balance,
 .rt-user-button,
 .rt-icon-button {
@@ -188,20 +186,6 @@ select:focus-visible {
   border: 0;
   background: transparent;
   cursor: pointer;
-}
-
-.rt-status-button {
-  gap: 9px;
-  padding: 8px 10px;
-  font-weight: 700;
-}
-
-.rt-live-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #0a8f43;
-  box-shadow: 0 0 0 4px var(--green-soft);
 }
 
 .rt-balance {
@@ -450,7 +434,6 @@ select:focus-visible {
   }
 
   .rt-topbar__tagline,
-  .rt-status-button,
   .rt-topbar__document > span:last-child {
     display: none;
   }

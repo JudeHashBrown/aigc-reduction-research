@@ -22,6 +22,34 @@
 .rt-live-workbench .rt-document-bar { flex-wrap: wrap; }
 .rt-live-workbench .rt-document-bar > div:first-child { min-width: 0; flex: 1 1 auto; flex-wrap: wrap; }
 .rt-live-workbench .rt-doc-name { max-width: 100%; }
+.rt-live-workbench .rt-doc-back {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 13px;
+  border: 2px solid var(--rt-ink);
+  background: var(--rt-blue-soft);
+  box-shadow: 3px 3px 0 var(--rt-ink);
+  color: var(--rt-ink) !important;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.2;
+  white-space: nowrap;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+.rt-live-workbench .rt-doc-back:hover {
+  transform: translate(1px, 1px);
+  background: #d7e9ff;
+  box-shadow: 2px 2px 0 var(--rt-ink);
+}
+.rt-live-workbench .rt-doc-back:focus-visible {
+  outline: 3px solid var(--rt-blue);
+  outline-offset: 3px;
+}
 .rt-live-workbench .rt-document-actions { flex-wrap: wrap; gap: 8px; }
 .rt-save-status { white-space: nowrap; padding: 5px 8px; border: 1px solid #8fbc8f; background: #e5f8e9; color: #146c36; font-size: 11px; font-weight: 800; }
 .rt-save-status.is-saving { border-color: #d4ad4d; background: #fff2c7; color: #6b5514; }
