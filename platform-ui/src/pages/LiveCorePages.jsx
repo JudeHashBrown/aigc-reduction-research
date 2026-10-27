@@ -24,7 +24,7 @@ import { useLocale } from "../locale.jsx";
 import { ChangeHighlights } from "../ChangeHighlights.jsx";
 import { changedPassages, diffChange } from "../change-highlights.js";
 import { reviewTargetFromFinding } from "../review-target.js";
-import { deterministicCleanupCount, snapshotMatchesDraft, workbenchAction } from "../workbench-action.js";
+import { canStartModification, deterministicCleanupCount, snapshotMatchesDraft, workbenchAction } from "../workbench-action.js";
 import {
   billableChars,
   createWorkspace,
@@ -71,29 +71,15 @@ const REWRITE_STEPS = [
   { key: "finalizing", zh: "复核表达风险", en: "Review expression risks" },
 ];
 
-const REVIEW_FIX_STEPS = [
-  { key: "queued", zh: "安全排队", en: "Queued" },
-  { key: "locating", zh: "核对选中线索", en: "Locate selected finding" },
-  { key: "rewriting", zh: "尝试句法调整", en: "Try a structural adjustment" },
-  { key: "checking", zh: "核验事实与引文", en: "Check facts and citations" },
-  { key: "finalizing", zh: "更新诊断", en: "Refresh diagnosis" },
-];
-
-function rewriteProgressState(progress, isEnglish, reviewOnly = false) {
-  const steps = reviewOnly ? REVIEW_FIX_STEPS : REWRITE_STEPS;
+function rewriteProgressState(progress, isEnglish) {
+  const steps = REWRITE_STEPS;
   const total = Math.max(0, Number(progress?.total || 0));
   const done = Math.max(0, Math.min(total, Number(progress?.done || 0)));
   const phase = progress?.phase || "preparing";
   const step = phase === "rewriting" && total && done >= total ? "checking"
     : phase === "preparing" ? "locating" : phase;
   const activeIndex = Math.max(0, steps.findIndex((item) => item.key === step));
-  const title = (reviewOnly ? {
-    queued: isEnglish ? "The selected finding is queued for a free safety check" : "已排队，将免费核对选中的线索",
-    locating: isEnglish ? "Locating the reported three-part list" : "正在定位报告中的三项并列表达",
-    rewriting: isEnglish ? "Trying a bounded sentence adjustment" : "正在尝试有限的句法调整",
-    checking: isEnglish ? "Rejecting changes that alter facts, terms, or citations" : "正在排除改变事实、术语或引文的调整",
-    finalizing: isEnglish ? "Refreshing the report for the resulting text" : "正在对结果重新诊断",
-  } : {
+  const title = ({
     queued: isEnglish ? "Queued safely; the rewrite will start when capacity is available" : "任务已安全排队，将在有处理名额时自动开始",
     locating: isEnglish ? "Reading the manuscript and locating editable passages" : "正在梳理文稿，定位可改写段落",
     rewriting: isEnglish ? "Generating and verifying paragraph-level rewrites" : "正在逐段生成并筛选改写候选",
@@ -166,7 +152,7 @@ const FINDING_REASONS_EN = {
   C12: "The phrase is not evidence of authorship, but it may be vague, repetitive, or more elaborate than the underlying claim.",
   C17: "The sentence invokes experts or research without a source the reader can verify.",
   F30: "A generic background opener may add no independent time or causal information.",
-  "EN-S01": "A three-part list can be legitimate academic prose. This signal is for review only and is never changed automatically.",
+  "EN-S01": "A three-part list can be legitimate academic prose. Any revision should preserve its research meaning and be checked afterward.",
   "EN-S11": "An agentless passive opener can obscure who made the finding.",
   "EN-V-T1": "This phrase is frequently overused in formulaic academic prose; prefer a more direct term when the meaning stays the same.",
   "EN-V-T2": "This phrase can sound generic or inflated. Replace it only when a more precise expression preserves the claim.",
@@ -196,7 +182,7 @@ function findingReason(finding, isEnglish) {
   const value = finding?.reason || finding?.suggestion || "";
   if (!isEnglish || !hasCjk(value)) return value;
   return FINDING_REASONS_EN[finding?.pattern_id]
-    || "Review this expression in context. Keep facts, citations, technical terms, and the intended strength of the claim unchanged.";
+    || "This expression may benefit from a contextual revision that preserves facts, citations, technical terms, and the intended strength of the claim.";
 }
 
 function localizedPlanName(value, isEnglish) {
@@ -209,7 +195,12 @@ function localizedWorkspaceName(value, isEnglish) {
   return value;
 }
 
-function localizedGuardDetail(value, isEnglish) {
+function localizedGuardDetail(value, isEnglish, status) {
+  if (status === "review") {
+    return isEnglish
+      ? (value && !hasCjk(value) ? value : "Check the revised wording against facts, citations, terms, and intended meaning.")
+      : (value || "请对照原稿，核对修改后的事实、引文、术语和原意。");
+  }
   if (!isEnglish || !value) return value;
   if (value === "事实一致") return "Facts consistent";
   return hasCjk(value) ? "The fact, number, citation, and scope checks passed. Review the comparison before export." : value;
@@ -488,8 +479,8 @@ export function WorkbenchPage({ navigate = () => {} }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingFinding, setPendingFinding] = useState(null);
   const [jobProgress, setJobProgress] = useState(null);
-  const [reviewTaskActive, setReviewTaskActive] = useState(false);
   const [activeFinding, setActiveFinding] = useState(0);
   const [guard, setGuard] = useState(null);
   const [lastResult, setLastResult] = useState(null);
@@ -576,17 +567,18 @@ export function WorkbenchPage({ navigate = () => {} }) {
           const result = job.result;
           const original = result.before?.text;
           if (result.text === currentRef.current) {
-            if (original && original !== result.text) {
-              setLastResult({ kind: "rewrite", beforeText: original, afterText: result.text, result });
-            }
-            setGuard(result.guard || null);
-            setMessage(isEnglish ? "Recovered the completed task and current draft." : "已恢复完成的任务和当前稿。 ");
+            const changed = typeof original === "string" && original !== result.text;
+            setLastResult(changed ? { kind: "rewrite", beforeText: original, afterText: result.text, result } : null);
+            setGuard(changed ? result.guard || null : null);
+            if (changed) setMessage(isEnglish ? "Recovered the completed modification and current draft." : "已恢复完成的修改和当前稿。");
+            else setError((isEnglish ? result.no_change_reason_en : result.no_change_reason)
+              || (isEnglish ? "The saved task made no safe change to the current draft." : "已保存任务未能对当前稿完成安全修改。"));
           } else if (original && snapshotMatchesDraft(original, 0, currentRef.current, revisionRef.current)) {
             revisionRef.current += 1;
             setCurrent(result.text);
             setReport(result.after || null);
             setStaleReport(null);
-            setLastResult(original !== result.text ? { kind: "rewrite", beforeText: original, afterText: result.text, result } : null);
+            setLastResult({ kind: "rewrite", beforeText: original, afterText: result.text, result });
             setGuard(result.guard || null);
             updateWorkspace({ current: result.text, report: result.after || null });
             await saveWorkspaceNow();
@@ -613,8 +605,6 @@ export function WorkbenchPage({ navigate = () => {} }) {
   const visibleFindings = visibleReport?.findings || [];
   const reportIsStale = !report && Boolean(staleReport);
   const nextAction = workbenchAction(report);
-  const hasRewriteTarget = nextAction === "rewrite";
-  const hasReviewAutoOption = findings.some((finding) => Boolean(reviewTargetFromFinding(finding)));
   const safeCleanupCount = deterministicCleanupCount(report);
   const visibleCleanupCount = deterministicCleanupCount(visibleReport);
   const anchorCounts = visibleReport?.anchors?.counts || {};
@@ -624,9 +614,12 @@ export function WorkbenchPage({ navigate = () => {} }) {
   const overJobLimit = jobLimit ? Math.max(0, chars - jobLimit) : 0;
   const withinJobLimit = !overJobLimit;
   const hasEnoughBalance = billing?.balance == null || estimated <= Number(billing.balance);
-  const canRewrite = Boolean(report && hasRewriteTarget && config?.llm_configured && allowed.includes(mode) && withinJobLimit && hasEnoughBalance);
-  const canReviewRewrite = (finding) => Boolean(report && !busy && codePointLength(current) <= ANALYSIS_MAX_CODEPOINTS
-    && report.findings?.includes(finding) && reviewTargetFromFinding(finding));
+  const canRewrite = canStartModification({
+    report, llmConfigured: config?.llm_configured, allowedStrengths: allowed,
+    mode, withinJobLimit, hasEnoughBalance,
+  });
+  const canReviewRewrite = (finding) => Boolean(canRewrite && report?.findings?.includes(finding)
+    && reviewTargetFromFinding(finding));
   const changeRows = useMemo(() => lastResult
     ? changedPassages(lastResult.beforeText, lastResult.afterText)
     : [], [lastResult]);
@@ -637,6 +630,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
     setReport(nextReport);
     setStaleReport(null);
     setActiveFinding(0);
+    setPendingFinding(null);
     updateWorkspace({ current: nextCurrent, report: nextReport, ...extra });
   };
 
@@ -648,6 +642,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
     setReport(null);
     setActiveFinding(0);
     setConfirmOpen(false);
+    setPendingFinding(null);
     setGuard(null);
     setLastResult(null);
     setMessage("");
@@ -713,10 +708,10 @@ export function WorkbenchPage({ navigate = () => {} }) {
 
   const runRewrite = async (reviewFinding = null) => {
     const reviewTarget = reviewTargetFromFinding(reviewFinding);
-    if (busy || (reviewFinding ? !canReviewRewrite(reviewFinding) : !canRewrite)) return;
+    if (busy || !canRewrite || (reviewFinding && !canReviewRewrite(reviewFinding))) return;
     const snapshot = current;
     const revision = revisionRef.current;
-    setConfirmOpen(false); setBusy("rewrite"); setReviewTaskActive(Boolean(reviewTarget)); setError(""); setMessage(""); setJobProgress({ done: 0, total: 0, phase: "preparing" });
+    setConfirmOpen(false); setBusy("rewrite"); setError(""); setMessage(""); setGuard(null); setLastResult(null); setJobProgress({ done: 0, total: 0, phase: "preparing" });
     try {
       await saveWorkspaceNow();
       if (!snapshotMatchesDraft(snapshot, revision, currentRef.current, revisionRef.current)) {
@@ -762,6 +757,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
           await pollDelay(1400);
         }
         const result = job.result;
+        if (typeof result?.text !== "string") throw new Error(isEnglish ? "The task returned no revised text." : "任务没有返回修改后的正文。");
         if (!snapshotMatchesDraft(snapshot, revision, currentRef.current, revisionRef.current)) {
           setError(isEnglish
             ? "The manuscript changed while this task was running, so the result was not applied. Review task history before retrying."
@@ -769,10 +765,11 @@ export function WorkbenchPage({ navigate = () => {} }) {
           await refreshBilling().catch(() => null);
           break;
         }
+        const changed = result.text !== snapshot;
         revisionRef.current += 1;
-        setGuard(result.guard || null);
+        setGuard(changed ? result.guard || null : null);
         commit(result.text, result.after || report);
-        setLastResult(result.text !== snapshot
+        setLastResult(changed
           ? { kind: "rewrite", beforeText: snapshot, afterText: result.text, result }
           : null);
         await saveWorkspaceNow();
@@ -784,38 +781,46 @@ export function WorkbenchPage({ navigate = () => {} }) {
           && result.after?.summary?.status === "clear"
           && Number(result.after?.summary?.findings || 0) === 0
           && result.guard?.status === "passed";
-        if (reviewTarget) {
-          const changed = result.review_target?.status === "changed" && result.text !== snapshot;
-          setMessage(changed
+        if (!changed) {
+          const reason = reviewTarget
+            ? (isEnglish ? result.review_target?.reason_en || result.review_target?.reason : result.review_target?.reason)
+            : (isEnglish ? result.no_change_reason_en || result.no_change_reason : result.no_change_reason);
+          setError(reviewTarget
             ? (isEnglish
-              ? `This finding was adjusted automatically at no credit cost. Review the highlighted before/after text, facts, terms, and citations yourself. ${result.review_target?.reason_en || ""}`
-              : `已免费尝试并自动调整这处表达。请查看下方标亮的前后对照，并人工核对事实、术语与引文。${result.review_target?.reason || ""}`)
-            : (isEnglish
-              ? `No safe automatic change was accepted. The original wording remains unchanged; review this finding manually. ${result.review_target?.reason_en || ""}`
-              : `未采纳自动修改，原文保持不变；请人工核对这条线索。${result.review_target?.reason || ""}`));
+              ? `No safe change was accepted for this finding. ${reason || "The current draft is unchanged; any reserved quota was returned."}`
+              : `这条线索未能采纳安全修改。${reason || "当前稿未变化；已退回预占额度。"}`)
+            : reason
+              ? (isEnglish ? `The current draft is unchanged. ${reason}` : `当前稿未变化。${reason}`)
+              : targeted === 0
+              ? (isEnglish ? "No safe passage was revised. The current draft is unchanged; reserved quota was returned." : "没有段落完成安全修改，当前稿未变化；已退回预占额度。")
+              : (isEnglish ? `All ${targeted} revision candidates were rejected by the safeguards. The current draft is unchanged; reserved quota was returned.` : `${targeted} 处修改候选均未通过守卫，当前稿未变化；已退回预占额度。`));
+        } else if (reviewTarget && result.review_target?.status === "unchanged") {
+          const reason = isEnglish ? result.review_target?.reason_en : result.review_target?.reason;
+          setMessage(isEnglish
+            ? `The draft changed, but the selected finding was preserved. ${reason || "Check the highlighted changes."}`
+            : `当前稿已有修改，但选中的线索保留原文。${reason || "请核对标亮的改动。"}`);
+        } else if (reviewTarget) {
+          const reason = isEnglish ? result.review_target?.reason_en : result.review_target?.reason;
+          setMessage(isEnglish
+            ? `The selected finding was revised. ${reason || ""}`
+            : `已修改选中的诊断线索。${reason || ""}`);
         } else if (checkPassed) {
           setMessage(isEnglish
-            ? `RightThesis found no obvious templated phrasing in the revised draft, and the fact guard passed. ${calls} model requests. Review the highlighted changes yourself.`
-            : `RightThesis 站内复查未发现明显模板化表达，事实守卫已通过。模型调用 ${calls} 次；请人工核对标亮的改动。`);
-        } else if (!targeted) {
+            ? `Revised draft saved. The in-app check found no obvious templated phrasing and the fact guard passed. ${calls} model requests.`
+            : `修改稿已保存。站内复查未发现明显模板化表达，事实守卫已通过。模型调用 ${calls} 次。`);
+        } else if (accepted) {
           setMessage(isEnglish
-            ? "No paragraphs qualified for automatic rewriting. The model was not called and the reserved quota was returned; review the findings individually."
-            : "没有符合自动改写条件的段落；模型未调用、预占额度已退回。请逐项审阅诊断结果。");
-        } else if (!accepted) {
-          setMessage(isEnglish
-            ? `Reviewed ${targeted} paragraphs but accepted no rewrite. ${calls} model requests; reserved quota returned. The current draft may include safe cleanup.`
-            : `已处理 ${targeted} 处段落，但未采纳改写；模型调用 ${calls} 次，预占额度已退回。当前稿可能包含安全清理。`);
+            ? `Revised draft saved. ${accepted} of ${targeted} paragraph candidates accepted; ${calls} model requests.`
+            : `修改稿已保存，采纳 ${accepted} / ${targeted} 处段落候选；模型调用 ${calls} 次。`);
         } else {
-          setMessage(isEnglish
-            ? `Accepted rewrites in ${accepted} of ${targeted} paragraphs. ${calls} model requests. Review the highlighted changes, especially key arguments, before export.`
-            : `已采纳 ${accepted} / ${targeted} 处段落改写，模型调用 ${calls} 次。请核对标亮的前后改动，并人工通读关键论证。`);
+          setMessage(isEnglish ? `Revised draft saved. ${calls} model requests.` : `修改稿已保存；模型调用 ${calls} 次。`);
         }
         break;
       }
     } catch (nextError) {
       setError(nextError.message);
       await refreshBilling().catch(() => null);
-    } finally { setBusy(""); setReviewTaskActive(false); setJobProgress(null); }
+    } finally { setBusy(""); setJobProgress(null); }
   };
 
   const exportDocument = async () => {
@@ -878,16 +883,11 @@ export function WorkbenchPage({ navigate = () => {} }) {
     editor.scrollIntoView({ block: "nearest" });
   };
 
-  const focusCurrentEditor = () => {
-    if (findings[activeFinding]) selectFinding(activeFinding);
-    else currentEditorRef.current?.focus();
-  };
-
   if (!source) {
     return <div className="rt-page"><div className="rt-board rt-live-empty rt-live-empty--page"><FileText size={42} /><h1>{isEnglish ? "No manuscript is open" : "当前没有打开的文稿"}</h1><p>{isEnglish ? "Import or paste a manuscript to start a bilingual diagnosis." : "请先导入或粘贴文稿，再开始中英文诊断。"}</p><button className="rt-button rt-button-primary" onClick={() => navigate("/app/new")}>{isEnglish ? "New document" : "新建文档"}</button></div></div>;
   }
 
-  const progressView = busy === "rewrite" ? rewriteProgressState(jobProgress, isEnglish, reviewTaskActive) : null;
+  const progressView = busy === "rewrite" ? rewriteProgressState(jobProgress, isEnglish) : null;
 
   return (
     <div className={`rt-page rt-workbench-page rt-live-workbench ${focusMode ? "is-focus-mode" : ""}`}>
@@ -906,6 +906,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
       {saveStatus.state === "error" && <div className="rt-live-banner is-error" role="alert">{saveStatus.error} <button className="rt-button" onClick={() => downloadText(getUnsavedLocalBackup() || current, isEnglish ? "unsaved-backup" : "未同步备份")}>{isEnglish ? "Download backup" : "下载备份"}</button></div>}
 
       {(message || error) && <div className={`rt-live-banner ${error ? "is-error" : "is-success"}`} role={error ? "alert" : "status"}>{error ? <WarningCircle weight="fill" /> : <CheckCircle weight="fill" />}{error || localizedWorkbenchMessage(message, isEnglish)}</div>}
+      {lastResult && changeRows.length > 0 && <div className="rt-live-banner is-warn rt-post-modification-review" role="status"><WarningCircle weight="fill" /><span><strong>{isEnglish ? "Modification complete · human review required" : "修改已完成 · 请进行人工审核"}</strong>{isEnglish ? "Compare the highlighted before/after passages below, then check facts, citations, terms, and intended meaning before using the draft." : "请查看下方标亮的修改前后对照，并在使用修改稿前核对事实、引文、术语和原意。"}</span></div>}
       {report?.notices?.map((notice, index) => <div className="rt-live-banner is-warn" key={`${noticeText(notice)}-${index}`}><WarningCircle weight="fill" />{noticeText(notice)}</div>)}
 
       {progressView && <section className="rt-rewrite-progress" role="status" aria-live="polite" aria-label={isEnglish ? "Rewrite progress" : "改写进度"}>
@@ -939,32 +940,32 @@ export function WorkbenchPage({ navigate = () => {} }) {
           {reportIsStale && <div className="rt-live-stale-report" role="status"><WarningCircle weight="fill" />{isEnglish ? "The draft changed. These findings are for reference only; analyze again to refresh locations and rewrite options." : "当前稿已修改。旧线索仅供参考；重新分析后才能更新定位及改写选项。"}</div>}
           <div className="rt-finding-metrics">
             <div><strong>{visibleReport?.summary?.findings || 0}</strong><span>{isEnglish ? "Findings" : "诊断线索"}</span></div>
-            <div className="is-peach"><strong>{visibleReport?.summary?.review_items || 0}</strong><span>{isEnglish ? "Review only" : "仅供审阅"}</span></div>
+            <div className="is-peach"><strong>{visibleReport?.summary?.review_items || 0}</strong><span>{isEnglish ? "Contextual findings" : "上下文线索"}</span></div>
             <div className="is-yellow"><strong>{visibleCleanupCount}</strong><span>{isEnglish ? "Safe fixes" : "安全清理"}</span></div>
             <div className="is-green"><strong>{anchorsTotal}</strong><span>{isEnglish ? "Fact anchors" : "事实锚点"}</span></div>
           </div>
           <div className="rt-live-finding-list">
             {visibleFindings.length ? visibleFindings.map((finding, index) => {
               const key = `${finding.pattern_id}-${finding.start}-${index}`;
-              const canTryReviewFix = Boolean(reviewTargetFromFinding(finding));
+              const canTargetFinding = Boolean(reviewTargetFromFinding(finding));
               const contents = <>
                 <span className={`rt-live-severity is-${finding.severity || "medium"}`}>{severityLabel(finding.severity, isEnglish)}</span>
                 <strong>{findingName(finding, isEnglish)}</strong>
                 <p>{findingReason(finding, isEnglish)}</p>
-                {finding.handling === "review" && <small className="rt-live-review-tag">{reportIsStale ? (isEnglish ? "Previous report · location unavailable" : "上次报告 · 需重新定位") : canTryReviewFix ? (isEnglish ? "Optional automatic adjustment; research variable lists remain unchanged" : "可尝试自动调整；研究变量枚举会保留原文") : (isEnglish ? "Review and edit in the current draft" : "请核对，可在当前稿中手动修改")}</small>}
+                {finding.handling === "review" && <small className="rt-live-review-tag">{reportIsStale ? (isEnglish ? "Previous report · location unavailable" : "上次报告 · 需重新定位") : (isEnglish ? "The revision will preserve verified facts and citations" : "修改时会核对事实与引文")}</small>}
                 {finding.matched && <code>{finding.matched}</code>}
               </>;
               return reportIsStale
                 ? <article key={key} className="is-stale">{contents}</article>
-                : canTryReviewFix
+                : canTargetFinding
                   ? <article key={key} className={`rt-finding-actionable ${activeFinding === index ? "is-active" : ""}`}>
                     <button type="button" className="rt-finding-select" onClick={() => selectFinding(index)}>{contents}</button>
-                    <button type="button" className="rt-finding-auto" disabled={!canReviewRewrite(finding)} onClick={() => { setActiveFinding(index); runRewrite(finding); }}><Sparkle weight="bold" />{isEnglish ? "Try automatic adjustment" : "尝试自动修改"}<span>{isEnglish ? "No credits" : "免费"}</span></button>
+                    <button type="button" className="rt-finding-auto" disabled={!canReviewRewrite(finding) || Boolean(busy)} onClick={() => { setActiveFinding(index); setPendingFinding(finding); setConfirmOpen(true); }}><Sparkle weight="bold" />{isEnglish ? "Modify this finding" : "修改此项"}</button>
                   </article>
                 : <button key={key} className={activeFinding === index ? "is-active" : ""} onClick={() => selectFinding(index)}>{contents}</button>;
             }) : <div className="rt-live-empty is-compact"><ShieldCheck size={30} /><strong>{visibleReport ? (isEnglish ? "No obvious templated phrasing found" : "未发现明显模板化表达") : (isEnglish ? "Analysis is free" : "分析不消耗改写额度")}</strong></div>}
           </div>
-          {guard && <div className={`rt-guard-note ${guard.status === "passed" ? "is-passed" : ""}`}><ShieldCheck weight="fill" /><span><strong>{isEnglish ? "Fact guard" : "事实守卫"}</strong><small>{localizedGuardDetail(guard.detail, isEnglish) || (isEnglish ? "Review the comparison before export." : "请在导出前复核对照。")}</small></span></div>}
+          {guard && <div className={`rt-guard-note ${guard.status === "passed" ? "is-passed" : ""}`}><ShieldCheck weight="fill" /><span><strong>{guard.status === "review" ? (isEnglish ? "Human review required" : "需人工审核") : (isEnglish ? "Fact guard" : "事实守卫")}</strong><small>{localizedGuardDetail(guard.detail, isEnglish, guard.status) || (isEnglish ? "Review the comparison before export." : "请在导出前复核对照。")}</small></span></div>}
         </aside>
       </div>
 
@@ -985,29 +986,26 @@ export function WorkbenchPage({ navigate = () => {} }) {
       <section className="rt-action-dock rt-live-action-dock">
         {!withinJobLimit && <div className="rt-live-limit-note"><WarningCircle weight="fill" /><span>{isEnglish ? `The current draft is ${overJobLimit.toLocaleString()} characters over your ${jobLimit.toLocaleString()}-character rewrite limit. Trim it in the editor to continue.` : `当前稿超出 ${jobLimit.toLocaleString()} 字单次改写上限 ${overJobLimit.toLocaleString()} 字，请在当前稿中删减后再改写。`}</span><button type="button" onClick={() => currentEditorRef.current?.focus()}>{isEnglish ? "Edit current draft" : "编辑当前稿"}</button></div>}
         {nextAction === "rewrite" && !hasEnoughBalance && <div className="rt-live-limit-note"><WarningCircle weight="fill" />{isEnglish ? `This strategy needs about ${estimated.toLocaleString()} characters, but the current balance is ${Number(billing?.balance || 0).toLocaleString()}.` : `当前策略预计需要 ${estimated.toLocaleString()} 字符额度，可用余额为 ${Number(billing?.balance || 0).toLocaleString()} 字符。`}</div>}
-        {nextAction === "edit" && <div className="rt-live-limit-note"><WarningCircle weight="fill" />{hasReviewAutoOption
-          ? (isEnglish ? "You can try a free automatic adjustment for the marked three-part list. It may keep valid research variables unchanged; review the outcome yourself." : "三项并列线索可在诊断卡片中免费尝试自动修改；研究变量枚举可能保持原文，结果仍需人工核对。")
-          : (isEnglish ? "These findings need your review. Select a finding or use Edit current draft to change the relevant text, then analyze again." : "这些线索需要人工核对。可点击诊断项或“编辑当前稿”定位修改，修改后重新分析。")}</div>}
         <button className="rt-button" onClick={analyze} disabled={Boolean(busy)}>{busy === "analyze" ? <CircleNotch className="rt-spin" /> : <Sparkle weight="bold" />}{isEnglish ? "Analyze current text" : "分析当前正文"}</button>
         <button className="rt-safe-clean" onClick={safeFix} disabled={!report || !safeCleanupCount || Boolean(busy)}><ShieldCheck weight="bold" /><span><strong>{isEnglish ? "Safe cleanup" : "安全清理"}</strong><small>{isEnglish ? "Deterministic fixes only" : "仅确定性修改"}</small></span></button>
         <div className="rt-mode-switch" role="group" aria-label={isEnglish ? "Rewrite mode" : "改写模式"}>
           {strategies.map((item) => <button key={item.id} type="button" className={mode === item.id ? "is-active" : ""} aria-pressed={mode === item.id} disabled={Boolean(busy) || !allowed.includes(item.id)} onClick={() => setMode(item.id)}><strong>{isEnglish ? `${item.en} rewrite` : `${item.zh}改写`}</strong><small>{isEnglish ? item.enHint : item.zhHint}</small></button>)}
         </div>
-        {nextAction === "edit" ? <button className="rt-rewrite-action is-manual-edit" onClick={focusCurrentEditor} disabled={busy === "rewrite"}>
-          <NotePencil weight="bold" /><span><strong>{isEnglish ? "Edit current draft" : "编辑当前稿"}</strong><small>{isEnglish ? "Review the highlighted passage" : "定位线索，手动修改"}</small></span><ArrowRight weight="bold" />
-        </button> : <button className="rt-rewrite-action" disabled={!canRewrite || Boolean(busy)} onClick={() => setConfirmOpen(true)}>
+        <button className="rt-rewrite-action" disabled={!canRewrite || Boolean(busy)} onClick={() => { setPendingFinding(null); setConfirmOpen(true); }}>
           {busy === "rewrite" ? <CircleNotch className="rt-spin" weight="bold" /> : <FileText weight="bold" />}
-          <span><strong>{busy === "rewrite" ? (isEnglish ? "Rewriting…" : "正在改写…") : (isEnglish ? "Faithful rewrite" : "保真改写")}</strong><small>{jobProgress?.total ? `${jobProgress.done} / ${jobProgress.total}` : nextAction === "none" ? (isEnglish ? "No rewrite targets" : "暂无可改写项") : nextAction === "analyze" ? (isEnglish ? "Analyze the current draft first" : "请先分析当前稿") : (isEnglish ? `${estimated.toLocaleString()} chars estimated` : `预计 ${estimated.toLocaleString()} 字符额度`)}</small></span><ArrowRight weight="bold" />
-        </button>}
+          <span><strong>{busy === "rewrite" ? (isEnglish ? "Modifying…" : "正在修改…") : (isEnglish ? "Modify current draft" : "修改当前稿")}</strong><small>{jobProgress?.total ? `${jobProgress.done} / ${jobProgress.total}` : nextAction === "analyze" ? (isEnglish ? "Analyze the current draft first" : "请先分析当前稿") : (isEnglish ? `${estimated.toLocaleString()} chars estimated` : `预计 ${estimated.toLocaleString()} 字符额度`)}</small></span><ArrowRight weight="bold" />
+        </button>
       </section>
 
       {confirmOpen && createPortal(<div className="rt-confirm-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmOpen(false); }}><section ref={confirmDialogRef} className="rt-rewrite-confirm" role="dialog" aria-modal="true" aria-labelledby="rt-live-confirm-title" aria-describedby="rt-live-confirm-description">
         <span className="rt-confirm-kicker">RUN CHECK / {isEnglish ? "USAGE PREVIEW" : "扣减预览"}</span>
-        <h2 id="rt-live-confirm-title">{isEnglish ? `Run a ${selected.en.toLowerCase()} rewrite?` : `确认执行${selected.zh}改写？`}</h2>
-        <p id="rt-live-confirm-description">{isEnglish ? "The model will attempt every eligible diagnosed passage. Candidates that fail fact and citation checks remain unchanged. Quota is reserved only after confirmation and returned if nothing is accepted." : "模型会逐段尝试处理符合条件的诊断项；事实与引文校验不通过的段落保留原文。确认后才预占额度，零采纳会退回。"}</p>
-        <div className="rt-confirm-metrics"><div><span>{isEnglish ? "Billable text" : "计费文本"}</span><strong>{chars.toLocaleString()}</strong></div><div><span>{isEnglish ? "Rewrite mode" : "改写模式"}</span><strong>{isEnglish ? selected.en : `${selected.zh}改写`}</strong></div><div className="is-highlight"><span>{isEnglish ? "Estimated deduction" : "预计扣减"}</span><strong>{estimated.toLocaleString()}</strong></div></div>
+        <h2 id="rt-live-confirm-title">{pendingFinding ? (isEnglish ? "Modify this finding?" : "确认修改这条线索？") : (isEnglish ? `Run a ${selected.en.toLowerCase()} modification?` : `确认按${selected.zh}策略修改当前稿？`)}</h2>
+        <p id="rt-live-confirm-description">{pendingFinding
+          ? (isEnglish ? "The service will revise the selected finding with fact and citation safeguards. Deterministic edits may be free; model edits reserve quota. Afterward, check the before/after comparison yourself." : "服务会针对所选线索尝试修改，并核对事实与引文。确定性修改可能免费，模型修改会预占额度；完成后请核对前后对照。")
+          : (isEnglish ? "The service will revise the current draft regardless of the diagnosis outcome. Changes that fail fact and citation safeguards will not be accepted. Review the before/after comparison after completion; unused reserved quota is returned." : "服务会根据当前稿进行修改，不受诊断结果类型限制。未通过事实与引文守卫的候选不会采纳；完成后请审核前后对照，未使用的预占额度会退回。")}</p>
+        <div className="rt-confirm-metrics"><div><span>{isEnglish ? "Billable text" : "计费文本"}</span><strong>{chars.toLocaleString()}</strong></div><div><span>{isEnglish ? "Rewrite mode" : "改写模式"}</span><strong>{isEnglish ? selected.en : `${selected.zh}改写`}</strong></div><div className="is-highlight"><span>{isEnglish ? "Maximum reservation" : "最多预占额度"}</span><strong>{estimated.toLocaleString()}</strong></div></div>
         <div className="rt-confirm-balance"><span>{isEnglish ? "Available now" : "当前可用"}</span><strong>{Number(billing?.balance || 0).toLocaleString()} {isEnglish ? "chars" : "字"}</strong></div>
-        <div className="rt-confirm-actions"><button ref={cancelConfirmRef} className="rt-button" onClick={() => setConfirmOpen(false)}>{isEnglish ? "Cancel" : "取消"}</button><button className="rt-button rt-button-primary" onClick={() => runRewrite()} disabled={!canRewrite || Boolean(busy)}>{isEnglish ? "Confirm and start" : "确认并开始"}<ArrowRight weight="bold" /></button></div>
+        <div className="rt-confirm-actions"><button ref={cancelConfirmRef} className="rt-button" onClick={() => setConfirmOpen(false)}>{isEnglish ? "Cancel" : "取消"}</button><button className="rt-button rt-button-primary" onClick={() => runRewrite(pendingFinding)} disabled={!canRewrite || Boolean(busy)}>{isEnglish ? "Confirm and start" : "确认并开始"}<ArrowRight weight="bold" /></button></div>
       </section></div>, document.body)}
     </div>
   );

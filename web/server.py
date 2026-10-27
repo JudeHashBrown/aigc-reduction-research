@@ -437,18 +437,36 @@ def _run_queued_job(job):
     text = request.get("text")
     strength = request.get("strength")
     review_target = request.get("review_target")
+    deterministic_target = bool(request.get("deterministic_target"))
+    legacy_free_target = (review_target is not None
+                          and "deterministic_target" not in request)
     client = None
     try:
         if not isinstance(text, str) or strength not in {"conservative", "balanced", "deep"}:
             raise ValueError("排队任务缺少可恢复的正文或策略")
         if review_target is not None:
+            if not deterministic_target and not legacy_free_target:
+                client = Client()
+                if not client.configured:
+                    raise RuntimeError("平台改写服务暂不可用")
             _job_set(jid, phase="checking", done=0, total=1)
-            result = humanizer_bilingual.edit_review_finding(text, review_target)
+            result = (humanizer_bilingual.edit_review_finding(text, review_target)
+                      if legacy_free_target else
+                      humanizer_bilingual.edit_selected_finding(
+                          text, review_target, client=client,
+                          n_candidates={"conservative": 1, "balanced": 2,
+                                        "deep": 3}[strength]))
             result["strength"] = strength
             result["notices"] = request.get("notices") or []
-            result["model_usage"] = {"requests": 0, "input_tokens": 0,
-                                     "output_tokens": 0, "total_tokens": 0}
-            billing_result = _not_charged_review_billing(jid)
+            result["model_usage"] = (client.usage_summary() if client else
+                                      {"requests": 0, "input_tokens": 0,
+                                       "output_tokens": 0, "total_tokens": 0})
+            billing_result = (_not_charged_review_billing(jid)
+                              if deterministic_target or legacy_free_target
+                              else BILLING.finalize(
+                                  jid, success=True,
+                                  accepted=result.get("n_accepted", 0),
+                                  usage=result["model_usage"]))
             result["billing"] = billing_result
             _job_set(jid, state="done", phase="complete", done=1, total=1,
                      result=result, billing=billing_result)
@@ -460,7 +478,8 @@ def _run_queued_job(job):
         result = humanizer_bilingual.humanize(
             text, client, n_candidates={"conservative": 1, "balanced": 2, "deep": 3}[strength],
             progress=lambda d, t: _job_set(jid, done=d, total=t, phase="rewriting"),
-            auto_english=True, stage=lambda phase: _job_set(jid, phase=phase))
+            auto_english=True, stage=lambda phase: _job_set(jid, phase=phase),
+            user_requested=True)
         result["strength"] = strength
         result["notices"] = request.get("notices") or []
         result["model_usage"] = client.usage_summary()
@@ -473,7 +492,7 @@ def _run_queued_job(job):
     except Exception as exc:  # noqa: BLE001
         import traceback
         print("\n[Humanizer 双语任务失败]\n" + traceback.format_exc(), flush=True)
-        if review_target is not None:
+        if review_target is not None and (deterministic_target or legacy_free_target):
             billing_result = _not_charged_review_billing(jid)
         else:
             try:
@@ -1586,22 +1605,30 @@ class Handler(BaseHTTPRequestHandler):
                         "code": "review_target_requires_manuscript",
                     }, ensure_ascii=False))
                 if (not isinstance(review_target, dict)
-                        or review_target.get("pattern_id") != "EN-S01"
+                        or not isinstance(review_target.get("pattern_id"), str)
                         or type(review_target.get("start")) is not int
                         or type(review_target.get("end")) is not int
                         or not isinstance(review_target.get("matched"), str)):
                     return self._send(400, json.dumps({
-                        "error": "review_target 仅支持有效的 EN-S01 诊断项。",
+                        "error": "review_target 必须是有效的诊断项。",
                         "code": "invalid_review_target",
                     }, ensure_ascii=False))
-                finding = humanizer_bilingual.find_review_target(text, review_target)
+                finding = humanizer_bilingual.find_edit_target(text, review_target)
                 if finding is None:
                     return self._send(409, json.dumps({
                         "error": "诊断项与当前正文不一致，请重新分析后再试。",
                         "code": "stale_review_target",
                     }, ensure_ascii=False))
-                review_target = {"pattern_id": "EN-S01", "start": finding["start"],
+                review_target = {"pattern_id": finding["pattern_id"], "start": finding["start"],
                                  "end": finding["end"], "matched": finding["matched"]}
+                deterministic_target = humanizer_bilingual.deterministic_edit_target(
+                    text, review_target)
+                if not deterministic_target:
+                    client = Client()
+                    if not client.configured:
+                        return self._send(400, json.dumps({
+                            "error": "平台改写服务暂不可用，请联系管理员检查服务端模型配置。"
+                        }, ensure_ascii=False))
                 fingerprint = hashlib.sha256((
                     "review-target\0" + strength + "\0" + text + "\0" + json.dumps(
                         review_target, sort_keys=True, ensure_ascii=False)
@@ -1615,7 +1642,8 @@ class Handler(BaseHTTPRequestHandler):
                 fingerprint = request_fingerprint(text, strength)
             jid, claim = _new_job(account_id, request_id, fingerprint, manuscript_id,
                                   {"text": text, "strength": strength, "notices": notices,
-                                   **({"review_target": review_target}
+                                   **({"review_target": review_target,
+                                       "deterministic_target": deterministic_target}
                                       if review_target is not None else {})})
             if claim == "busy":
                 return self._send(429, json.dumps({
@@ -1630,7 +1658,7 @@ class Handler(BaseHTTPRequestHandler):
                     "job": jid, "reused": True,
                 }, ensure_ascii=False))
 
-            if review_target is not None:
+            if review_target is not None and deterministic_target:
                 # A bounded, deterministic edit neither calls the model nor
                 # reserves character credits.  A non-null billing marker lets
                 # the durable queue dispatch and recover it normally.
@@ -1783,7 +1811,10 @@ def _recover_interrupted_jobs():
     for job in WORKSPACES.unreserved_jobs():
         # A crash may land between the queued claim and the reservation write.
         # Never dispatch or indefinitely count such a task against queue slots.
-        if not (job.get("request") or {}).get("review_target"):
+        request = job.get("request") or {}
+        old_review_job = (request.get("review_target") is not None
+                          and "deterministic_target" not in request)
+        if not request.get("deterministic_target") and not old_review_job:
             try:
                 BILLING.finalize(job["id"], success=False, accepted=0)
             except BillingError as exc:
@@ -1802,7 +1833,11 @@ def _recover_interrupted_jobs():
             else:
                 continue
         result = job.get("result")
-        if (job.get("request") or {}).get("review_target"):
+        request = job.get("request") or {}
+        old_review_job = (request.get("review_target") is not None
+                          and "deterministic_target" not in request)
+        if (request.get("deterministic_target") or old_review_job
+                or (job.get("billing") or {}).get("status") == "not_charged"):
             billing_result = _not_charged_review_billing(job["id"])
         else:
             try:

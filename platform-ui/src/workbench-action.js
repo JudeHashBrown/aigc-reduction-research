@@ -1,15 +1,13 @@
 export function workbenchAction(report) {
   if (!report) return "analyze";
-  const findings = Array.isArray(report.findings) ? report.findings : [];
-  const hasServerCandidateCount = Object.prototype.hasOwnProperty.call(report.summary || {}, "auto_rewrite_candidates");
-  const canRewrite = hasServerCandidateCount
-    ? Number(report.summary.auto_rewrite_candidates) > 0
-    : findings.some((finding) => finding.handling === "rewrite"
-        && finding.language !== "en"
-        && !String(finding.pattern_id || "").startsWith("EN-"));
-  if (canRewrite) return "rewrite";
-  if (Number(report.summary?.findings || 0) > 0 || findings.length > 0) return "edit";
-  return "none";
+  // A diagnosis describes the draft; it never blocks a requested modification.
+  // The rewrite service decides which safe changes to accept for the full text.
+  return "rewrite";
+}
+
+export function canStartModification({ report, llmConfigured, allowedStrengths, mode, withinJobLimit, hasEnoughBalance }) {
+  return workbenchAction(report) === "rewrite" && Boolean(llmConfigured)
+    && allowedStrengths.includes(mode) && withinJobLimit && hasEnoughBalance;
 }
 
 export function deterministicCleanupCount(report) {

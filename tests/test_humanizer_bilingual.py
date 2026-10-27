@@ -590,6 +590,181 @@ def test_selected_s01_edit_rejects_stale_or_forged_target():
         raise AssertionError("stale finding was accepted")
 
 
+def test_user_requested_rewrite_edits_clear_chinese_and_english():
+    for source, expected in (
+            ("本研究考察样本分布。", "本研究分析样本分布。"),
+            ("The method uses available records for analysis.",
+             "For analysis, the method uses available records.")):
+        assert H.analyze(source)["summary"]["findings"] == 0
+        client = MockClient(lambda _text, value=expected: value)
+        result = H.humanize(source, client, n_candidates=1,
+                            user_requested=True)
+        assert result["text"] == expected
+        assert result["changed"] and result["n_accepted"] == 1
+        assert result["manual_review_required"]
+        assert result["guard"]["status"] == "review"
+        assert len(client.calls) == 1
+
+
+def test_user_requested_rewrite_edits_review_and_safe_only_reports():
+    source = "This method utilizes available records."
+    assert all(item["handling"] == "review"
+               for item in H.analyze(source)["findings"])
+    result = H.humanize(
+        source, MockClient(lambda _text: "This method uses available records."),
+        n_candidates=1, user_requested=True)
+    assert result["changed"] and result["text"] == "This method uses available records."
+
+    safe = "**本方法可行。**"
+    assert H.analyze(safe)["summary"]["safe_fixes"] == 1
+    result = H.humanize(safe, MockClient(lambda text: text), n_candidates=1,
+                        user_requested=True)
+    assert result["text"] == "本方法可行。" and result["changed"]
+    assert result["n_safe_changes"] >= 1
+    assert result["manual_review_required"]
+
+
+def test_user_requested_rewrite_preserves_mixed_latin_and_facts():
+    source = "本文将深入探讨 BERT 模型对 126 份样本的分析，见[1]。"
+    expected = "本文讨论 BERT 模型对 126 份样本的分析，见[1]。"
+    result = H.humanize(source, MockClient(lambda _text: expected),
+                        n_candidates=1, user_requested=True)
+    assert result["text"] == expected and result["changed"]
+    assert result["guard"]["status"] == "review"
+
+    mixed_english = "It was found that the estimate is stable. 这是说明。"
+    result = H.humanize(
+        mixed_english,
+        MockClient(lambda _text: "The estimate is stable. 这是说明。"),
+        n_candidates=1, user_requested=True)
+    assert result["text"] == mixed_english and not result["changed"]
+    assert result["n_accepted"] == result["n_safe_changes"] == 0
+    assert result["no_change_reason"]
+
+    protected_markup = "本文使用 **BERT** 模型。"
+    result = H.humanize(protected_markup, MockClient(lambda text: text),
+                        n_candidates=1, user_requested=True)
+    assert result["text"] == protected_markup and not result["changed"]
+    assert result["n_safe_changes"] == result["n_accepted"] == 0
+
+
+def test_user_requested_rewrite_rejects_unsafe_or_identical_candidates():
+    source = "本研究对 126 份样本进行分析，见[1]。"
+    for proposed in (source, "本研究对 200 份样本进行分析，见[1]。",
+                     "本研究对 126 份样本进行分析，见[2]。"):
+        result = H.humanize(
+            source, MockClient(lambda _text, value=proposed: value),
+            n_candidates=1, user_requested=True)
+        assert result["text"] == source and not result["changed"]
+        assert result["n_accepted"] == result["n_safe_changes"] == 0
+        assert result["no_change_reason"] and result["no_change_reason_en"]
+
+
+def test_user_requested_rewrite_changes_multi_finding_report():
+    source = "本文将深入探讨一个至关重要的问题。"
+    assert H.analyze(source)["summary"]["findings"] >= 2
+    result = H.humanize(source,
+                        MockClient(lambda _text: "本文讨论一个重要的问题。"),
+                        n_candidates=1, user_requested=True)
+    assert result["text"] != source and result["changed"]
+    assert result["n_accepted"] == 1
+
+
+def test_list_guard_allows_edits_in_a_different_sentence():
+    english = ("The tool is fast, stable, and simple. "
+               "Additionally, this method utilizes records.")
+    english_changed = ("The tool is fast, stable, and simple. "
+                       "This method uses records.")
+    result = H.humanize(english, MockClient(lambda _text: english_changed),
+                        n_candidates=1, user_requested=True)
+    assert result["text"] == english_changed and result["changed"]
+
+    chinese = "系统新增导出、搜索和批量重命名。本文将深入探讨该功能。"
+    chinese_changed = "系统新增导出、搜索和批量重命名。本文讨论该功能。"
+    result = H.humanize(chinese, MockClient(lambda _text: chinese_changed),
+                        n_candidates=1, user_requested=True)
+    assert result["text"] == chinese_changed and result["changed"]
+
+
+def test_user_requested_rewrite_retries_a_rejected_first_candidate():
+    source = "本研究对 126 份样本进行分析。"
+    calls = []
+
+    def proposal(_text):
+        calls.append(1)
+        return ("本研究对 200 份样本进行分析。" if len(calls) == 1
+                else "本研究分析了 126 份样本。")
+
+    client = MockClient(proposal)
+    result = H.humanize(source, client, n_candidates=1,
+                        user_requested=True)
+    assert result["changed"] and len(client.calls) == 2
+    assert result["text"] == "本研究分析了 126 份样本。"
+
+
+def test_any_current_finding_can_be_selected_and_review_follows_edit():
+    source = "This method utilizes available records."
+    finding = next(item for item in H.analyze(source)["findings"]
+                   if item["matched"] == "utilizes")
+    assert H.find_edit_target(source, finding) == finding
+    result = H.edit_selected_finding(
+        source, finding,
+        MockClient(lambda _text: "This method uses available records."),
+        n_candidates=1)
+    assert result["text"] == "This method uses available records."
+    assert result["review_target"]["status"] == "changed"
+    assert result["review_target"]["manual_review_required"]
+    assert result["guard"]["status"] == "review"
+
+
+def test_selected_s11_edits_only_the_chosen_passive_shell():
+    source = ("It was found that the first estimate may hold. "
+              "It was found that the second estimate may hold.")
+    findings = [item for item in H.analyze(source)["findings"]
+                if item["pattern_id"] == "EN-S11"]
+    assert len(findings) == 2
+    result = H.edit_selected_finding(source, findings[1])
+    assert result["text"] == (
+        "It was found that the first estimate may hold. "
+        "The second estimate may hold.")
+    assert result["changed"] and result["n_accepted"] == 1
+
+
+def test_selected_review_list_keeps_all_items_and_rejects_loss():
+    source = "We examine abnormal returns, stock liquidity, and analyst forecast accuracy."
+    finding = next(item for item in H.analyze(source)["findings"]
+                   if item["pattern_id"] == "EN-S01")
+    unsafe = H.edit_selected_finding(
+        source, finding,
+        MockClient(lambda _text: "We examine abnormal returns and stock liquidity."),
+        n_candidates=1)
+    assert unsafe["text"] == source and not unsafe["changed"]
+    assert unsafe["review_target"]["status"] == "unchanged"
+    assert unsafe["no_change_reason"]
+    safe = H.edit_selected_finding(
+        source, finding,
+        MockClient(lambda _text: (
+            "We examine abnormal returns and stock liquidity, together with "
+            "analyst forecast accuracy.")), n_candidates=1)
+    assert safe["changed"] and "analyst forecast accuracy" in safe["text"]
+    assert safe["review_target"]["manual_review_required"]
+
+
+def test_selected_chinese_list_keeps_every_item():
+    source = "系统新增导出、搜索和批量重命名。"
+    finding = next(item for item in H.analyze(source)["findings"]
+                   if item["pattern_id"] == "B6")
+    unsafe = H.edit_selected_finding(
+        source, finding, MockClient(lambda _text: "系统新增导出和搜索。"),
+        n_candidates=1)
+    assert unsafe["text"] == source and not unsafe["changed"]
+    safe = H.edit_selected_finding(
+        source, finding,
+        MockClient(lambda _text: "系统新增导出、搜索以及批量重命名。"),
+        n_candidates=1)
+    assert safe["changed"] and "批量重命名" in safe["text"]
+
+
 if __name__ == "__main__":
     tests = [value for name, value in sorted(globals().items())
              if name.startswith("test_") and callable(value)]

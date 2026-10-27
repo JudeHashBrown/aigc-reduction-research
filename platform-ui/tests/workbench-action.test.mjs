@@ -1,34 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { billableChars } from "../src/billing-text.js";
-import { deterministicCleanupCount, snapshotMatchesDraft, workbenchAction } from "../src/workbench-action.js";
+import { canStartModification, deterministicCleanupCount, snapshotMatchesDraft, workbenchAction } from "../src/workbench-action.js";
 
 const finding = (pattern_id, paragraph, handling = "review", language = "en") => ({
   pattern_id, paragraph, handling, language,
 });
 
-test("an English rule-of-three review opens manual editing, not an empty rewrite job", () => {
-  const report = { summary: { findings: 1, review_items: 1, rewrite_items: 0, auto_rewrite_candidates: 0 }, findings: [finding("EN-S01", 1)] };
-  assert.equal(workbenchAction(report), "edit");
-  assert.equal(workbenchAction({ ...report, summary: { ...report.summary, rewrite_items: 1 } }), "edit");
-  assert.equal(workbenchAction({ ...report, findings: [finding("EN-S01", 1), finding("EN-V-T1", 1)] }), "edit");
-});
-
-test("the service candidate count decides whether English findings can start a rewrite", () => {
-  const report = { summary: { findings: 2, rewrite_items: 0, auto_rewrite_candidates: 1 }, findings: [finding("EN-S01", 1), finding("EN-V-T1", 2)] };
-  assert.equal(workbenchAction(report), "rewrite");
-  assert.equal(workbenchAction({ ...report, summary: { ...report.summary, auto_rewrite_candidates: 0 }, findings: [finding("EN-S11", 1)] }), "edit");
-  assert.equal(workbenchAction({ ...report, summary: { ...report.summary, auto_rewrite_candidates: 0 }, findings: [finding("EN-F01", 1, "safe")] }), "edit");
-  assert.equal(workbenchAction({ ...report, text: "It was found that the estimate is stable. 这是说明。", summary: { ...report.summary, auto_rewrite_candidates: 0 }, findings: [finding("EN-S11", 1)] }), "edit");
-  assert.equal(workbenchAction({ ...report, summary: { findings: 1 }, findings: [finding("EN-V-T1", 1)] }), "edit");
-});
-
-test("Chinese review-only findings remain editable; rewrite findings can start a job", () => {
-  const report = { summary: { findings: 1 }, findings: [finding("B6", 1, "review", "zh")] };
-  assert.equal(workbenchAction(report), "edit");
-  assert.equal(workbenchAction({ ...report, findings: [finding("C12", 1, "rewrite", "zh")] }), "rewrite");
+test("every completed diagnosis can start modification, including clear and review-only reports", () => {
+  const reports = [
+    { summary: { findings: 0, auto_rewrite_candidates: 0, status: "clear" }, findings: [] },
+    { summary: { findings: 1, review_items: 1, auto_rewrite_candidates: 0 }, findings: [finding("EN-S01", 1)] },
+    { summary: { findings: 1, auto_rewrite_candidates: 0 }, findings: [finding("EN-S11", 1)] },
+    { summary: { findings: 1, auto_rewrite_candidates: 0 }, findings: [finding("EN-F01", 1, "safe")] },
+    { summary: { findings: 1, auto_rewrite_candidates: 0 }, findings: [finding("B6", 1, "review", "zh")] },
+    { summary: { findings: 1 }, findings: [finding("C12", 1, "rewrite", "zh")] },
+    { text: "It was found that the estimate is stable. 这是说明。", summary: { findings: 1, auto_rewrite_candidates: 0 }, findings: [finding("EN-S11", 1)] },
+  ];
+  for (const report of reports) assert.equal(workbenchAction(report), "rewrite");
   assert.equal(workbenchAction(null), "analyze");
-  assert.equal(workbenchAction({ summary: { findings: 0 }, findings: [] }), "none");
+});
+
+test("the main modify button is enabled after each diagnosis outcome when account limits permit", () => {
+  const settings = { llmConfigured: true, allowedStrengths: ["conservative"], mode: "conservative", withinJobLimit: true, hasEnoughBalance: true };
+  for (const [status, findings] of [
+    ["clear", []],
+    ["review", [finding("EN-S01", 1)]],
+    ["review", [finding("EN-F01", 1, "safe")]],
+    ["needs_work", [finding("C12", 1, "rewrite", "zh")]],
+  ]) {
+    const report = { summary: { status, findings: findings.length, auto_rewrite_candidates: 0 }, findings };
+    assert.equal(canStartModification({ report, ...settings }), true, status);
+  }
+  assert.equal(canStartModification({ report: null, ...settings }), false);
+  assert.equal(canStartModification({ report: { summary: { status: "clear" } }, ...settings, hasEnoughBalance: false }), false);
+  assert.equal(canStartModification({ report: { summary: { status: "clear" } }, ...settings, llmConfigured: false }), false);
 });
 
 test("English format-only findings do not expose a cleanup that cannot run", () => {

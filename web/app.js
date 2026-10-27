@@ -983,7 +983,6 @@ function syncEntitlements() {
 function syncRewriteButton() {
   const button = $('#rewriteBtn');
   const hint = $('#actionHint');
-  const findings = Number(state.report?.summary?.findings || 0);
   const allowed = allowedStrengths().includes(state.strength);
   if (state.rewriteRunning) {
     button.disabled = true;
@@ -993,10 +992,6 @@ function syncRewriteButton() {
     button.disabled = true;
     button.textContent = '请先分析';
     hint.textContent = '免费分析完成后，再选择是否需要改写';
-  } else if (!findings) {
-    button.disabled = true;
-    button.textContent = '暂无需改写';
-    hint.textContent = '当前未发现明显模板化表达，无需为了变化而强行改写';
   } else if (!allowed) {
     button.disabled = false;
     button.textContent = state.trialMode ? '联系管理员开通' : '升级后使用此模式';
@@ -1167,7 +1162,7 @@ function rewrite() {
     toast('已有改写任务正在运行');
     return;
   }
-  if (!state.report || !Number(state.report.summary?.findings || 0)) return;
+  if (!state.report) return;
   if (!(state.config && state.config.llm_configured)) {
     openConfig();
     return;
@@ -1272,12 +1267,15 @@ async function pollJob(id) {
     if (charged) {
       success.textContent = `已采纳 ${result.n_accepted} / ${result.n_chunks} 个候选，扣除 ${charged.toLocaleString('zh-CN')} 字额度，余额 ${balance.toLocaleString('zh-CN')} 字。`;
     } else if (result.changed) {
-      success.textContent = `完成 ${Number(result.n_safe_changes || 0)} 处免费安全清理；未采纳模型候选，${released.toLocaleString('zh-CN')} 字预占额度已退回。`;
+      success.textContent = `已产生修改并退回 ${released.toLocaleString('zh-CN')} 字预占额度。请在修改对照中人工复核。`;
     } else {
-      success.textContent = `未采纳候选，原稿保持不变，${released.toLocaleString('zh-CN')} 字预占额度已退回。`;
+      success.textContent = `${result.no_change_reason || '未采纳候选，原稿保持不变。'}${released.toLocaleString('zh-CN')} 字预占额度已退回。`;
     }
-    setPersistent('保真改写完成。请逐条查看“修改对照”，确认后再复制或导出。', 'success');
-    toast(`已采纳 ${result.n_accepted} / ${result.n_chunks} 个候选`);
+    setPersistent(result.changed
+      ? '修改完成。请逐条查看“修改对照”，人工确认后再复制或导出。'
+      : (result.no_change_reason || '未找到通过事实守卫的有效修改，原稿保持不变。'),
+    result.changed ? 'success' : 'warn');
+    toast(result.changed ? `已采纳 ${result.n_accepted} / ${result.n_chunks} 个候选` : '没有可采纳的修改');
     return;
   }
 }

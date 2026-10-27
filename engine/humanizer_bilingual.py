@@ -9,8 +9,10 @@ It deliberately reports editing signals rather than an "AI percentage".
 """
 from __future__ import annotations
 
+import difflib
 import re
 import unicodedata
+from collections import Counter
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import guard
@@ -439,6 +441,23 @@ def find_review_target(text: str, target: Dict) -> Optional[Dict]:
                  and item.get("matched") == matched), None)
 
 
+def find_edit_target(text: str, target: Dict) -> Optional[Dict]:
+    """Resolve a selected finding against the current manuscript, not saved UI data."""
+    if not isinstance(target, dict):
+        return None
+    start, end, matched = target.get("start"), target.get("end"), target.get("matched")
+    pattern_id = target.get("pattern_id")
+    if (type(start) is not int or type(end) is not int
+            or not isinstance(pattern_id, str) or not isinstance(matched, str)
+            or not 0 <= start < end <= len(text) or end - start > 3500
+            or text[start:end] != matched):
+        return None
+    return next((item for item in analyze(text)["findings"]
+                 if item.get("pattern_id") == pattern_id
+                 and item.get("start") == start and item.get("end") == end
+                 and item.get("matched") == matched), None)
+
+
 def edit_review_finding(text: str, target: Dict) -> Dict:
     """Opt-in, deterministic edit of one safely recognizable EN-S01 finding.
 
@@ -510,6 +529,430 @@ def edit_review_finding(text: str, target: Dict) -> Dict:
                           "reason_code": reason_code, "reason": reason,
                           "reason_en": reason_en},
         "method": "Deterministic selected-finding edit + factual guard",
+        "disclaimer": before["disclaimer"],
+    }
+
+
+_REQUESTED_SYSTEM = (
+    "You are a careful academic copy editor. The author has explicitly asked "
+    "for a visible wording edit. Make a small, useful change to expression or "
+    "sentence structure, including when a detector found no issue. A finding "
+    "is a clue, not proof that content is wrong. Preserve every claim, list "
+    "item, number, citation, technical term, qualifier, negation, causal "
+    "relation, and paragraph break. Do not add facts or invent sources. "
+    "Keep Chinese and English passages in their original languages and copy "
+    "embedded Latin identifiers exactly. If no faithful edit is possible, "
+    "return the input unchanged. Output only the edited passage."
+)
+
+
+def _requested_prompt(source: str, findings: Sequence[Dict],
+                      selected: Optional[Dict] = None) -> str:
+    if selected is None:
+        instructions = (
+            "用户已点击修改。请对这段做至少一处可见且有意义的表达调整；"
+            "无诊断线索也可以改善句法或精简冗余。真实列举须保留每一项。"
+        )
+        relevant = findings[:16]
+    else:
+        instructions = (
+            "用户已点击这条线索的修改。只调整与选中线索有关的句法或用词；"
+            "保留同一句中其他信息和完整列举。请输出整个待改片段。"
+        )
+        relevant = [selected]
+    clues = [
+        {"id": item.get("pattern_id"), "matched": item.get("matched"),
+         "suggestion": item.get("suggestion")}
+        for item in relevant
+    ]
+    return (instructions + "\n诊断线索：" + str(clues)
+            + "\n待改片段：\n<<<TEXT>>>\n" + source + "\n<<<END>>>")
+
+
+def _ordered_list_words_preserved(source: str, candidate: str) -> bool:
+    """A style change must not silently remove a reported list component."""
+    before = analyze(source)
+    sentence_pattern = re.compile(r"[^\n.。！？!?；;]+[.。！？!?；;]?|[.。！？!?；;]")
+    source_sentences = list(sentence_pattern.finditer(source))
+    candidate_sentences = list(sentence_pattern.finditer(candidate))
+    english_connectors = {"and", "or", "with", "as", "well", "together",
+                          "along", "while", "remaining", "also"}
+    for finding in before["findings"]:
+        pattern_id = finding.get("pattern_id")
+        if pattern_id not in {"EN-S01", "B6", "F29"}:
+            continue
+        index = next((position for position, sentence in enumerate(source_sentences)
+                      if sentence.start() <= finding["start"]
+                      and finding["end"] <= sentence.end()), None)
+        if (index is None or len(source_sentences) != len(candidate_sentences)):
+            return False
+        source_sentence = source_sentences[index].group(0)
+        candidate_sentence = candidate_sentences[index].group(0)
+        if pattern_id == "EN-S01":
+            # A verified S11 shell can be removed elsewhere in the same line
+            # without changing any item of this three-part list.
+            source_content_text = (
+                bilingual_rewrite._strip_en_s11_shell(source_sentence)
+                or source_sentence)
+            source_content = Counter(word.lower() for word in re.findall(
+                r"[A-Za-z][A-Za-z'-]*", source_content_text)
+                if word.lower() not in english_connectors)
+            candidate_content = Counter(word.lower() for word in re.findall(
+                r"[A-Za-z][A-Za-z'-]*", candidate_sentence)
+                if word.lower() not in english_connectors)
+            if source_content != candidate_content:
+                return False
+            words = re.findall(r"[A-Za-z][A-Za-z'-]*",
+                               candidate_sentence.lower())
+            required = [word.lower() for word in re.findall(
+                r"[A-Za-z][A-Za-z'-]*", finding["matched"])
+                    if word.lower() not in {"and", "or"}]
+            position = 0
+            for word in required:
+                try:
+                    position = words.index(word, position) + 1
+                except ValueError:
+                    return False
+        elif pattern_id in {"B6", "F29"}:
+            source_content = Counter(char for char in source_sentence
+                                     if _CJK.match(char) and char not in "和与以及")
+            candidate_content = Counter(char for char in candidate_sentence
+                                        if _CJK.match(char) and char not in "和与以及")
+            if source_content != candidate_content:
+                return False
+            parts = [part.strip() for part in re.split(
+                r"[、，,]|以及|和|与", finding["matched"]) if part.strip()]
+            position = 0
+            for part in parts:
+                found = candidate_sentence.find(part, position)
+                if found < 0:
+                    return False
+                position = found + len(part)
+    return True
+
+
+def _requested_candidate(source: str, raw: str) -> Dict:
+    """Check a user-requested edit before any candidate reaches the manuscript."""
+    candidate = humanizer_cn._restore_paragraph_separators(
+        source, humanizer_cn._clean_model_output(raw))
+    if not candidate or candidate.strip() == source.strip():
+        return {"ok": False, "text": source, "reason": "候选没有实际修改"}
+    ratio = len(candidate) / max(1, len(source))
+    if not 0.55 <= ratio <= 1.45:
+        return {"ok": False, "text": candidate, "reason": "候选长度偏离过大"}
+    paragraph_error = humanizer_cn._paragraph_safety_error(source, candidate)
+    if paragraph_error:
+        return {"ok": False, "text": candidate,
+                "reason": paragraph_error["reason"]}
+    comparison = _document_guard(source, candidate)
+    if (comparison.get("fabricated") or comparison.get("n_removed")
+            or comparison.get("terms_lost") or comparison.get("semantic_changed")):
+        return {"ok": False, "text": candidate,
+                "reason": "事实守卫未通过：" + guard.describe(comparison)}
+    warnings = humanizer_cn._anchor_warnings(source, candidate)
+    if warnings:
+        return {"ok": False, "text": candidate,
+                "reason": "；".join(warnings)}
+    if not _ordered_list_words_preserved(source, candidate):
+        return {"ok": False, "text": candidate,
+                "reason": "列举中的原项或顺序发生变化"}
+    before, after = analyze(source), analyze(candidate)
+    if after["summary"]["high"] > before["summary"]["high"]:
+        return {"ok": False, "text": candidate,
+                "reason": "候选引入了新的高优先级表达问题"}
+    similarity = difflib.SequenceMatcher(None, source, candidate).ratio()
+    score = (before["summary"]["findings"] - after["summary"]["findings"]) * 8
+    score += similarity * 2 - abs(1 - ratio) * 2
+    return {"ok": True, "text": candidate, "score": score,
+            "reason": "已生成保真修改，请人工核对原意与上下文",
+            "guard": comparison}
+
+
+def _selected_window(text: str, finding: Dict) -> Tuple[int, int]:
+    """Keep a selected edit inside its source line and near its finding."""
+    start, end = finding["start"], finding["end"]
+    line_start = text.rfind("\n", 0, start) + 1
+    next_newline = text.find("\n", end)
+    line_end = len(text) if next_newline < 0 else next_newline
+    if line_end - line_start <= 3500:
+        return line_start, line_end
+    left = max(line_start, start - 1200)
+    right = min(line_end, max(end + 1200, left + 2400))
+    return left, right
+
+
+def _difference_touches_target(source: str, candidate: str,
+                               target_start: int, target_end: int) -> bool:
+    for kind, left_start, left_end, _, _ in difflib.SequenceMatcher(
+            None, source, candidate).get_opcodes():
+        if kind == "equal":
+            continue
+        if (left_start < target_end and left_end > target_start
+                or left_start == left_end and target_start <= left_start <= target_end):
+            return True
+    return False
+
+
+def _deterministic_selected_text(text: str, finding: Dict) -> Optional[str]:
+    """Return a guarded, exact selected edit when no model judgment is needed."""
+    start, end = finding["start"], finding["end"]
+    replacement = finding.get("replacement")
+    if finding.get("handling") == "safe" and isinstance(replacement, str):
+        output = text[:start] + replacement + text[end:]
+    elif finding.get("pattern_id") == "EN-S01":
+        result = edit_review_finding(text, finding)
+        output = result["text"]
+    elif finding.get("pattern_id") == "EN-S11":
+        stripped = bilingual_rewrite._strip_en_s11_shell(text[start:])
+        output = text[:start] + stripped if stripped is not None else text
+    else:
+        return None
+    if output == text:
+        return None
+    comparison = _document_guard(text, output)
+    if (comparison.get("fabricated") or comparison.get("n_removed")
+            or comparison.get("terms_lost") or comparison.get("semantic_changed")
+            or humanizer_cn._anchor_warnings(text, output)):
+        return None
+    return output
+
+
+def deterministic_edit_target(text: str, target: Dict) -> bool:
+    finding = find_edit_target(text, target)
+    return bool(finding and _deterministic_selected_text(text, finding))
+
+
+def edit_selected_finding(text: str, target: Dict, client: Optional[Client] = None,
+                          n_candidates: int = 2) -> Dict:
+    """Edit any current finding; return review advice only after the attempt."""
+    finding = find_edit_target(text, target)
+    if finding is None:
+        raise ValueError("诊断项与当前正文不一致，请重新分析后再试。")
+    before = analyze(text)
+    deterministic = _deterministic_selected_text(text, finding)
+    records: List[Dict] = []
+    reason_code = "guard_rejected"
+    reason = "没有通过事实守卫的有效修改，原文保持不变；请人工核对。"
+    reason_en = ("No safe edit was accepted. The original remains unchanged; "
+                 "please review this finding manually.")
+    if deterministic is not None:
+        output = deterministic
+        reason_code = "deterministic_edit"
+        reason = "已完成定向修改；请核对事实、引文与上下文。"
+        reason_en = "The selected wording was edited. Please review facts, citations and context."
+        records.append({"index": int(finding.get("paragraph") or 1) - 1,
+                        "lang": finding.get("language") or "zh",
+                        "accepted": True, "reason": reason,
+                        "targets": [finding["pattern_id"]],
+                        "original": text, "rewritten": output,
+                        "candidates": []})
+    else:
+        if client is None or not client.configured:
+            raise LLMError("此诊断项需要平台改写服务，当前服务不可用")
+        left, right = _selected_window(text, finding)
+        source = text[left:right]
+        try:
+            raw_candidates = client.complete(
+                _REQUESTED_SYSTEM, _requested_prompt(source, [finding], finding),
+                n=max(1, min(n_candidates, 4)), max_tokens=max(2000, len(source) * 2))
+        except LLMError as exc:
+            raise LLMError(f"定向修改调用失败：{exc}") from exc
+        scored = [_requested_candidate(source, raw) for raw in raw_candidates]
+        viable = [item for item in scored if item.get("ok")
+                  and _difference_touches_target(
+                      source, item["text"], finding["start"] - left,
+                      finding["end"] - left)]
+        if not viable:
+            retry_reason = scored[0]["reason"] if scored else "没有候选"
+            retry_prompt = (_requested_prompt(source, [finding], finding)
+                            + "\n上次候选未被采纳：" + retry_reason
+                            + "。请换一种小幅、保真且确实修改选中线索的写法。")
+            retry = client.complete(_REQUESTED_SYSTEM, retry_prompt, n=1,
+                                    max_tokens=max(2000, len(source) * 2))
+            scored.extend(_requested_candidate(source, raw) for raw in retry)
+            viable = [item for item in scored if item.get("ok")
+                      and _difference_touches_target(
+                          source, item["text"], finding["start"] - left,
+                          finding["end"] - left)]
+        viable.sort(key=lambda item: item["score"], reverse=True)
+        output = text
+        for candidate in viable:
+            proposed = text[:left] + candidate["text"] + text[right:]
+            comparison = _document_guard(text, proposed)
+            if (comparison.get("fabricated") or comparison.get("n_removed")
+                    or comparison.get("terms_lost")
+                    or comparison.get("semantic_changed")
+                    or humanizer_cn._anchor_warnings(text, proposed)):
+                continue
+            output = proposed
+            reason_code = "model_edit"
+            reason = "已修改选中表达；请人工核对事实、引文及原意。"
+            reason_en = "The selected wording was edited. Please review facts, citations and meaning."
+            break
+        if output == text and scored:
+            reason = "没有通过事实守卫的定向修改：" + scored[0]["reason"]
+            reason_en = "No safe targeted edit was accepted; review this finding manually."
+        records.append({"index": int(finding.get("paragraph") or 1) - 1,
+                        "lang": finding.get("language") or "zh",
+                        "accepted": output != text, "reason": reason,
+                        "targets": [finding["pattern_id"]],
+                        "original": source,
+                        "rewritten": output[left:left + len(output) - len(text) + len(source)]
+                        if output != text else source,
+                        "candidates": [{key: value for key, value in item.items()
+                                        if key != "guard"} for item in scored]})
+    changed = output != text
+    comparison = _document_guard(text, output)
+    after = analyze(output)
+    return {
+        "text": output, "before": before, "after": after,
+        "autofix": {"text": text, "changed": False, "log": []},
+        "chunks": records, "n_chunks": 1, "n_accepted": int(changed),
+        "n_safe_changes": int(bool(deterministic)
+                              and finding.get("handling") == "safe"),
+        "changed": changed,
+        "guard": {"fabricated": comparison.get("fabricated", False),
+                  "added": comparison.get("added", {}),
+                  "removed": comparison.get("removed", {}),
+                  "detail": guard.describe(comparison), "warnings": [],
+                  "status": "review" if changed else "passed"},
+        "review_target": {"pattern_id": finding["pattern_id"],
+                          "start": finding["start"], "end": finding["end"],
+                          "status": "changed" if changed else "unchanged",
+                          "reason_code": reason_code, "reason": reason,
+                          "reason_en": reason_en,
+                          "manual_review_required": changed},
+        "manual_review_required": changed,
+        **({"no_change_reason": reason, "no_change_reason_en": reason_en}
+           if not changed else {}),
+        "method": "Selected finding edit + factual guard",
+        "disclaimer": before["disclaimer"],
+    }
+
+
+def _requested_humanize(text: str, client: Client, n_candidates: int,
+                        progress=None, stage=None) -> Dict:
+    """A click on Rewrite attempts a visible edit for every report status."""
+    before = analyze(text)
+    stage1 = autofix(text)
+    source = stage1["text"]
+    if source != text:
+        stage1_guard = _document_guard(text, source)
+        if (stage1_guard.get("fabricated") or stage1_guard.get("n_removed")
+                or stage1_guard.get("terms_lost")
+                or stage1_guard.get("semantic_changed")
+                or humanizer_cn._anchor_warnings(text, source)):
+            source = text
+            stage1 = {**stage1, "text": text, "changed": False,
+                      "log": [{**item, "accepted": False,
+                               "reason": "完整事实守卫未通过，安全清理已回滚"}
+                              for item in stage1.get("log", [])]}
+    chunks = humanizer_cn._chunks(source)
+    editable_total = sum(bool(chunk and editable) for chunk, editable in chunks)
+    if progress:
+        progress(0, editable_total)
+    outputs: List[str] = []
+    records: List[Dict] = []
+    done = 0
+    for index, (chunk, editable) in enumerate(chunks):
+        if not editable or not chunk.strip():
+            outputs.append(chunk)
+            continue
+        findings = analyze(chunk)["findings"]
+        direct = (bilingual_rewrite._strip_en_s11_sentences(chunk)
+                  if any(item.get("pattern_id") == "EN-S11" for item in findings)
+                  else None)
+        if direct and direct != chunk:
+            raw_candidates = [direct]
+        else:
+            try:
+                raw_candidates = client.complete(
+                    _REQUESTED_SYSTEM, _requested_prompt(chunk, findings),
+                    n=max(1, min(n_candidates, 4)),
+                    max_tokens=max(2000, len(chunk) * 2))
+            except LLMError as exc:
+                raise LLMError(f"第 {done + 1} 个文本块调用失败：{exc}") from exc
+        scored = [_requested_candidate(chunk, raw) for raw in raw_candidates]
+        viable = [item for item in scored if item.get("ok")]
+        if not viable and not direct:
+            retry_reason = scored[0]["reason"] if scored else "没有候选"
+            retry_prompt = (_requested_prompt(chunk, findings)
+                            + "\n上次候选未被采纳：" + retry_reason
+                            + "。请尝试另一处小幅、保真且可见的表达修改。")
+            retry = client.complete(_REQUESTED_SYSTEM, retry_prompt, n=1,
+                                    max_tokens=max(2000, len(chunk) * 2))
+            scored.extend(_requested_candidate(chunk, raw) for raw in retry)
+            viable = [item for item in scored if item.get("ok")]
+        best = max(viable, key=lambda item: item["score"]) if viable else None
+        chosen = best["text"] if best else chunk
+        outputs.append(chosen)
+        records.append({"index": index, "lang": _paragraph_language(chunk),
+                        "accepted": bool(best),
+                        "reason": (best["reason"] if best else
+                                   scored[0]["reason"] if scored else "模型未返回候选"),
+                        "original": chunk, "rewritten": chosen,
+                        "targets": sorted({item["pattern_id"] for item in findings}),
+                        "candidates": [{key: value for key, value in item.items()
+                                        if key != "guard"} for item in scored]})
+        done += 1
+        if progress:
+            progress(done, editable_total)
+    output = "".join(outputs)
+    if stage:
+        stage("checking")
+    comparison = _document_guard(text, output)
+    warnings: List[str] = []
+    if (comparison.get("fabricated") or comparison.get("n_removed")
+            or comparison.get("terms_lost") or comparison.get("semantic_changed")
+            or humanizer_cn._anchor_warnings(text, output)):
+        warnings.append("整篇事实守卫未通过，候选已回滚：" + guard.describe(comparison))
+        output = source if source != text else text
+        for record in records:
+            if record["accepted"]:
+                record["accepted"] = False
+                record["rewritten"] = record["original"]
+                record["reason"] = warnings[0]
+        comparison = _document_guard(text, output)
+    if (comparison.get("fabricated") or comparison.get("n_removed")
+            or comparison.get("terms_lost") or comparison.get("semantic_changed")
+            or humanizer_cn._anchor_warnings(text, output)):
+        # Do not return an unsafe stage-one edit when the aggregate candidate
+        # was rejected. This is especially important for inline bilingual prose.
+        output = text
+        comparison = _document_guard(text, text)
+        for record in records:
+            record["accepted"] = False
+            record["rewritten"] = record["original"]
+    changed = output != text
+    accepted = sum(bool(item["accepted"]) for item in records)
+    safe_changes = sum(int(item.get("count") or 1)
+                       for item in stage1.get("log", []) if item.get("accepted"))
+    if not changed:
+        accepted = 0
+        safe_changes = 0
+    if stage:
+        stage("finalizing")
+    failed_reason = next((item["reason"] for item in records
+                          if not item["accepted"] and item.get("reason")), "")
+    no_change_reason = (
+        "未找到通过事实守卫的有效修改；原文保持不变。"
+        + ("原因：" + failed_reason if failed_reason else "")
+        if not changed else "")
+    return {
+        "text": output, "before": before, "after": analyze(output),
+        "autofix": stage1, "chunks": records,
+        "n_chunks": editable_total, "n_accepted": accepted,
+        "n_safe_changes": safe_changes, "changed": changed,
+        "guard": {"fabricated": comparison.get("fabricated", False),
+                  "added": comparison.get("added", {}),
+                  "removed": comparison.get("removed", {}),
+                  "detail": guard.describe(comparison), "warnings": warnings,
+                  "status": "review" if changed or warnings else "passed"},
+        "manual_review_required": changed,
+        **({"no_change_reason": no_change_reason,
+            "no_change_reason_en": "No safe edit was accepted; the manuscript is unchanged."}
+           if not changed else {}),
+        "method": "User-requested bilingual edit + factual guard",
         "disclaimer": before["disclaimer"],
     }
 
@@ -636,9 +1079,13 @@ def _auto_rewrite_candidate_count(text: str, findings: Sequence[Dict]) -> int:
 
 
 def humanize(text: str, client: Client, n_candidates: int = 2,
-             progress=None, auto_english: bool = False, stage=None) -> Dict:
+             progress=None, auto_english: bool = False, stage=None,
+             user_requested: bool = False) -> Dict:
     if not client.configured:
         raise LLMError("未配置 LLM")
+    if user_requested:
+        return _requested_humanize(text, client, n_candidates,
+                                   progress=progress, stage=stage)
     languages = set(_languages(text)) or {"zh"}
     has_protected_paragraph = any(
         _editing_language(paragraph.text) == "protected"

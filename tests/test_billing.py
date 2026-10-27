@@ -177,6 +177,29 @@ def test_english_format_only_rewrite_releases_quota():
         folder.cleanup()
 
 
+def test_user_requested_zero_safe_candidate_refunds_and_reports_unchanged():
+    folder, store = make_store()
+    try:
+        source = "本研究对 126 份样本进行分析，见[1]。"
+        before = store.summary("student-a")["balance"]
+        reserved = store.reserve("student-a", "job-requested-reject", source,
+                                 "conservative")
+        client = MockClient(lambda _text: "本研究对 200 份样本进行分析，见[1]。")
+        result = humanizer.humanize(source, client, n_candidates=1,
+                                    user_requested=True)
+        assert result["text"] == source and not result["changed"]
+        assert result["n_accepted"] == result["n_safe_changes"] == 0
+        assert result["no_change_reason"]
+        settled = store.finalize("job-requested-reject", success=True,
+                                 accepted=result["n_accepted"],
+                                 usage=client.usage_summary())
+        assert settled["status"] == "released"
+        assert settled["released"] == reserved["reserved"]
+        assert store.summary("student-a")["balance"] == before
+    finally:
+        folder.cleanup()
+
+
 def test_failure_zero_acceptance_and_success_settlement():
     folder, store = make_store()
     try:

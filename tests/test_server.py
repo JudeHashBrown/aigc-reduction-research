@@ -5,9 +5,11 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,16 +35,67 @@ def post(path, payload, timeout=40):
             return e.code, {"_raw": body[:200].decode("utf-8", "replace")}
 
 
+def wait_job(job_id):
+    for _ in range(100):
+        with op.open(f"http://127.0.0.1:{PORT}/api/job/{job_id}",
+                     timeout=8) as response:
+            job = json.loads(response.read())
+        if job.get("state") in {"done", "error"}:
+            return job
+        time.sleep(0.05)
+    return job
+
+
 billing_tmp = tempfile.TemporaryDirectory()
+
+
+class MockModelHandler(BaseHTTPRequestHandler):
+    """Local OpenAI-compatible endpoint for real async rewrite-job tests."""
+
+    replacements = {
+        "The tool is fast, stable, and simple.":
+            "The tool is fast and stable while remaining simple.",
+        "We examine abnormal returns, stock liquidity, and analyst forecast accuracy.":
+            "We examine abnormal returns and stock liquidity, together with analyst forecast accuracy.",
+        "The method uses available records for analysis.":
+            "For analysis, the method uses available records.",
+        "This method utilizes available records.":
+            "This method uses available records.",
+        "本研究对 126 份样本进行分析，见[1]。":
+            "本研究对 200 份样本进行分析，见[1]。",
+    }
+
+    def do_POST(self):
+        if self.path != "/v1/chat/completions":
+            self.send_error(404)
+            return
+        data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        user = data["messages"][-1]["content"]
+        source = user.split("<<<TEXT>>>")[-1].split("<<<END>>>")[0].strip()
+        replacement = self.replacements.get(source, source)
+        body = json.dumps({
+            "choices": [{"message": {"content": replacement}}
+                        for _ in range(int(data.get("n") or 1))],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 10},
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass
+
+
+model_server = ThreadingHTTPServer(("127.0.0.1", 0), MockModelHandler)
+threading.Thread(target=model_server.serve_forever, daemon=True).start()
 server_env = os.environ.copy()
 server_env["AUTH_MODE"] = "local"
 server_env["TRIAL_MODE"] = "0"
 server_env["BILLING_DB"] = str(Path(billing_tmp.name) / "billing.sqlite3")
 server_env["PAYMENT_PROVIDER"] = "mock"
-# The S11 integration case below is fully deterministic and must never reach
-# the network.  A configured, deliberately unreachable endpoint proves that a
-# passing test did not depend on a developer's real key or provider.
-server_env["LLM_BASE_URL"] = "http://127.0.0.1:1/v1"
+server_env["LLM_BASE_URL"] = f"http://127.0.0.1:{model_server.server_port}/v1"
 server_env["LLM_API_KEY"] = "test-only-not-used"
 server_env["LLM_MODEL"] = "test-deterministic-s11"
 proc = subprocess.Popen([sys.executable, str(ROOT / "web/server.py"), str(PORT)],
@@ -163,8 +216,8 @@ try:
             if billing.get("status") != "committed" or billing.get("llm_requests") != 0:
                 FAILS.append(f"S11 确定性任务结算错误: {billing}")
 
-    # 报告只有需人工核对的 S01 时，任务入口仍可提交；服务端不得为了
-    # 凑一次“改写”而删除真实列举项，也不得消耗用户额度。
+    # 报告只有需人工核对的 S01 时，用户主动改写仍产生候选；
+    # 守卫后采纳修改，再提示人工核对。
     review_only_source = "The tool is fast, stable, and simple."
     code, report = post("/api/v1/analyze", {"text": review_only_source})
     if code != 200 or not any(
@@ -195,16 +248,17 @@ try:
                 time.sleep(0.05)
             result = (job or {}).get("result") or {}
             billing = result.get("billing") or {}
+            global_charge = billing.get("charged", 0)
             if (not job or job.get("state") != "done"
-                    or result.get("text") != review_only_source
-                    or result.get("n_chunks") != 0
-                    or result.get("n_accepted") != 0
-                    or billing.get("status") != "released"):
-                FAILS.append(f"S01 人工复核项被自动误改或计费错误: {job}")
+                    or result.get("text") == review_only_source
+                    or not result.get("changed")
+                    or result.get("guard", {}).get("status") != "review"
+                    or billing.get("status") != "committed"):
+                FAILS.append(f"S01 人工复核项未先修改再提示复核: {job}")
             with op.open(f"http://127.0.0.1:{PORT}/api/billing/summary", timeout=8) as response:
                 balance_after = json.loads(response.read())["balance"]
-            if balance_after != balance_before:
-                FAILS.append("S01 仅人工复核任务消耗了额度")
+            if balance_after >= balance_before:
+                FAILS.append("S01 主动改写被错误免单或未生成候选")
 
         # Only an explicit selected finding may use the free deterministic
         # lane.  It must preserve every adjective and all non-target text.
@@ -245,8 +299,8 @@ try:
             "manuscript_id": review_manuscript_id,
             "review_target": {**target, "pattern_id": "EN-S11"},
         })
-        if code != 400 or invalid.get("code") != "invalid_review_target":
-            FAILS.append(f"不支持的显式诊断项未被拒绝: {code} {invalid}")
+        if code != 409 or invalid.get("code") != "stale_review_target":
+            FAILS.append(f"伪造的显式诊断项未被拒绝: {code} {invalid}")
         code, started = post("/api/v1/rewrite-jobs", {
             "text": review_only_source,
             "request_id": "server_s01_selected_01",
@@ -285,8 +339,8 @@ try:
                 FAILS.append(f"显式 S01 幂等重试失败: {code} {repeated}")
             with op.open(f"http://127.0.0.1:{PORT}/api/billing/summary", timeout=8) as response:
                 balance_after = json.loads(response.read())["balance"]
-            if balance_after != balance_before:
-                FAILS.append("显式 S01 确定性修改消耗了额度")
+            if balance_after != balance_before - global_charge:
+                FAILS.append("显式 S01 确定性修改消耗了额外额度")
 
     technical_source = ("We examine abnormal returns, stock liquidity, "
                         "and analyst forecast accuracy.")
@@ -324,11 +378,11 @@ try:
                 time.sleep(0.05)
             result = (job or {}).get("result") or {}
             if (not job or job.get("state") != "done"
-                    or result.get("text") != technical_source
-                    or result.get("n_accepted") != 0
-                    or result.get("review_target", {}).get("reason_code") != "context_requires_review"
-                    or result.get("billing", {}).get("status") != "not_charged"):
-                FAILS.append(f"学术变量列举被不安全修改: {job}")
+                    or not result.get("changed")
+                    or result.get("review_target", {}).get("status") != "changed"
+                    or result.get("review_target", {}).get("manual_review_required") is not True
+                    or result.get("billing", {}).get("status") != "committed"):
+                FAILS.append(f"学术变量定向修改未先修改再提示复核: {job}")
 
     for label, source, pattern_id in (
             ("英文加粗", "**The method is clear.**", "EN-F02"),
@@ -341,6 +395,71 @@ try:
             FAILS.append(f"{label} 预检错误: {code} {report}")
         if label == "英文加粗" and summary.get("safe_fixes") != 0:
             FAILS.append("英文加粗被误报为可安全自动清理")
+
+    # A clear report still permits a requested edit. No accepted candidate
+    # must release the reservation and never claim the manuscript changed.
+    clear_source = "The method uses available records for analysis."
+    code, clear_report = post("/api/v1/analyze", {"text": clear_source})
+    if code != 200 or clear_report.get("summary", {}).get("findings") != 0:
+        FAILS.append(f"无问题英文报告预检失败: {code} {clear_report}")
+    else:
+        code, started = post("/api/v1/rewrite-jobs", {
+            "text": clear_source, "strength": "conservative",
+            "request_id": "server_clear_requested_01",
+        })
+        job = wait_job(started["job"]) if code == 200 and started.get("job") else None
+        result = (job or {}).get("result") or {}
+        if (not job or job.get("state") != "done"
+                or result.get("text") == clear_source or not result.get("changed")
+                or result.get("guard", {}).get("status") != "review"
+                or result.get("billing", {}).get("status") != "committed"):
+            FAILS.append(f"无问题报告点击修改未产生修改: {job or started}")
+
+    unsafe_source = "本研究对 126 份样本进行分析，见[1]。"
+    with op.open(f"http://127.0.0.1:{PORT}/api/billing/summary", timeout=8) as response:
+        unsafe_balance_before = json.loads(response.read())["balance"]
+    code, started = post("/api/v1/rewrite-jobs", {
+        "text": unsafe_source, "strength": "conservative",
+        "request_id": "server_unsafe_requested_01",
+    })
+    job = wait_job(started["job"]) if code == 200 and started.get("job") else None
+    result = (job or {}).get("result") or {}
+    with op.open(f"http://127.0.0.1:{PORT}/api/billing/summary", timeout=8) as response:
+        unsafe_balance_after = json.loads(response.read())["balance"]
+    if (not job or job.get("state") != "done"
+            or result.get("text") != unsafe_source or result.get("changed")
+            or result.get("n_accepted") != 0 or not result.get("no_change_reason")
+            or result.get("billing", {}).get("status") != "released"
+            or unsafe_balance_after != unsafe_balance_before):
+        FAILS.append(f"危险候选未如实保持原稿并退额度: {job or started}")
+
+    vocabulary_source = "This method utilizes available records."
+    code, vocabulary_report = post("/api/v1/analyze", {"text": vocabulary_source})
+    vocabulary_target = next((item for item in vocabulary_report.get("findings", [])
+                              if item.get("matched") == "utilizes"), None)
+    code, vocabulary_doc = post("/api/documents", {
+        "name": "vocabulary.txt", "kind": "text",
+        "source": vocabulary_source, "current": vocabulary_source,
+    })
+    vocabulary_doc_id = (vocabulary_doc.get("document") or {}).get("id")
+    if not vocabulary_target or not vocabulary_doc_id:
+        FAILS.append(f"普通诊断项测试文稿未准备好: {vocabulary_report} {vocabulary_doc}")
+    else:
+        code, started = post("/api/v1/rewrite-jobs", {
+            "text": vocabulary_source, "strength": "conservative",
+            "request_id": "server_vocabulary_selected_01",
+            "manuscript_id": vocabulary_doc_id,
+            "review_target": {key: vocabulary_target[key] for key in
+                              ("pattern_id", "start", "end", "matched")},
+        })
+        job = wait_job(started["job"]) if code == 200 and started.get("job") else None
+        result = (job or {}).get("result") or {}
+        if (not job or job.get("state") != "done"
+                or result.get("text") != "This method uses available records."
+                or result.get("review_target", {}).get("status") != "changed"
+                or result.get("guard", {}).get("status") != "review"
+                or result.get("billing", {}).get("status") != "committed"):
+            FAILS.append(f"普通诊断项定向修改失败: {job or started}")
 
     # 畸形请求
     for bad in [b"not json", b"", b"[]", b'{"text": 123}', b'{"nope": 1}']:
@@ -458,6 +577,8 @@ finally:
     if "Traceback" in out:
         FAILS.append("服务端有未捕获异常:\n" + out[out.index("Traceback"):][:600])
     billing_tmp.cleanup()
+    model_server.shutdown()
+    model_server.server_close()
 
 if FAILS:
     print(f"✗ {len(FAILS)} 项失败：\n")
