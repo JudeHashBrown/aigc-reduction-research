@@ -887,6 +887,13 @@ export function WorkbenchPage({ navigate = () => {} }) {
     editor.scrollIntoView({ block: "nearest" });
   };
 
+  const focusCurrentEditor = () => {
+    const editor = currentEditorRef.current;
+    if (!editor) return;
+    editor.focus({ preventScroll: true });
+    editor.scrollIntoView({ block: "center", inline: "nearest" });
+  };
+
   if (!source) {
     return <div className="rt-page"><div className="rt-board rt-live-empty rt-live-empty--page"><FileText size={42} /><h1>{isEnglish ? "No manuscript is open" : "当前没有打开的文稿"}</h1><p>{isEnglish ? "Import or paste a manuscript to start a bilingual diagnosis." : "请先导入或粘贴文稿，再开始中英文诊断。"}</p><button className="rt-button rt-button-primary" onClick={() => navigate("/app/new")}>{isEnglish ? "New document" : "新建文档"}</button></div></div>;
   }
@@ -943,7 +950,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
             <span>{isEnglish ? "Each English word, number group, or Chinese character counts as one text unit. Spaces and punctuation do not count; other visible characters count individually. Deep rewrite reserves credits at 1.5× the text-unit count. A separate 120,000-character text-size cap applies." : "每个英文词、数字组或汉字各计 1 个正文单位；空白和标点不计，其他可见字符逐个计数。深度改写按正文单位数的 1.5 倍预占额度；正文另受 12 万字符上限约束。"}</span>
             {overJobLimit > 0 && <strong>{isEnglish ? `${overJobLimit.toLocaleString()} text units over the per-task rewrite limit. Edit or trim the current draft below; the original stays available.` : `超出单次改写上限 ${overJobLimit.toLocaleString()} 正文单位。可在下方直接删减当前稿，原稿仍保留。`}</strong>}
           </div>
-          <textarea ref={currentEditorRef} value={current} readOnly={busy === "rewrite"} onChange={(event) => editCurrent(event.target.value)} aria-label={isEnglish ? "Current manuscript editor" : "当前稿件编辑器"} aria-describedby="rt-current-edit-hint" />
+          <textarea id="rt-current-editor" ref={currentEditorRef} value={current} readOnly={busy === "rewrite"} onChange={(event) => editCurrent(event.target.value)} aria-label={isEnglish ? "Current manuscript editor" : "当前稿件编辑器"} aria-describedby="rt-current-edit-hint" />
         </section>
         <aside className="rt-findings-panel rt-live-findings">
           <header><div><strong>{isEnglish ? "Diagnosis and evidence" : "诊断与证据"}</strong><small>{reportIsStale ? (isEnglish ? "Previous report · outdated" : "上次报告 · 已过期") : report ? (isEnglish ? `${report.summary?.checks || 0} checks completed` : `已完成 ${report.summary?.checks || 0} 项检查`) : (isEnglish ? "Run analysis for current text" : "请分析当前正文")}</small></div></header>
@@ -994,7 +1001,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
       </section>}
 
       <section className="rt-action-dock rt-live-action-dock">
-        {!withinJobLimit && <div className="rt-live-limit-note"><WarningCircle weight="fill" /><span>{isEnglish ? `The current draft is ${overJobLimit.toLocaleString()} text units over your ${jobLimit.toLocaleString()}-unit rewrite limit. Trim it in the editor to continue.` : `当前稿超出 ${jobLimit.toLocaleString()} 正文单位的单次改写上限 ${overJobLimit.toLocaleString()} 单位，请在当前稿中删减后再改写。`}</span><button type="button" onClick={() => currentEditorRef.current?.focus()}>{isEnglish ? "Edit current draft" : "编辑当前稿"}</button></div>}
+        {!withinJobLimit && <div className="rt-live-limit-note rt-live-limit-note--edit"><WarningCircle weight="fill" /><button type="button" onClick={focusCurrentEditor} aria-controls="rt-current-editor">{isEnglish ? "Edit current draft" : "编辑当前稿"}</button><span>{isEnglish ? `The current draft is ${overJobLimit.toLocaleString()} text units over your ${jobLimit.toLocaleString()}-unit rewrite limit. Trim it in the editor to continue.` : `当前稿超出 ${jobLimit.toLocaleString()} 正文单位的单次改写上限 ${overJobLimit.toLocaleString()} 单位，请在当前稿中删减后再改写。`}</span></div>}
         {nextAction === "rewrite" && !hasEnoughBalance && <div className="rt-live-limit-note"><WarningCircle weight="fill" />{isEnglish ? `This strategy needs about ${estimated.toLocaleString()} credits, but the current balance is ${Number(billing?.balance || 0).toLocaleString()} credits.` : `当前策略预计预占 ${estimated.toLocaleString()} 点额度，当前可用 ${Number(billing?.balance || 0).toLocaleString()} 点额度。`}</div>}
         <button className="rt-button" onClick={analyze} disabled={Boolean(busy)}>{busy === "analyze" ? <CircleNotch className="rt-spin" /> : <Sparkle weight="bold" />}{isEnglish ? "Analyze current text" : "分析当前正文"}</button>
         <button className="rt-safe-clean" onClick={safeFix} disabled={!report || !safeCleanupCount || Boolean(busy)}><ShieldCheck weight="bold" /><span><strong>{isEnglish ? "Safe cleanup" : "安全清理"}</strong><small>{isEnglish ? "Deterministic fixes only" : "仅确定性修改"}</small></span></button>
