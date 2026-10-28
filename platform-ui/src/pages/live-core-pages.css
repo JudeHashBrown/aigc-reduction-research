@@ -18,6 +18,8 @@
 .rt-live-banner.is-success { background: #dff8e5; }
 .rt-post-modification-review > span { display: grid; gap: 3px; min-width: 0; }
 .rt-post-modification-review strong { font-size: 13px; }
+.rt-dashboard-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; max-width: 100%; }
+.rt-dashboard-actions .rt-button { min-height: 44px; }
 .rt-version-preview { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .rt-live-workbench .rt-document-bar { flex-wrap: wrap; }
 .rt-live-workbench .rt-document-bar > div:first-child { min-width: 0; flex: 1 1 auto; flex-wrap: wrap; }

@@ -230,7 +230,7 @@ function codePointLength(value) {
   return Array.from(String(value || "")).length;
 }
 
-export function DashboardPage({ navigate = () => {} }) {
+export function DashboardPage({ navigate = () => {}, tutorialAvailable = false, onStartTutorial = () => {} }) {
   const { isEnglish } = useLocale();
   const { billing, config, loading, error } = usePlatform();
   const current = restoreWorkspace();
@@ -250,7 +250,7 @@ export function DashboardPage({ navigate = () => {} }) {
   };
 
   return (
-    <div className="rt-page rt-dashboard-page">
+    <div className="rt-page rt-dashboard-page" data-onboarding-page="documents">
       <section className="rt-dashboard-hero">
         <div>
           <span className="rt-kicker">{isEnglish ? "RIGHTTHESIS WORKSPACE" : "RIGHTTHESIS 写作工作台"}</span>
@@ -259,14 +259,17 @@ export function DashboardPage({ navigate = () => {} }) {
             ? "Diagnose Chinese, English, or mixed manuscripts, then review every proposed change against facts, citations, and intent."
             : "支持中文、英文与中英混排；从结构化诊断到逐项审阅，始终守住事实、引文和原意。"}</p>
         </div>
-        <button className="rt-button rt-button-primary rt-hero-action" onClick={() => navigate("/app/new")}>
-          <Plus weight="bold" /> {isEnglish ? "New document" : "新建文档"}
-        </button>
+        <div className="rt-dashboard-actions">
+          {tutorialAvailable && <button className="rt-button" type="button" onClick={onStartTutorial}>{isEnglish ? "Getting started" : "新手教程"}</button>}
+          <button className="rt-button rt-button-primary rt-hero-action" data-tour="new-document" onClick={() => navigate("/app/new")}>
+            <Plus weight="bold" /> {isEnglish ? "New document" : "新建文档"}
+          </button>
+        </div>
       </section>
 
       {error && <div className="rt-live-banner is-warn"><WarningCircle weight="fill" /> {error}</div>}
 
-      <section className="rt-metric-strip" aria-label={isEnglish ? "Live account overview" : "实时账户概览"}>
+      <section className="rt-metric-strip" data-tour="account-overview" aria-label={isEnglish ? "Live account overview" : "实时账户概览"}>
         <div className="rt-metric-cell is-yellow">
           <span>{isEnglish ? "Available quota" : "可用额度"}</span>
           <strong>{loading ? "—" : Number(billing?.balance || 0).toLocaleString()} <small>{isEnglish ? "credits" : "点额度"}</small></strong>
@@ -290,7 +293,7 @@ export function DashboardPage({ navigate = () => {} }) {
       </section>
 
       <div className="rt-dashboard-grid">
-        <section className="rt-board rt-project-board">
+        <section className="rt-board rt-project-board" data-tour="saved-documents">
           <header className="rt-section-heading">
             <div><span className="rt-section-index">01</span><h2>{isEnglish ? "Saved manuscripts" : "已保存文稿"}</h2></div>
           </header>
@@ -404,7 +407,7 @@ export function NewDocumentPage({ navigate = () => {} }) {
   };
 
   return (
-    <div className="rt-page rt-new-page">
+    <div className="rt-page rt-new-page" data-onboarding-page="import" data-tour-blocked={busy ? "true" : "false"}>
       <section className="rt-page-intro">
         <div>
           <button className="rt-back-link" onClick={() => navigate("/app")}>{isEnglish ? "← Back" : "← 返回"}</button>
@@ -422,14 +425,14 @@ export function NewDocumentPage({ navigate = () => {} }) {
       <div className="rt-import-layout">
         <section className="rt-board rt-import-board">
           <header className="rt-import-header">
-            <div className="rt-import-tabs" role="group" aria-label={isEnglish ? "Import method" : "导入方式"}>
+            <div className="rt-import-tabs" data-tour="import-method" role="group" aria-label={isEnglish ? "Import method" : "导入方式"}>
               <button type="button" aria-pressed={method === "paste"} className={method === "paste" ? "is-active" : ""} onClick={() => setMethod("paste")}><NotePencil weight="bold" /> {isEnglish ? "Paste text" : "粘贴文本"}</button>
               <button type="button" aria-pressed={method === "upload"} className={method === "upload" ? "is-active" : ""} onClick={() => setMethod("upload")}><UploadSimple weight="bold" /> {isEnglish ? "Upload file" : "上传文档"}</button>
             </div>
             <span className="rt-service-pill"><StatusDot online /> {isEnglish ? "Bilingual analysis ready" : "双语分析已就绪"}</span>
           </header>
           {method === "paste" ? (
-            <div className="rt-paste-pane">
+            <div className="rt-paste-pane" data-tour="import-content">
               <div className="rt-editor-ruler"><span>DOCUMENT / 01</span><span>{billableChars(text).toLocaleString()} {billableUnitLabel(text, isEnglish)}</span></div>
               <textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={isEnglish ? "Paste a paper, chapter, or abstract…" : "粘贴论文、章节或研究摘要……"} />
               {!text && <div className="rt-live-samples">
@@ -438,7 +441,7 @@ export function NewDocumentPage({ navigate = () => {} }) {
               </div>}
             </div>
           ) : (
-            <label className={`rt-drop-zone ${dragActive ? "is-dragging" : ""} ${error ? "has-error" : ""}`} onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setDragActive(false)} onDrop={(event) => { event.preventDefault(); setDragActive(false); selectFile(event.dataTransfer.files?.[0]); }}>
+            <label data-tour="import-content" className={`rt-drop-zone ${dragActive ? "is-dragging" : ""} ${error ? "has-error" : ""}`} onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setDragActive(false)} onDrop={(event) => { event.preventDefault(); setDragActive(false); selectFile(event.dataTransfer.files?.[0]); }}>
               <input type="file" accept=".txt,.docx,.pdf" onChange={(event) => { selectFile(event.target.files?.[0]); event.target.value = ""; }} />
               <span className="rt-upload-icon">{file?.name.toLowerCase().endsWith(".pdf") ? <FilePdf weight="bold" /> : <CloudArrowUp weight="bold" />}</span>
               <h2>{file ? file.name : (isEnglish ? "Drag a manuscript here" : "拖拽文稿到这里")}</h2>
@@ -457,7 +460,7 @@ export function NewDocumentPage({ navigate = () => {} }) {
           </section>
           <section className="rt-privacy-note"><ShieldCheck size={26} weight="bold" /><div><strong>{isEnglish ? "Saved to your account" : "保存到当前账户"}</strong><p>{isEnglish ? "Your original and revised text are saved to your account. Keep a separate copy of important manuscripts." : "原稿与修改稿会保存到你的账户；重要文稿也请自行保留副本。"}</p></div></section>
           {error && <div className="rt-live-banner is-error" role="alert"><WarningCircle weight="fill" /> {error}</div>}
-          <button className="rt-button rt-button-primary rt-analyze-button" disabled={!canContinue || busy} onClick={startAnalysis} aria-busy={busy}>
+          <button className="rt-button rt-button-primary rt-analyze-button" data-tour="import-analyze" disabled={!canContinue || busy} onClick={startAnalysis} aria-busy={busy}>
             {busy ? <CircleNotch className="rt-spin" weight="bold" /> : <Sparkle weight="bold" />}
             {status === "uploading" ? (isEnglish ? "Extracting text…" : "正在提取正文…") : status === "analyzing" ? (isEnglish ? "Analyzing…" : "正在分析…") : (isEnglish ? "Start free analysis" : "开始免费分析")}
             {!busy && <ArrowRight weight="bold" />}
@@ -468,7 +471,7 @@ export function NewDocumentPage({ navigate = () => {} }) {
   );
 }
 
-export function WorkbenchPage({ navigate = () => {} }) {
+export function WorkbenchPage({ navigate = () => {}, tutorialActive = false }) {
   const { isEnglish } = useLocale();
   const { billing, config, refreshBilling } = usePlatform();
   const initial = restoreWorkspace();
@@ -487,6 +490,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
   const [guard, setGuard] = useState(null);
   const [lastResult, setLastResult] = useState(null);
   const [focusMode, setFocusMode] = useState(false);
+  const [reconnecting, setReconnecting] = useState(Boolean(initial.last_job_id));
   const saveStatus = useWorkspaceSaveStatus();
   const currentRef = useRef(current);
   const revisionRef = useRef(0);
@@ -496,6 +500,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
   const previousFocusRef = useRef(null);
 
   useEffect(() => { currentRef.current = current; }, [current]);
+  useEffect(() => { if (tutorialActive) setFocusMode(false); }, [tutorialActive]);
   useEffect(() => {
     if (!confirmOpen) return undefined;
     previousFocusRef.current = document.activeElement;
@@ -593,7 +598,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
       } catch (nextError) {
         if (!cancelled) setError(nextError.message);
       } finally {
-        if (!cancelled) { setBusy(""); setJobProgress(null); }
+        if (!cancelled) { setBusy(""); setJobProgress(null); setReconnecting(false); }
       }
     };
     reconnect();
@@ -894,13 +899,13 @@ export function WorkbenchPage({ navigate = () => {} }) {
   };
 
   if (!source) {
-    return <div className="rt-page"><div className="rt-board rt-live-empty rt-live-empty--page"><FileText size={42} /><h1>{isEnglish ? "No manuscript is open" : "当前没有打开的文稿"}</h1><p>{isEnglish ? "Import or paste a manuscript to start a bilingual diagnosis." : "请先导入或粘贴文稿，再开始中英文诊断。"}</p><button className="rt-button rt-button-primary" onClick={() => navigate("/app/new")}>{isEnglish ? "New document" : "新建文档"}</button></div></div>;
+    return <div className="rt-page" data-onboarding-page="empty-workbench"><div className="rt-board rt-live-empty rt-live-empty--page"><FileText size={42} /><h1>{isEnglish ? "No manuscript is open" : "当前没有打开的文稿"}</h1><p>{isEnglish ? "Import or paste a manuscript to start a bilingual diagnosis." : "请先导入或粘贴文稿，再开始中英文诊断。"}</p><button className="rt-button rt-button-primary" data-tour="empty-import" onClick={() => navigate("/app/new")}>{isEnglish ? "New document" : "新建文档"}</button></div></div>;
   }
 
   const progressView = busy === "rewrite" ? rewriteProgressState(jobProgress, isEnglish) : null;
 
   return (
-    <div className={`rt-page rt-workbench-page rt-live-workbench ${focusMode ? "is-focus-mode" : ""}`}>
+    <div className={`rt-page rt-workbench-page rt-live-workbench ${focusMode ? "is-focus-mode" : ""}`} data-onboarding-page="workbench" data-tour-blocked={busy || reconnecting || confirmOpen ? "true" : "false"}>
       <div className="rt-document-bar">
         <div>
           <button type="button" className="rt-doc-back" onClick={() => navigate("/app")}>
@@ -910,7 +915,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
           <span className="rt-doc-name">{localizedWorkspaceName(getWorkspace().name, isEnglish)}</span>
           <span className="rt-doc-meta">{chars.toLocaleString()} {billableUnitLabel(current, isEnglish)}</span>
         </div>
-        <div className="rt-document-actions">
+        <div className="rt-document-actions" data-tour="document-actions">
           <span className={`rt-save-status is-${saveStatus.state}`} role="status">{saveStatus.state === "saved" ? (isEnglish ? "Saved" : "已保存") : saveStatus.state === "saving" ? (isEnglish ? "Saving…" : "正在保存…") : (isEnglish ? "Save failed" : "保存失败")}</span>
           <button type="button" className="rt-button" aria-pressed={focusMode} onClick={() => setFocusMode((value) => !value)}>{focusMode ? (isEnglish ? "Show diagnosis" : "显示诊断") : (isEnglish ? "Focus on draft" : "专注编辑")}</button>
           <button className="rt-button" onClick={copyText}>{isEnglish ? "Copy text" : "复制全文"}</button>
@@ -945,7 +950,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
             <span>{isEnglish ? "Each English word, number group, or Chinese character counts as one text unit. Spaces and punctuation do not count; other visible characters count individually. Deep rewrite reserves credits at 1.5× the text-unit count. A separate 120,000-character text-size cap applies." : "每个英文词、数字组或汉字各计 1 个正文单位；空白和标点不计，其他可见字符逐个计数。深度改写按正文单位数的 1.5 倍预占额度；正文另受 12 万字符上限约束。"}</span>
             {overJobLimit > 0 && <strong>{isEnglish ? `${overJobLimit.toLocaleString()} text units over the per-task rewrite limit. Trim the current draft below; the original remains in version history.` : `超出单次改写上限 ${overJobLimit.toLocaleString()} 正文单位。可在下方直接删减当前稿；原稿仍可在版本历史中恢复。`}</strong>}
           </div>
-          <textarea id="rt-current-editor" ref={currentEditorRef} value={current} readOnly={busy === "rewrite"} onChange={(event) => editCurrent(event.target.value)} aria-label={isEnglish ? "Current manuscript editor" : "当前稿件编辑器"} aria-describedby="rt-current-edit-hint" />
+          <textarea id="rt-current-editor" ref={currentEditorRef} data-tour="current-draft" value={current} readOnly={busy === "rewrite"} onChange={(event) => editCurrent(event.target.value)} aria-label={isEnglish ? "Current manuscript editor" : "当前稿件编辑器"} aria-describedby="rt-current-edit-hint" />
         </section>
         <aside className="rt-findings-panel rt-live-findings">
           <header><div><strong>{isEnglish ? "Diagnosis and evidence" : "诊断与证据"}</strong><small>{reportIsStale ? (isEnglish ? "Previous report · outdated" : "上次报告 · 已过期") : report ? (isEnglish ? `${report.summary?.checks || 0} checks completed` : `已完成 ${report.summary?.checks || 0} 项检查`) : (isEnglish ? "Run analysis for current text" : "请分析当前正文")}</small></div></header>
@@ -956,7 +961,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
             <div className="is-yellow"><strong>{visibleCleanupCount}</strong><span>{isEnglish ? "Safe fixes" : "安全清理"}</span></div>
             <div className="is-green"><strong>{anchorsTotal}</strong><span>{isEnglish ? "Fact anchors" : "事实锚点"}</span></div>
           </div>
-          <div className="rt-live-finding-list">
+          <div className="rt-live-finding-list" data-tour="diagnosis">
             {visibleFindings.length ? visibleFindings.map((finding, index) => {
               const key = `${finding.pattern_id}-${finding.start}-${index}`;
               const canTargetFinding = Boolean(reviewTargetFromFinding(finding));
@@ -998,12 +1003,12 @@ export function WorkbenchPage({ navigate = () => {} }) {
       <section className="rt-action-dock rt-live-action-dock">
         {!withinJobLimit && <div className="rt-live-limit-note rt-live-limit-note--edit"><WarningCircle weight="fill" /><button type="button" onClick={focusCurrentEditor} aria-controls="rt-current-editor">{isEnglish ? "Edit current draft" : "编辑当前稿"}</button><span>{isEnglish ? `The current draft is ${overJobLimit.toLocaleString()} text units over your ${jobLimit.toLocaleString()}-unit rewrite limit. Trim it in the editor to continue.` : `当前稿超出 ${jobLimit.toLocaleString()} 正文单位的单次改写上限 ${overJobLimit.toLocaleString()} 单位，请在当前稿中删减后再改写。`}</span></div>}
         {nextAction === "rewrite" && !hasEnoughBalance && <div className="rt-live-limit-note"><WarningCircle weight="fill" />{isEnglish ? `This strategy needs about ${estimated.toLocaleString()} credits, but the current balance is ${Number(billing?.balance || 0).toLocaleString()} credits.` : `当前策略预计预占 ${estimated.toLocaleString()} 点额度，当前可用 ${Number(billing?.balance || 0).toLocaleString()} 点额度。`}</div>}
-        <button className="rt-button" onClick={analyze} disabled={Boolean(busy)}>{busy === "analyze" ? <CircleNotch className="rt-spin" /> : <Sparkle weight="bold" />}{isEnglish ? "Analyze current text" : "分析当前正文"}</button>
-        <button className="rt-safe-clean" onClick={safeFix} disabled={!report || !safeCleanupCount || Boolean(busy)}><ShieldCheck weight="bold" /><span><strong>{isEnglish ? "Safe cleanup" : "安全清理"}</strong><small>{isEnglish ? "Deterministic fixes only" : "仅确定性修改"}</small></span></button>
-        <div className="rt-mode-switch" role="group" aria-label={isEnglish ? "Rewrite mode" : "改写模式"}>
+        <button className="rt-button" data-tour="analyze-current" onClick={analyze} disabled={Boolean(busy)}>{busy === "analyze" ? <CircleNotch className="rt-spin" /> : <Sparkle weight="bold" />}{isEnglish ? "Analyze current text" : "分析当前正文"}</button>
+        <button className="rt-safe-clean" data-tour="safe-cleanup" onClick={safeFix} disabled={!report || !safeCleanupCount || Boolean(busy)}><ShieldCheck weight="bold" /><span><strong>{isEnglish ? "Safe cleanup" : "安全清理"}</strong><small>{isEnglish ? "Deterministic fixes only" : "仅确定性修改"}</small></span></button>
+        <div className="rt-mode-switch" data-tour="rewrite-modes" role="group" aria-label={isEnglish ? "Rewrite mode" : "改写模式"}>
           {strategies.map((item) => <button key={item.id} type="button" className={mode === item.id ? "is-active" : ""} aria-pressed={mode === item.id} disabled={Boolean(busy) || !allowed.includes(item.id)} onClick={() => setMode(item.id)}><strong>{isEnglish ? `${item.en} rewrite` : `${item.zh}改写`}</strong><small>{isEnglish ? item.enHint : item.zhHint}</small></button>)}
         </div>
-        <button className="rt-rewrite-action" disabled={!canRewrite || Boolean(busy)} onClick={() => { setPendingFinding(null); setConfirmOpen(true); }}>
+        <button className="rt-rewrite-action" data-tour="modify-draft" disabled={!canRewrite || Boolean(busy)} onClick={() => { setPendingFinding(null); setConfirmOpen(true); }}>
           {busy === "rewrite" ? <CircleNotch className="rt-spin" weight="bold" /> : <FileText weight="bold" />}
           <span><strong>{busy === "rewrite" ? (isEnglish ? "Modifying…" : "正在修改…") : (isEnglish ? "Modify current draft" : "修改当前稿")}</strong><small>{jobProgress?.total ? `${jobProgress.done} / ${jobProgress.total}` : nextAction === "analyze" ? (isEnglish ? "Analyze the current draft first" : "请先分析当前稿") : (isEnglish ? `${estimated.toLocaleString()} credits estimated` : `预计预占 ${estimated.toLocaleString()} 点额度`)}</small></span><ArrowRight weight="bold" />
         </button>

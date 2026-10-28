@@ -52,6 +52,8 @@ import {
 } from "./pages/OperationsPages.jsx";
 import { LanguageToggle, useLocale } from "./locale.jsx";
 import { getWorkspace, logoutSession, usePlatform } from "./platform.jsx";
+import { GuidedTour } from "./GuidedTour.jsx";
+import { useWorkspaceOnboarding } from "./useWorkspaceOnboarding.jsx";
 import "./pages/public-pages.css";
 import "./pages/core-pages.css";
 import "./pages/operations-pages.css";
@@ -178,7 +180,7 @@ function Brand({ navigate, compact = false }) {
   );
 }
 
-function Topbar({ path, navigate }) {
+function Topbar({ path, navigate, onStartTutorial }) {
   const { isEnglish } = useLocale();
   const { billing, session, refresh } = usePlatform();
   const [userOpen, setUserOpen] = useState(false);
@@ -256,13 +258,14 @@ function Topbar({ path, navigate }) {
           </button>
         )}
         <div ref={userAnchorRef} className="rt-popover-anchor">
-              <button className="rt-user-button" onClick={() => setUserOpen((value) => !value)} aria-expanded={userOpen} aria-haspopup="menu" aria-label={isEnglish ? "Open user menu" : "打开用户菜单"}>
+              <button className="rt-user-button" data-tour="user-menu" onClick={() => setUserOpen((value) => !value)} aria-expanded={userOpen} aria-haspopup="menu" aria-label={isEnglish ? "Open user menu" : "打开用户菜单"}>
                 <span>{avatarLabel}</span><CaretDown size={14} weight="bold" />
               </button>
               {userOpen && (
                 <div className="rt-popover rt-user-popover" role="menu" aria-label={isEnglish ? "User menu" : "用户菜单"}>
                   <div><strong>{displayName}</strong><span>{session?.user?.email || accessLabel}</span><small>{session?.user?.email ? accessLabel : ""}</small></div>
                   <button role="menuitem" onClick={() => navigate("/app/settings/account")}><UserCircle size={17} />{isEnglish ? "Account settings" : "账号设置"}</button>
+                  {isAccountUser && <button role="menuitem" onClick={() => { setUserOpen(false); onStartTutorial(); }}><Lifebuoy size={17} />{isEnglish ? "Getting started" : "新手教程"}</button>}
                   {isAdminUser && <button role="menuitem" onClick={() => navigate("/admin/users")}><UsersThree size={17} />{isEnglish ? "Manage users" : "管理全部用户"}</button>}
                   {isAdmin && <button role="menuitem" onClick={() => navigate("/app")}><ArrowSquareOut size={17} />{isEnglish ? "Return to workspace" : "返回用户端"}</button>}
                   {isAccountUser
@@ -336,6 +339,12 @@ export function App() {
     && session?.authMode === "accounts"
     && accountProtected
     && (!session?.authenticated || session?.kind === "guest");
+
+  const tutorial = useWorkspaceOnboarding({
+    session, path, isEnglish, navigate,
+    ready: !loading && session?.ready && !accountSignInRequired && !accountAdminDenied,
+    hasManuscript: Boolean(getWorkspace().source),
+  });
 
   useEffect(() => {
     if (!accountSignInRequired) return;
@@ -424,9 +433,10 @@ export function App() {
 
   return (
     <div className={`rt-shell${path.startsWith("/admin") ? " rt-shell--admin" : ""}`}>
-      <Topbar path={path} navigate={navigate} />
+      <Topbar path={path} navigate={navigate} onStartTutorial={tutorial.start} />
       <Sidebar path={path} navigate={navigate} />
-      <main className="rt-main"><Page navigate={navigate} statePath={path} /></main>
+      <main className="rt-main"><Page navigate={navigate} statePath={path} tutorialActive={tutorial.active} tutorialAvailable={tutorial.available} onStartTutorial={tutorial.start} /></main>
+      {tutorial.active && <GuidedTour key={tutorial.key} steps={tutorial.steps} isEnglish={isEnglish} onExit={tutorial.finish} />}
     </div>
   );
 }
