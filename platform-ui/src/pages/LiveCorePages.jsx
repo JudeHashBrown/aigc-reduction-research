@@ -913,7 +913,7 @@ export function WorkbenchPage({ navigate = () => {} }) {
         </div>
         <div className="rt-document-actions">
           <span className={`rt-save-status is-${saveStatus.state}`} role="status">{saveStatus.state === "saved" ? (isEnglish ? "Saved" : "已保存") : saveStatus.state === "saving" ? (isEnglish ? "Saving…" : "正在保存…") : (isEnglish ? "Save failed" : "保存失败")}</span>
-          <button className="rt-button" onClick={() => setFocusMode((value) => !value)}>{focusMode ? (isEnglish ? "Compare view" : "对照视图") : (isEnglish ? "Focus view" : "专注阅读")}</button>
+          <button type="button" className="rt-button" aria-pressed={focusMode} onClick={() => setFocusMode((value) => !value)}>{focusMode ? (isEnglish ? "Show diagnosis" : "显示诊断") : (isEnglish ? "Focus on draft" : "专注编辑")}</button>
           <button className="rt-button" onClick={copyText}>{isEnglish ? "Copy text" : "复制全文"}</button>
           <button className="rt-button" onClick={() => downloadText()}><DownloadSimple weight="bold" />{isEnglish ? "Download TXT" : "下载 TXT"}</button>
           {getWorkspace().document?.data && <button className="rt-button" onClick={() => { const doc = getWorkspace().document; downloadBase64(doc.data, doc.kind === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc.name); }}>{isEnglish ? "Original file" : "下载原文件"}</button>}
@@ -940,15 +940,11 @@ export function WorkbenchPage({ navigate = () => {} }) {
       </section>}
 
       <div className="rt-live-editor-grid">
-        <section className="rt-paper-panel rt-live-editor-panel">
-          <header><div><strong>{isEnglish ? "Original manuscript" : "原始稿件"}</strong><span>{isEnglish ? "Read-only source" : "只读原稿"}</span></div><small>{billableChars(source).toLocaleString()} {billableUnitLabel(source, isEnglish)}</small></header>
-          <textarea value={source} readOnly aria-label={isEnglish ? "Original manuscript" : "原始稿件"} />
-        </section>
         <section className="rt-paper-panel is-current rt-live-editor-panel">
           <header><div><strong>{isEnglish ? "Current manuscript" : "当前稿件"}</strong><span>{busy === "rewrite" ? (isEnglish ? "Rewrite in progress; editing resumes when it finishes" : "改写进行中，完成后可继续编辑") : (isEnglish ? "Editable—changes require a new analysis" : "可编辑；修改后需重新分析")}</span></div><small className={overJobLimit ? "is-over-limit" : ""}>{chars.toLocaleString()}{jobLimit ? ` / ${jobLimit.toLocaleString()}` : ""} {billableUnitLabel(current, isEnglish)}</small></header>
           <div id="rt-current-edit-hint" className={`rt-live-edit-hint ${overJobLimit ? "is-over-limit" : ""}`} role={overJobLimit ? "status" : undefined}>
             <span>{isEnglish ? "Each English word, number group, or Chinese character counts as one text unit. Spaces and punctuation do not count; other visible characters count individually. Deep rewrite reserves credits at 1.5× the text-unit count. A separate 120,000-character text-size cap applies." : "每个英文词、数字组或汉字各计 1 个正文单位；空白和标点不计，其他可见字符逐个计数。深度改写按正文单位数的 1.5 倍预占额度；正文另受 12 万字符上限约束。"}</span>
-            {overJobLimit > 0 && <strong>{isEnglish ? `${overJobLimit.toLocaleString()} text units over the per-task rewrite limit. Edit or trim the current draft below; the original stays available.` : `超出单次改写上限 ${overJobLimit.toLocaleString()} 正文单位。可在下方直接删减当前稿，原稿仍保留。`}</strong>}
+            {overJobLimit > 0 && <strong>{isEnglish ? `${overJobLimit.toLocaleString()} text units over the per-task rewrite limit. Trim the current draft below; the original remains in version history.` : `超出单次改写上限 ${overJobLimit.toLocaleString()} 正文单位。可在下方直接删减当前稿；原稿仍可在版本历史中恢复。`}</strong>}
           </div>
           <textarea id="rt-current-editor" ref={currentEditorRef} value={current} readOnly={busy === "rewrite"} onChange={(event) => editCurrent(event.target.value)} aria-label={isEnglish ? "Current manuscript editor" : "当前稿件编辑器"} aria-describedby="rt-current-edit-hint" />
         </section>

@@ -204,15 +204,7 @@ function WorkbenchPreview({ navigate }) {
       </div>
       <div className="rtp-preview-grid">
         <article className="rtp-paper-panel">
-          <div className="rtp-panel-head"><b>{isEnglish ? 'Original draft' : '原始稿件'}</b><span>{isEnglish ? 'Sample excerpt' : '示例片段'}</span></div>
-          <div className="rtp-paper-copy">
-            <p><i>101</i>教育公平是社会公平的重要基础，也是实现共同富裕的内在要求。近年来，随着我国高等教育规模的快速扩张，城乡之间、地区之间的教育资源差距依然显著。</p>
-            <p className="is-source"><i>105</i>已有研究表明，家庭社会经济地位对个体的高等教育机会具有显著影响（李明，2021；Zhang, 2020）。</p>
-            <p><i>109</i>These findings suggest that improving the equitable allocation of educational resources remains essential for long-term social mobility.</p>
-          </div>
-        </article>
-        <article className="rtp-paper-panel">
-          <div className="rtp-panel-head"><b>{isEnglish ? 'Current draft' : '当前稿件'}</b><span className="rtp-positive">{isEnglish ? 'Wording refined' : '表达已精简'}</span></div>
+          <div className="rtp-panel-head"><b>{isEnglish ? 'Current draft' : '当前稿件'}</b><span className="rtp-positive">{isEnglish ? 'Editable in the workspace' : '可在工作台编辑'}</span></div>
           <div className="rtp-paper-copy">
             <p><i>101</i>教育公平是社会公平的重要基础，也是实现共同富裕的内在要求。近年来，随着我国高等教育规模快速扩张，城乡和地区之间的教育资源差距<mark>仍然显著</mark>。</p>
             <p className="is-rewrite"><i>105</i>现有研究亦表明，家庭社会经济地位与个体获得高等教育机会之间存在显著关联（李明，2021；Zhang, 2020）。</p>
@@ -315,7 +307,7 @@ export function LandingPage({ navigate }) {
         <section className="rtp-section" id="demo">
           <div className="rtp-section-heading rtp-heading-row">
             <div><span className="rtp-index-tag">{isEnglish ? '01 / WORKSPACE' : '01 / 工作台'}</span><h2>{isEnglish ? 'Not a one-click black box. A revision process you can review.' : '不是一键黑箱，是可审阅的修改现场。'}</h2></div>
-            <p>{isEnglish ? 'Original text, revised text, and evidence appear side by side. See not only the result, but why it changed, what changed, and what still needs your confirmation.' : '原稿、改稿和证据并排呈现。你看到的不只是结果，还有为什么改、改了什么，以及哪些内容需要你亲自确认。'}</p>
+            <p>{isEnglish ? 'Edit the current draft beside its diagnosis and evidence. After a revision, review highlighted before-and-after passages and anything that still needs your confirmation.' : '在当前稿旁查看诊断和证据，也能直接编辑正文。修改后可查看标亮的前后对照，再核对需要你确认的内容。'}</p>
           </div>
           <WorkbenchPreview navigate={navigate} />
         </section>
@@ -327,7 +319,7 @@ export function LandingPage({ navigate }) {
               [UploadSimple, '01', isEnglish ? 'Import your draft' : '导入稿件', isEnglish ? 'Paste text or upload a DOCX / PDF. Chapter and paragraph structure stays clear.' : '粘贴文本，或上传 DOCX / PDF。章节与段落结构保持清晰。'],
               [Scan, '02', isEnglish ? 'Diagnose issues' : '分析问题', isEnglish ? 'Flag reviewable mechanical phrasing, terminology drift, argumentative boundaries, and suspicious citation positions.' : '识别可核查的机械表达、术语漂移、论证边界与可疑引用位置。'],
               [PencilSimpleLine, '03', isEnglish ? 'Rewrite faithfully' : '保真改写', isEnglish ? 'Choose a conservative, balanced, or deep strategy while guards protect facts and key terms.' : '选择保守、平衡或深度策略；事实与关键术语受守卫保护。'],
-              [Export, '04', isEnglish ? 'Review & export' : '审阅导出', isEnglish ? 'Review each diagnosed issue, compare the original and current drafts, then export an imported DOCX.' : '逐项复核诊断问题，对照原稿与当前稿，再导出已导入的 DOCX。'],
+              [Export, '04', isEnglish ? 'Review & export' : '审阅导出', isEnglish ? 'Review the highlighted before-and-after changes and diagnosed issues, then export an imported DOCX.' : '逐项复核诊断问题与标亮的前后修改，再导出已导入的 DOCX。'],
             ].map(([Icon, no, title, copy]) => (
               <article className="rtp-step" key={no}>
                 <span className="rtp-step-no">{no}</span><Icon size={32} weight="bold" />

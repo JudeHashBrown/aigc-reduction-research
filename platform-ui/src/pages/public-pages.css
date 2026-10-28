@@ -367,7 +367,7 @@
 .rtp-progress-strip .is-current { color: white; background: var(--rtp-blue); }
 .rtp-progress-strip .is-current b { color: var(--rtp-blue); background: #fff; }
 
-.rtp-preview-grid { min-height: 488px; padding: 9px; display: grid; grid-template-columns: 1fr 1fr 1.12fr; gap: 6px; background: #e9e8e2; }
+.rtp-preview-grid { min-height: 488px; padding: 9px; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 6px; background: #e9e8e2; }
 .rtp-paper-panel,
 .rtp-evidence-panel { min-width: 0; border: 2px solid var(--rtp-ink); background: var(--rtp-white); }
 .rtp-panel-head { min-height: 48px; padding: 10px 13px; border-bottom: 1px solid #cacac6; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -378,7 +378,6 @@
 .rtp-paper-copy { padding: 17px 14px; font-family: "Noto Serif SC", serif; font-size: 12.5px; line-height: 1.9; }
 .rtp-paper-copy p { position: relative; margin: 0 -2px 15px; padding: 6px 7px 6px 35px; }
 .rtp-paper-copy p i { position: absolute; left: 4px; color: #92969f; font-family: "Inter Tight Variable", sans-serif; font-size: 10px; font-style: normal; }
-.rtp-paper-copy .is-source { background: #fff1cb; }
 .rtp-paper-copy .is-rewrite { background: #e1efff; }
 .rtp-paper-copy mark { color: #006be6; background: #d2e6ff; font-weight: 850; }
 
@@ -661,8 +660,7 @@
   .rtp-brand-line { display: none; }
   .rtp-hero { grid-template-columns: 1fr 285px; gap: 35px; }
   .rtp-hero-stamp { width: 250px; height: 250px; }
-  .rtp-preview-grid { grid-template-columns: 1fr 1fr; }
-  .rtp-evidence-panel { grid-column: 1 / -1; }
+  .rtp-preview-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
   .rtp-result-counters { grid-template-columns: repeat(4, 1fr); }
   .rtp-values { grid-template-columns: 1fr 1fr; }
   .rtp-value-card:first-child { grid-column: 1 / -1; }
@@ -699,8 +697,6 @@
   .rtp-section { padding: 78px 0; }
   .rtp-heading-row { grid-template-columns: 1fr; gap: 22px; }
   .rtp-preview-grid { grid-template-columns: 1fr; }
-  .rtp-paper-panel:nth-child(2),
-  .rtp-evidence-panel { grid-column: auto; }
   .rtp-preview-dock { grid-template-columns: 1fr 1fr; }
   .rtp-preview-dock > div { grid-column: 1 / -1; }
   .rtp-steps { grid-template-columns: 1fr 1fr; }
