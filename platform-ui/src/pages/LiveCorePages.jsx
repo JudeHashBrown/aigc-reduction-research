@@ -778,7 +778,6 @@ export function WorkbenchPage({ navigate = () => {} }) {
         await refreshBilling().catch(() => null);
         const targeted = Number(result.n_chunks || 0);
         const accepted = Number(result.n_accepted || 0);
-        const calls = Number(result.billing?.llm_requests || 0);
         const checkPassed = Number(result.after?.summary?.checks || 0) > 0
           && result.after?.summary?.status === "clear"
           && Number(result.after?.summary?.findings || 0) === 0
@@ -808,14 +807,14 @@ export function WorkbenchPage({ navigate = () => {} }) {
             : `已修改选中的诊断线索。${reason || ""}`);
         } else if (checkPassed) {
           setMessage(isEnglish
-            ? `Revised draft saved. The in-app check found no obvious templated phrasing and the fact guard passed. ${calls} model requests.`
-            : `修改稿已保存。站内复查未发现明显模板化表达，事实守卫已通过。模型调用 ${calls} 次。`);
+            ? "Revised draft saved. The in-app check found no obvious templated phrasing and the fact guard passed."
+            : "修改稿已保存。站内复查未发现明显模板化表达，事实守卫已通过。");
         } else if (accepted) {
           setMessage(isEnglish
-            ? `Revised draft saved. ${accepted} of ${targeted} paragraph candidates accepted; ${calls} model requests.`
-            : `修改稿已保存，采纳 ${accepted} / ${targeted} 处段落候选；模型调用 ${calls} 次。`);
+            ? `Revised draft saved. ${accepted} of ${targeted} paragraph candidates accepted.`
+            : `修改稿已保存，采纳 ${accepted} / ${targeted} 处段落候选。`);
         } else {
-          setMessage(isEnglish ? `Revised draft saved. ${calls} model requests.` : `修改稿已保存；模型调用 ${calls} 次。`);
+          setMessage(isEnglish ? "Revised draft saved." : "修改稿已保存。");
         }
         break;
       }
